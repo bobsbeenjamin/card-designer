@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Card Designer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace" aria-label="Card preview">
+        <div class="preview-toolbar">
+          <div>
+            <p class="eyebrow">Front design</p>
+            <h1>Trading Card Designer</h1>
+          </div>
+          <button id="exportPng" class="button primary" type="button">Export PNG</button>
+        </div>
+
+        <div class="preview-stage">
+          <article id="card" class="card-frame" aria-label="Designed trading card preview">
+            <div class="card-inner">
+              <header class="card-top">
+                <div>
+                  <p id="cardType" class="card-type">Pop Culture - Rock Band</p>
+                  <h2 id="cardName">Spanky and Our Gang</h2>
+                </div>
+                <div id="cardCost" class="cost-badge">$4</div>
+              </header>
+
+              <section class="art-window" aria-label="Card artwork">
+                <img id="cardArt" alt="" />
+                <div id="artFallback" class="art-fallback">
+                  <span>ART</span>
+                </div>
+              </section>
+
+              <section class="rules-panel">
+                <p id="cardAbility" class="ability-text">
+                  When this enters play or attacks, create a treasure token for
+                  each Rock Band you control.
+                </p>
+                <p id="cardFlavor" class="flavor-text">
+                  "Lazy day! Just right for lovin' away!"
+                </p>
+              </section>
+
+              <footer class="card-footer">
+                <div class="card-bottom">
+                  <div id="combatStats" class="stat-pair">
+                    <div>
+                      <span class="stat-label">ATK</span>
+                      <strong id="cardAttack">1</strong>
+                    </div>
+                    <div>
+                      <span class="stat-label">HP</span>
+                      <strong id="cardHealth">6</strong>
+                    </div>
+                  </div>
+                  <div id="loyaltyStat" class="loyalty-stat">
+                    <span class="stat-label">LOYALTY</span>
+                    <strong id="cardLoyalty">5</strong>
+                  </div>
+                </div>
+              </footer>
+            </div>
+            <div class="card-meta">
+              <span id="setSymbol" class="set-symbol" aria-label="Rarity symbol"></span>
+              <span id="cardRarity">Uncommon</span>
+              <span id="cardArtist">Art: Ed Sullivan Show</span>
+              <span id="cardCollector">012/180</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <aside class="control-panel" aria-label="Card controls">
+        <div class="panel-header">
+          <h2>Card Front</h2>
+          <button id="resetCard" class="button subtle" type="button">Reset</button>
+        </div>
+
+        <form id="cardForm">
+          <fieldset>
+            <legend>Identity</legend>
+            <label>
+              <span>Name</span>
+              <input id="nameInput" type="text" value="Spanky and Our Gang" maxlength="36" />
+            </label>
+            <label>
+              <span>Type</span>
+              <input id="typeInput" type="text" value="Pop Culture" maxlength="24" />
+            </label>
+            <label>
+              <span>Subtype</span>
+              <input id="subtypeInput" type="text" value="Rock Band" maxlength="28" />
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Numbers</legend>
+            <div class="number-grid">
+              <label>
+                <span>Cost</span>
+                <input id="costInput" type="number" value="4" min="0" max="99" />
+              </label>
+              <label>
+                <span>Stat mode</span>
+                <select id="statModeInput">
+                  <option value="combat" selected>Attack / Health</option>
+                  <option value="loyalty">Loyalty</option>
+                </select>
+              </label>
+            </div>
+            <div id="combatInputs" class="number-grid">
+              <label>
+                <span>Attack</span>
+                <input id="attackInput" type="number" value="1" min="0" max="99" />
+              </label>
+              <label>
+                <span>Health</span>
+                <input id="healthInput" type="number" value="6" min="0" max="99" />
+              </label>
+            </div>
+            <div id="loyaltyInputs" class="number-grid hidden">
+              <label>
+                <span>Loyalty</span>
+                <input id="loyaltyInput" type="number" value="5" min="0" max="99" />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Text</legend>
+            <label>
+              <span>Rules</span>
+              <textarea id="abilityInput" rows="5">When this enters play or attacks, create a treasure token for each Rock Band you control.</textarea>
+            </label>
+            <label>
+              <span>Flavor</span>
+              <textarea id="flavorInput" rows="3">"Lazy day! Just right for lovin' away!"</textarea>
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Artwork</legend>
+            <label class="file-input">
+              <span>Image file</span>
+              <input id="artInput" type="file" accept="image/*" />
+            </label>
+            <label>
+              <span>Art fit</span>
+              <select id="fitInput">
+                <option value="cover" selected>Cover</option>
+                <option value="contain">Contain</option>
+                <option value="fill">Fill</option>
+              </select>
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Printing</legend>
+            <label>
+              <span>Artist name</span>
+              <input id="artistInput" type="text" value="Ed Sullivan Show" maxlength="40" />
+            </label>
+            <div class="number-grid">
+              <label>
+                <span>Collector number</span>
+                <input id="collectorInput" type="text" value="012/180" maxlength="16" />
+              </label>
+              <label>
+                <span>Rarity</span>
+                <select id="rarityInput">
+                  <option value="common">Common</option>
+                  <option value="uncommon" selected>Uncommon</option>
+                  <option value="rare">Rare</option>
+                  <option value="mythic">Mythic</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Colors</legend>
+            <div class="color-grid">
+              <label>
+                <span>Frame</span>
+                <input id="frameColor" type="color" value="#263a31" />
+              </label>
+              <label>
+                <span>Accent</span>
+                <input id="accentColor" type="color" value="#d69d42" />
+              </label>
+              <label>
+                <span>Text</span>
+                <input id="textColor" type="color" value="#f8f4e8" />
+              </label>
+              <label>
+                <span>Panel</span>
+                <input id="panelColor" type="color" value="#fff7df" />
+              </label>
+            </div>
+          </fieldset>
+        </form>
+      </aside>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
