@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Secure card designer backend with API Gateway, Lambda, Cognito, and DynamoDB.
+
+Parameters:
+  AllowedWebOrigin:
+    Type: String
+    Description: Exact origin of the deployed web app, for example https://cards.example.com.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 10
+    MemorySize: 256
+    Tracing: Active
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref CardDesignsTable
+
+Resources:
+  CardDesignsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: cardId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: cardId
+          KeyType: RANGE
+
+  CardDesignerUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: card-designer-users
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+
+  CardDesignerUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref CardDesignerUserPool
+      ClientName: card-designer-web
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  CardDesignerApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref AllowedWebOrigin
+        AllowHeaders:
+          - authorization
+          - content-type
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+      Auth:
+        DefaultAuthorizer: CardDesignerJwtAuthorizer
+        Authorizers:
+          CardDesignerJwtAuthorizer:
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${CardDesignerUserPool}"
+              audience:
+                - !Ref CardDesignerUserPoolClient
+            IdentitySource: "$request.header.Authorization"
+
+  CardDesignerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: cards.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CardDesignsTable
+      Events:
+        ListCards:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /cards
+            Method: GET
+        CreateCard:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /cards
+            Method: POST
+        GetCard:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /cards/{cardId}
+            Method: GET
+        UpdateCard:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /cards/{cardId}
+            Method: PUT
+        DeleteCard:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /cards/{cardId}
+            Method: DELETE
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API endpoint for the card designer frontend.
+    Value: !Sub "https://${CardDesignerApi}.execute-api.${AWS::Region}.amazonaws.com"
+  UserPoolId:
+    Description: Cognito user pool id for frontend authentication.
+    Value: !Ref CardDesignerUserPool
+  UserPoolClientId:
+    Description: Public Cognito app client id for the browser app.
+    Value: !Ref CardDesignerUserPoolClient
+  TableName:
+    Description: DynamoDB table name.
+    Value: !Ref CardDesignsTable
