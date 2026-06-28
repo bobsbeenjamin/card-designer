@@ -1,3 +1,5 @@
+const backendConfig = window.backendConfig;
+
 const defaults = {
   name: "Spanky and Our Gang",
   type: "Pop Culture",
@@ -32,6 +34,13 @@ const rarityLabels = {
   uncommon: "Uncommon",
   rare: "Rare",
   mythic: "Mythic",
+};
+
+const state = {
+  idToken: sessionStorage.getItem("cardDesignerIdToken") || "",
+  email: sessionStorage.getItem("cardDesignerEmail") || "",
+  currentCardId: "",
+  savedCards: [],
 };
 
 const elements = {
@@ -70,16 +79,61 @@ const elements = {
   accentColor: document.querySelector("#accentColor"),
   textColor: document.querySelector("#textColor"),
   panelColor: document.querySelector("#panelColor"),
+  emailInput: document.querySelector("#emailInput"),
+  passwordInput: document.querySelector("#passwordInput"),
+  signInPanel: document.querySelector("#signInPanel"),
+  signedInPanel: document.querySelector("#signedInPanel"),
+  currentUserLabel: document.querySelector("#currentUserLabel"),
+  accountMenuButton: document.querySelector("#accountMenuButton"),
+  accountMenu: document.querySelector("#accountMenu"),
+  confirmationInput: document.querySelector("#confirmationInput"),
+  authStatus: document.querySelector("#authStatus"),
+  saveStatus: document.querySelector("#saveStatus"),
+  savedCardsInput: document.querySelector("#savedCardsInput"),
+  signUpButton: document.querySelector("#signUpButton"),
+  confirmButton: document.querySelector("#confirmButton"),
+  signInButton: document.querySelector("#signInButton"),
+  signOutButton: document.querySelector("#signOutButton"),
+  saveNewButton: document.querySelector("#saveNewButton"),
+  updateSavedButton: document.querySelector("#updateSavedButton"),
+  loadSavedButton: document.querySelector("#loadSavedButton"),
+  deleteSavedButton: document.querySelector("#deleteSavedButton"),
   resetCard: document.querySelector("#resetCard"),
   exportPng: document.querySelector("#exportPng"),
 };
 
 function updateText(target, value, fallback) {
-  target.textContent = value.trim() || fallback;
+  target.textContent = String(value || "").trim() || fallback;
+}
+
+function setAuthStatus(message) {
+  elements.authStatus.textContent = message;
+}
+
+function setSaveStatus(message) {
+  elements.saveStatus.textContent = message;
+}
+function closeAccountMenu() {
+  elements.accountMenu.classList.add("hidden");
+  elements.accountMenuButton.setAttribute("aria-expanded", "false");
+}
+
+function updateAccountUi() {
+  const signedIn = Boolean(state.idToken);
+  elements.signInPanel.classList.toggle("hidden", signedIn);
+  elements.signedInPanel.classList.toggle("hidden", !signedIn);
+  elements.currentUserLabel.textContent = state.email || "Account";
+  if (!signedIn) closeAccountMenu();
+}
+
+function toggleAccountMenu() {
+  const isOpen = !elements.accountMenu.classList.contains("hidden");
+  elements.accountMenu.classList.toggle("hidden", isOpen);
+  elements.accountMenuButton.setAttribute("aria-expanded", String(!isOpen));
 }
 
 function formatCost(value) {
-  return `$${value.trim() || "0"}`;
+  return `$${String(value || "").trim() || "0"}`;
 }
 
 function syncCard() {
@@ -118,6 +172,7 @@ function syncCard() {
 }
 
 function resetCard() {
+  state.currentCardId = "";
   elements.nameInput.value = defaults.name;
   elements.typeInput.value = defaults.type;
   elements.subtypeInput.value = defaults.subtype;
@@ -154,8 +209,263 @@ function loadArt(event) {
   reader.readAsDataURL(file);
 }
 
+function collectCardData() {
+  let artUrl = elements.art.src || "";
+  if (artUrl.startsWith("data:") && artUrl.length > 300000) {
+    artUrl = "";
+    setSaveStatus("Design saved without art; uploaded image is too large for DynamoDB.");
+  }
+
+  return {
+    name: elements.nameInput.value.trim() || "Untitled Card",
+    artUrl,
+    cost: Number(elements.costInput.value || 0),
+    type: elements.typeInput.value.trim(),
+    sub_type: elements.subtypeInput.value.trim(),
+    statMode: elements.statModeInput.value,
+    attack: elements.statModeInput.value === "combat" ? Number(elements.attackInput.value || 0) : null,
+    health: elements.statModeInput.value === "combat" ? Number(elements.healthInput.value || 0) : null,
+    loyalty: elements.statModeInput.value === "loyalty" ? Number(elements.loyaltyInput.value || 0) : null,
+    abilities: elements.abilityInput.value,
+    flavorText: elements.flavorInput.value,
+    artistName: elements.artistInput.value.trim(),
+    collectorNumber: elements.collectorInput.value.trim(),
+    rarity: elements.rarityInput.value,
+    colors: {
+      frame: elements.frameColor.value,
+      accent: elements.accentColor.value,
+      text: elements.textColor.value,
+      panel: elements.panelColor.value,
+    },
+  };
+}
+
+function applyCardData(card) {
+  state.currentCardId = card.cardId || "";
+  elements.nameInput.value = card.name || defaults.name;
+  elements.typeInput.value = card.type || defaults.type;
+  elements.subtypeInput.value = card.sub_type || card.subtype || "";
+  elements.costInput.value = card.cost ?? defaults.cost;
+  elements.statModeInput.value = card.statMode || "combat";
+  elements.attackInput.value = card.attack ?? defaults.attack;
+  elements.healthInput.value = card.health ?? defaults.health;
+  elements.loyaltyInput.value = card.loyalty ?? defaults.loyalty;
+  elements.abilityInput.value = card.abilities || "";
+  elements.flavorInput.value = card.flavorText || "";
+  elements.artistInput.value = card.artistName || "";
+  elements.collectorInput.value = card.collectorNumber || "";
+  elements.rarityInput.value = card.rarity || "common";
+  elements.frameColor.value = card.colors?.frame || defaults.frame;
+  elements.accentColor.value = card.colors?.accent || defaults.accent;
+  elements.textColor.value = card.colors?.text || defaults.text;
+  elements.panelColor.value = card.colors?.panel || defaults.panel;
+
+  if (card.artUrl) {
+    elements.art.src = card.artUrl;
+    elements.artWindow.classList.add("has-image");
+  } else {
+    elements.art.removeAttribute("src");
+    elements.artWindow.classList.remove("has-image");
+  }
+
+  syncCard();
+}
+
+async function cognitoRequest(target, payload) {
+  const response = await fetch(`https://cognito-idp.${backendConfig.region}.amazonaws.com/`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-amz-json-1.1",
+      "x-amz-target": `AWSCognitoIdentityProviderService.${target}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.message || data.__type || "Cognito request failed.");
+  }
+
+  return data;
+}
+
+function getCredentials() {
+  const email = elements.emailInput.value.trim();
+  const password = elements.passwordInput.value;
+  if (!email || !password) {
+    throw new Error("Enter an email and password first.");
+  }
+  return { email, password };
+}
+
+async function signUp() {
+  try {
+    const { email, password } = getCredentials();
+    await cognitoRequest("SignUp", {
+      ClientId: backendConfig.userPoolClientId,
+      Username: email,
+      Password: password,
+      UserAttributes: [{ Name: "email", Value: email }],
+    });
+    setAuthStatus("Check your email for a confirmation code.");
+  } catch (error) {
+    setAuthStatus(error.message);
+  }
+}
+
+async function confirmAccount() {
+  try {
+    const email = elements.emailInput.value.trim();
+    const code = elements.confirmationInput.value.trim();
+    if (!email || !code) throw new Error("Enter email and confirmation code.");
+
+    await cognitoRequest("ConfirmSignUp", {
+      ClientId: backendConfig.userPoolClientId,
+      Username: email,
+      ConfirmationCode: code,
+    });
+    setAuthStatus("Account confirmed. You can sign in now.");
+  } catch (error) {
+    setAuthStatus(error.message);
+  }
+}
+
+async function signIn() {
+  try {
+    const { email, password } = getCredentials();
+    const data = await cognitoRequest("InitiateAuth", {
+      ClientId: backendConfig.userPoolClientId,
+      AuthFlow: "USER_PASSWORD_AUTH",
+      AuthParameters: {
+        USERNAME: email,
+        PASSWORD: password,
+      },
+    });
+
+    state.idToken = data.AuthenticationResult.IdToken;
+    state.email = email;
+    sessionStorage.setItem("cardDesignerIdToken", state.idToken);
+    sessionStorage.setItem("cardDesignerEmail", state.email);
+    elements.passwordInput.value = "";
+    updateAccountUi();
+    setAuthStatus(`Signed in as ${email}`);
+    setSaveStatus("Loading saved designs...");
+    await refreshSavedCards();
+  } catch (error) {
+    setAuthStatus(error.message);
+  }
+}
+
+function signOut() {
+  state.idToken = "";
+  state.email = "";
+  state.currentCardId = "";
+  state.savedCards = [];
+  sessionStorage.removeItem("cardDesignerIdToken");
+  sessionStorage.removeItem("cardDesignerEmail");
+  updateAccountUi();
+  renderSavedCards();
+  setAuthStatus("Signed out");
+  setSaveStatus("Sign in to save designs");
+}
+
+async function apiFetch(path, options = {}) {
+  if (!state.idToken) {
+    throw new Error("Sign in before using saved designs.");
+  }
+
+  const response = await fetch(`${backendConfig.apiUrl}${path}`, {
+    ...options,
+    headers: {
+      authorization: `Bearer ${state.idToken}`,
+      "content-type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error || `API request failed with ${response.status}.`);
+  }
+
+  return data;
+}
+
+function renderSavedCards() {
+  elements.savedCardsInput.innerHTML = "";
+  if (!state.savedCards.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = state.idToken ? "No saved cards yet" : "Sign in to load cards";
+    elements.savedCardsInput.append(option);
+    return;
+  }
+
+  for (const card of state.savedCards) {
+    const option = document.createElement("option");
+    option.value = card.cardId;
+    option.textContent = `${card.name || "Untitled Card"} (${card.collectorNumber || card.rarity || "saved"})`;
+    elements.savedCardsInput.append(option);
+  }
+}
+
+async function refreshSavedCards() {
+  try {
+    const data = await apiFetch("/cards");
+    state.savedCards = data.cards || [];
+    renderSavedCards();
+    setSaveStatus(state.savedCards.length ? "Saved designs loaded" : "No saved designs yet");
+  } catch (error) {
+    setSaveStatus(error.message);
+  }
+}
+
+async function saveCard(cardId = "") {
+  try {
+    const card = collectCardData();
+    const data = await apiFetch(cardId ? `/cards/${cardId}` : "/cards", {
+      method: cardId ? "PUT" : "POST",
+      body: JSON.stringify(card),
+    });
+    state.currentCardId = data.card.cardId;
+    setSaveStatus(cardId ? "Saved changes" : "Saved new design");
+    await refreshSavedCards();
+    elements.savedCardsInput.value = state.currentCardId;
+  } catch (error) {
+    setSaveStatus(error.message);
+  }
+}
+
+async function loadSelectedCard() {
+  try {
+    const cardId = elements.savedCardsInput.value;
+    if (!cardId) throw new Error("Choose a saved card first.");
+
+    const data = await apiFetch(`/cards/${cardId}`);
+    applyCardData(data.card);
+    setSaveStatus("Loaded design");
+  } catch (error) {
+    setSaveStatus(error.message);
+  }
+}
+
+async function deleteSelectedCard() {
+  try {
+    const cardId = elements.savedCardsInput.value;
+    if (!cardId) throw new Error("Choose a saved card first.");
+    if (!window.confirm("Delete this saved design?")) return;
+
+    await apiFetch(`/cards/${cardId}`, { method: "DELETE" });
+    if (state.currentCardId === cardId) state.currentCardId = "";
+    setSaveStatus("Deleted design");
+    await refreshSavedCards();
+  } catch (error) {
+    setSaveStatus(error.message);
+  }
+}
+
 function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
-  const words = text.split(/\s+/).filter(Boolean);
+  const words = String(text || "").split(/\s+/).filter(Boolean);
   let line = "";
   let lines = 0;
 
@@ -311,8 +621,6 @@ async function exportPng() {
     ctx.fill();
   }
   ctx.fillStyle = elements.textColor.value;
-  ctx.font = "900 18px system-ui";
-  ctx.font = "900 30px system-ui";
   if (isLoyalty) {
     ctx.font = "900 15px system-ui";
     ctx.fillText("LOYALTY", 460, 799);
@@ -333,14 +641,40 @@ async function exportPng() {
   link.click();
 }
 
-document.querySelectorAll("input, textarea, select").forEach((control) => {
-  control.addEventListener("input", syncCard);
-});
+function attachEvents() {
+  document.querySelectorAll("input, textarea, select").forEach((control) => {
+    control.addEventListener("input", syncCard);
+  });
 
-elements.artInput.addEventListener("change", loadArt);
-elements.resetCard.addEventListener("click", resetCard);
-elements.exportPng.addEventListener("click", () => {
-  exportPng();
-});
+  elements.artInput.addEventListener("change", loadArt);
+  elements.resetCard.addEventListener("click", resetCard);
+  elements.exportPng.addEventListener("click", () => exportPng());
+  elements.signUpButton.addEventListener("click", signUp);
+  elements.confirmButton.addEventListener("click", confirmAccount);
+  elements.signInButton.addEventListener("click", signIn);
+  elements.accountMenuButton.addEventListener("click", toggleAccountMenu);
+  elements.signOutButton.addEventListener("click", signOut);
+  document.addEventListener("click", (event) => {
+    if (!elements.signedInPanel.contains(event.target)) closeAccountMenu();
+  });
+  elements.saveNewButton.addEventListener("click", () => saveCard());
+  elements.updateSavedButton.addEventListener("click", () => {
+    const cardId = state.currentCardId || elements.savedCardsInput.value;
+    if (!cardId) {
+      setSaveStatus("Load a saved card or use Save New first.");
+      return;
+    }
+    saveCard(cardId);
+  });
+  elements.loadSavedButton.addEventListener("click", loadSelectedCard);
+  elements.deleteSavedButton.addEventListener("click", deleteSelectedCard);
+}
 
+attachEvents();
 syncCard();
+renderSavedCards();
+updateAccountUi();
+if (state.idToken) {
+  setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
+  refreshSavedCards();
+}

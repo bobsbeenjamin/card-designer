@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 import os
 import time
 import uuid
@@ -15,7 +16,7 @@ ALLOWED_FIELDS = {
     "artUrl",
     "cost",
     "type",
-    "subtype",
+    "sub_type",
     "statMode",
     "attack",
     "health",
@@ -91,7 +92,7 @@ def clean_card(body):
 def list_cards(user_id):
     response = TABLE.query(
         KeyConditionExpression=Key("userId").eq(user_id),
-        ProjectionExpression="userId, cardId, #name, #type, subtype, rarity, updatedAt",
+        ProjectionExpression="userId, cardId, #name, #type, sub_type, rarity, updatedAt",
         ExpressionAttributeNames={"#name": "name", "#type": "type"},
         ScanIndexForward=False,
     )
@@ -127,11 +128,21 @@ def delete_card(user_id, card_id):
     TABLE.delete_item(Key={"userId": user_id, "cardId": card_id})
 
 
+def to_json_safe(value):
+    if isinstance(value, list):
+        return [to_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {key: to_json_safe(item) for key, item in value.items()}
+    if isinstance(value, Decimal):
+        return int(value) if value % 1 == 0 else float(value)
+    return value
+
+
 def ok(body, status=200):
     return {
         "statusCode": status,
         "headers": {"content-type": "application/json"},
-        "body": json.dumps(body),
+        "body": json.dumps(to_json_safe(body)),
     }
 
 

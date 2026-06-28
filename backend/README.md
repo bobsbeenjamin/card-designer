@@ -62,7 +62,7 @@ Card JSON accepts:
   "artUrl": "https://example.com/art.png",
   "cost": 4,
   "type": "Pop Culture",
-  "subtype": "Rock Band",
+  "sub_type": "Rock Band",
   "statMode": "combat",
   "attack": 1,
   "health": 6,
