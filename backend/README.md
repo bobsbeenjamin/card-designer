@@ -15,36 +15,65 @@ Install and configure the AWS SAM CLI, then run:
 
 ```bash
 sam build --template-file backend/template.yaml
+```
+
+Deploy the development stack for `http://localhost:3000`:
+
+```bash
 sam deploy \
   --template-file .aws-sam/build/template.yaml \
-  --stack-name card-designer-backend \
+  --stack-name card-designer-backend-dev \
   --region us-west-2 \
   --capabilities CAPABILITY_IAM \
-  --parameter-overrides AllowedWebOrigin=http://localhost:3000 \
+  --parameter-overrides AppEnvironment=dev \
   --resolve-s3
 ```
 
-For `AllowedWebOrigin`, use the exact origin that will host the frontend, such
-as `https://cards.example.com`. For local testing, deploy a separate dev stack
-with `http://localhost:3000` or the port you are actually using. The GitHub Pages app URL is `https://bobsbeenjamin.github.io/card-designer`, but the CORS origin is only `https://bobsbeenjamin.github.io`.
+Deploy the production stack for GitHub Pages:
 
-## Current Dev Stack
+```bash
+sam deploy \
+  --template-file .aws-sam/build/template.yaml \
+  --stack-name card-designer-backend-prod \
+  --region us-west-2 \
+  --capabilities CAPABILITY_IAM \
+  --parameter-overrides AppEnvironment=prod \
+  --resolve-s3
+```
+
+The GitHub Pages app URL is `https://bobsbeenjamin.github.io/card-designer`, but
+the CORS origin is only `https://bobsbeenjamin.github.io`.
+
+Dev and prod should be deployed as separate CloudFormation stacks. Each stack
+creates its own DynamoDB table:
+
+```text
+Dev table:  card-designer-dev-card-designs
+Prod table: card-designer-prod-card-designs
+```
+
+## Current Stack Outputs
 
 These values are not secrets. They are safe for frontend configuration, but AWS
 access keys should never be committed.
 
 ```text
-StackName:        card-designer-backend
+DevStackName:     card-designer-backend-dev
+DevOrigin:        http://localhost:3000
+DevApiUrl:        https://ij9i8u1wvg.execute-api.us-west-2.amazonaws.com
+DevUserPoolId:    us-west-2_lTDVLzK6E
+DevClientId:      7tlba3kd4kv5p4e1h5363s7a29
+DevTableName:     card-designer-dev-card-designs
+
+ProdStackName:    card-designer-backend-prod
+ProdOrigin:       https://bobsbeenjamin.github.io
+ProdApiUrl:       https://55g413zjq2.execute-api.us-west-2.amazonaws.com
+ProdUserPoolId:   us-west-2_6BjuamntD
+ProdClientId:     3jucb7dgsgteq2v98ae3uoacmq
+ProdTableName:    card-designer-prod-card-designs
+
 Region:           us-west-2
-AllowedWebOrigin: http://localhost:3000
-AdditionalOrigin:  https://bobsbeenjamin.github.io
-
-ApiUrl:           https://1lcxaojzu4.execute-api.us-west-2.amazonaws.com
-UserPoolId:       us-west-2_q3vHIdWiG
-UserPoolClientId: 7d0mg3skisq5kcl9vqimsaihkl
-TableName:        card-designer-backend-CardDesignsTable-B3OBCKYEXGAV
 ```
-
 ## API
 
 All routes require `Authorization: Bearer <cognito-jwt>`.

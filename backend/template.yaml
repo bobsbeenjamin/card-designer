@@ -3,10 +3,20 @@ Transform: AWS::Serverless-2016-10-31
 Description: Secure card designer backend with API Gateway, Lambda, Cognito, and DynamoDB.
 
 Parameters:
-  AllowedWebOrigin:
+  AppEnvironment:
     Type: String
-    Default: https://bobsbeenjamin.github.io
-    Description: Exact origin of the deployed web app
+    Default: prod
+    AllowedValues:
+      - dev
+      - prod
+    Description: Deployment environment that controls the allowed web origin.
+
+Mappings:
+  WebOrigins:
+    dev:
+      Origin: http://localhost:3000
+    prod:
+      Origin: https://bobsbeenjamin.github.io
 
 Globals:
   Function:
@@ -22,6 +32,7 @@ Resources:
   CardDesignsTable:
     Type: AWS::DynamoDB::Table
     Properties:
+      TableName: !Sub "card-designer-${AppEnvironment}-card-designs"
       BillingMode: PAY_PER_REQUEST
       SSESpecification:
         SSEEnabled: true
@@ -39,7 +50,7 @@ Resources:
   CardDesignerUserPool:
     Type: AWS::Cognito::UserPool
     Properties:
-      UserPoolName: card-designer-users
+      UserPoolName: !Sub "card-designer-${AppEnvironment}-users"
       UsernameAttributes:
         - email
       AutoVerifiedAttributes:
@@ -56,7 +67,7 @@ Resources:
     Type: AWS::Cognito::UserPoolClient
     Properties:
       UserPoolId: !Ref CardDesignerUserPool
-      ClientName: card-designer-web
+      ClientName: !Sub "card-designer-${AppEnvironment}-web"
       GenerateSecret: false
       ExplicitAuthFlows:
         - ALLOW_USER_SRP_AUTH
@@ -66,9 +77,10 @@ Resources:
   CardDesignerApi:
     Type: AWS::Serverless::HttpApi
     Properties:
+      Name: !Sub "card-designer-${AppEnvironment}-api"
       CorsConfiguration:
         AllowOrigins:
-          - !Ref AllowedWebOrigin
+          - !FindInMap [WebOrigins, !Ref AppEnvironment, Origin]
         AllowHeaders:
           - authorization
           - content-type
@@ -91,6 +103,7 @@ Resources:
   CardDesignerFunction:
     Type: AWS::Serverless::Function
     Properties:
+      FunctionName: !Sub "card-designer-${AppEnvironment}-cards"
       CodeUri: src/
       Handler: cards.handler
       Policies:
