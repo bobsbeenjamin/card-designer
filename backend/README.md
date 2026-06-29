@@ -26,7 +26,7 @@ sam deploy \
 
 For `AllowedWebOrigin`, use the exact origin that will host the frontend, such
 as `https://cards.example.com`. For local testing, deploy a separate dev stack
-with `http://localhost:3000` or the port you are actually using.
+with `http://localhost:3000` or the port you are actually using. The GitHub Pages app URL is `https://bobsbeenjamin.github.io/card-designer`, but the CORS origin is only `https://bobsbeenjamin.github.io`.
 
 ## Current Dev Stack
 
@@ -37,6 +37,7 @@ access keys should never be committed.
 StackName:        card-designer-backend
 Region:           us-west-2
 AllowedWebOrigin: http://localhost:3000
+AdditionalOrigin:  https://bobsbeenjamin.github.io
 
 ApiUrl:           https://1lcxaojzu4.execute-api.us-west-2.amazonaws.com
 UserPoolId:       us-west-2_q3vHIdWiG

@@ -5,7 +5,8 @@ Description: Secure card designer backend with API Gateway, Lambda, Cognito, and
 Parameters:
   AllowedWebOrigin:
     Type: String
-    Description: Exact origin of the deployed web app, for example https://cards.example.com.
+    Default: https://bobsbeenjamin.github.io
+    Description: Exact origin of the deployed web app
 
 Globals:
   Function:
