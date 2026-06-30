@@ -277,10 +277,23 @@
       </aside>
     </main>
 
+
+    <dialog id="duplicateSaveDialog" class="modal-dialog" aria-labelledby="duplicateSaveTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="duplicateSaveTitle">Saved card already exists</h2>
+        <p id="duplicateSaveMessage">A saved card has this name.</p>
+        <div class="modal-actions">
+          <button id="duplicateSaveNewButton" class="button subtle" value="save-new" type="submit">Save New</button>
+          <button id="duplicateUpdateButton" class="button primary" value="update" type="submit">Update Existing</button>
+          <button class="button subtle" value="cancel" type="submit">Cancel</button>
+        </div>
+      </form>
+    </dialog>
     <script src="config.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
+
 
 
 

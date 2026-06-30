@@ -75,6 +75,8 @@ const elements = {
   deleteSavedButton: document.querySelector("#deleteSavedButton"),
   resetCard: document.querySelector("#resetCard"),
   exportPng: document.querySelector("#exportPng"),
+  duplicateSaveDialog: document.querySelector("#duplicateSaveDialog"),
+  duplicateSaveMessage: document.querySelector("#duplicateSaveMessage"),
 };
 
 function getRarityColor(rarity) {
@@ -481,6 +483,31 @@ function renderSavedCards() {
   }
 }
 
+function normalizeCardName(name) {
+  return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function findSavedCardByName(name) {
+  const normalizedName = normalizeCardName(name);
+  return state.savedCards.find((card) => normalizeCardName(card.name) === normalizedName);
+}
+
+function promptDuplicateSave(cardName, existingCard) {
+  if (!elements.duplicateSaveDialog) return Promise.resolve("save-new");
+
+  elements.duplicateSaveMessage.textContent = `"${cardName}" already exists in your saved cards.`;
+
+  return new Promise((resolve) => {
+    const handleClose = () => {
+      elements.duplicateSaveDialog.removeEventListener("close", handleClose);
+      resolve(elements.duplicateSaveDialog.returnValue || "cancel");
+    };
+
+    elements.duplicateSaveDialog.addEventListener("close", handleClose);
+    elements.duplicateSaveDialog.dataset.cardId = existingCard.cardId;
+    elements.duplicateSaveDialog.showModal();
+  });
+}
 async function refreshSavedCards() {
   try {
     const data = await apiFetch("/cards");
@@ -508,6 +535,21 @@ async function saveCard(cardId = "") {
   }
 }
 
+async function saveNewCard() {
+  const cardName = elements.nameInput.value.trim() || "Untitled Card";
+  const existingCard = findSavedCardByName(cardName);
+
+  if (existingCard) {
+    const choice = await promptDuplicateSave(cardName, existingCard);
+    if (choice === "update") {
+      await saveCard(existingCard.cardId);
+      return;
+    }
+    if (choice !== "save-new") return;
+  }
+
+  await saveCard();
+}
 async function loadSelectedCard() {
   try {
     const cardId = elements.savedCardsInput.value;
@@ -749,7 +791,7 @@ function attachEvents() {
   document.addEventListener("click", (event) => {
     if (!elements.signedInPanel.contains(event.target)) closeAccountMenu();
   });
-  elements.saveNewButton.addEventListener("click", () => saveCard());
+  elements.saveNewButton.addEventListener("click", saveNewCard);
   elements.updateSavedButton.addEventListener("click", () => {
     const cardId = state.currentCardId || elements.savedCardsInput.value;
     if (!cardId) {
@@ -783,3 +825,4 @@ async function initialize() {
 }
 
 initialize();
+

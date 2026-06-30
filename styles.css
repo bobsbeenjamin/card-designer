@@ -551,6 +551,46 @@ input[type="color"] {
   padding: 4px;
 }
 
+
+.modal-dialog {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  width: min(420px, calc(100vw - 36px));
+}
+
+.modal-dialog::backdrop {
+  background: rgba(22, 28, 24, 0.42);
+}
+
+.modal-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(32, 38, 33, 0.28);
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.modal-card h2 {
+  font-size: 1.15rem;
+  margin: 0;
+}
+
+.modal-card p {
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.modal-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .hidden {
   display: none;
 }
@@ -637,6 +677,7 @@ input[type="color"] {
     width: 44px;
   }
 }
+
 
 
 
