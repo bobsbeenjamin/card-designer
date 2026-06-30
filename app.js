@@ -2,7 +2,7 @@ const backendConfig = window.backendConfig;
 
 const defaults = {
   name: "Spanky and Our Gang",
-  type: "Pop Culture",
+  type: "Person",
   subtype: "Rock Band",
   cost: "4",
   statMode: "combat",
@@ -65,6 +65,8 @@ const elements = {
   cardRarity: document.querySelector("#cardRarity"),
   nameInput: document.querySelector("#nameInput"),
   typeInput: document.querySelector("#typeInput"),
+  customTypeInput: document.querySelector("#customTypeInput"),
+  customTypeLabel: document.querySelector("#customTypeLabel"),
   subtypeInput: document.querySelector("#subtypeInput"),
   costInput: document.querySelector("#costInput"),
   statModeInput: document.querySelector("#statModeInput"),
@@ -141,11 +143,40 @@ function formatCost(value) {
   return `$${String(value || "").trim() || "0"}`;
 }
 
+const standardTypes = window.cardTypes || [];
+
+function syncTypeMode() {
+  const isCustom = elements.typeInput.value === "__custom";
+  elements.customTypeLabel.classList.toggle("hidden", !isCustom);
+}
+
+function getSelectedType() {
+  if (elements.typeInput.value === "__custom") {
+    return elements.customTypeInput.value.trim();
+  }
+
+  return elements.typeInput.value.trim();
+}
+
+function setTypeControl(value) {
+  const typeValue = String(value || "").trim();
+
+  if (!typeValue || standardTypes.includes(typeValue)) {
+    elements.typeInput.value = typeValue || defaults.type;
+    elements.customTypeInput.value = "";
+  } else {
+    elements.typeInput.value = "__custom";
+    elements.customTypeInput.value = typeValue;
+  }
+
+  syncTypeMode();
+}
+
 function syncCard() {
+  syncTypeMode();
   const subtype = elements.subtypeInput.value.trim();
-  const typeLine = subtype
-    ? `${elements.typeInput.value.trim() || "Card"} - ${subtype}`
-    : elements.typeInput.value;
+  const typeValue = getSelectedType();
+  const typeLine = subtype ? `${typeValue || "Card"} - ${subtype}` : typeValue;
   const isLoyalty = elements.statModeInput.value === "loyalty";
   const rarity = elements.rarityInput.value;
 
@@ -179,7 +210,7 @@ function syncCard() {
 function resetCard() {
   state.currentCardId = "";
   elements.nameInput.value = defaults.name;
-  elements.typeInput.value = defaults.type;
+  setTypeControl(defaults.type);
   elements.subtypeInput.value = defaults.subtype;
   elements.costInput.value = defaults.cost;
   elements.statModeInput.value = defaults.statMode;
@@ -225,7 +256,7 @@ function collectCardData() {
     name: elements.nameInput.value.trim() || "Untitled Card",
     artUrl,
     cost: Number(elements.costInput.value || 0),
-    type: elements.typeInput.value.trim(),
+    type: getSelectedType(),
     sub_type: elements.subtypeInput.value.trim(),
     statMode: elements.statModeInput.value,
     attack: elements.statModeInput.value === "combat" ? Number(elements.attackInput.value || 0) : null,
@@ -248,7 +279,7 @@ function collectCardData() {
 function applyCardData(card) {
   state.currentCardId = card.cardId || "";
   elements.nameInput.value = card.name || defaults.name;
-  elements.typeInput.value = card.type || defaults.type;
+  setTypeControl(card.type || defaults.type);
   elements.subtypeInput.value = card.sub_type || card.subtype || "";
   elements.costInput.value = card.cost ?? defaults.cost;
   elements.statModeInput.value = card.statMode || "combat";
@@ -550,9 +581,8 @@ async function exportPng() {
   const width = 630;
   const height = 880;
   const subtype = elements.subtypeInput.value.trim();
-  const typeLine = subtype
-    ? `${elements.typeInput.value.trim() || "Card"} - ${subtype}`
-    : elements.typeInput.value || "Card";
+  const typeValue = getSelectedType();
+  const typeLine = subtype ? `${typeValue || "Card"} - ${subtype}` : typeValue || "Card";
   const rarity = elements.rarityInput.value;
   const isLoyalty = elements.statModeInput.value === "loyalty";
   const canvas = document.createElement("canvas");
