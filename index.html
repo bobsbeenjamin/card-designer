@@ -8,13 +8,75 @@
   </head>
   <body>
     <main class="app-shell">
+      <aside class="library-panel" aria-label="Account and saved designs">
+        <div class="panel-header">
+          <h2>My Stuff</h2>
+        </div>
+
+        <section class="service-panel" aria-label="Account and saved designs">
+          <fieldset>
+            <legend>Account</legend>
+            <div id="signInPanel" class="account-panel">
+              <label>
+                <span>Email</span>
+                <input id="emailInput" type="email" autocomplete="username" />
+              </label>
+              <label>
+                <span>Password</span>
+                <input id="passwordInput" type="password" autocomplete="current-password" />
+              </label>
+              <div class="action-grid">
+                <button id="signUpButton" class="button subtle" type="button">Sign Up</button>
+                <button id="signInButton" class="button primary" type="button">Sign In</button>
+              </div>
+              <label>
+                <span>Confirmation code</span>
+                <input id="confirmationInput" type="text" inputmode="numeric" />
+              </label>
+              <button id="confirmButton" class="button subtle" type="button">Confirm Account</button>
+            </div>
+            <div id="signedInPanel" class="account-menu hidden">
+              <div>
+                <span class="account-kicker">Signed in</span>
+                <strong id="currentUserLabel">Account</strong>
+              </div>
+              <button id="accountMenuButton" class="avatar-button" type="button" aria-label="Account menu" aria-expanded="false">
+                <span class="avatar-face" aria-hidden="true"></span>
+              </button>
+              <div id="accountMenu" class="account-menu-popover hidden">
+                <button id="signOutButton" class="button subtle" type="button">Sign Out</button>
+              </div>
+            </div>
+            <p id="authStatus" class="status-line">Signed out</p>
+          </fieldset>
+
+          <fieldset>
+            <legend>Saved Designs</legend>
+            <label>
+              <span>Saved cards</span>
+              <select id="savedCardsInput">
+                <option value="">No saved cards loaded</option>
+              </select>
+            </label>
+            <div class="action-grid">
+              <button id="saveNewButton" class="button primary" type="button">Save New</button>
+              <button id="updateSavedButton" class="button subtle" type="button">Update</button>
+              <button id="loadSavedButton" class="button subtle" type="button">Load</button>
+              <button id="deleteSavedButton" class="button subtle danger" type="button">Delete</button>
+            </div>
+            <p id="saveStatus" class="status-line">Sign in to save designs</p>
+          </fieldset>
+          <fieldset>
+            <legend>Export</legend>
+            <button id="exportPng" class="button primary" type="button">Export PNG</button>
+          </fieldset>
+        </section>
+      </aside>
       <section class="workspace" aria-label="Card preview">
         <div class="preview-toolbar">
           <div>
-            <p class="eyebrow">Front design</p>
-            <h1>Trading Card Designer</h1>
+            <p class="eyebrow preview-title">Card Preview</p>
           </div>
-          <button id="exportPng" class="button primary" type="button">Export PNG</button>
         </div>
 
         <div class="preview-stage">
@@ -76,64 +138,9 @@
 
       <aside class="control-panel" aria-label="Card controls">
         <div class="panel-header">
-          <h2>Card Front</h2>
+          <h2>Card Design Fields</h2>
           <button id="resetCard" class="button subtle" type="button">Reset</button>
         </div>
-
-        <section class="service-panel" aria-label="Account and saved designs">
-          <fieldset>
-            <legend>Account</legend>
-            <div id="signInPanel" class="account-panel">
-              <label>
-                <span>Email</span>
-                <input id="emailInput" type="email" autocomplete="username" />
-              </label>
-              <label>
-                <span>Password</span>
-                <input id="passwordInput" type="password" autocomplete="current-password" />
-              </label>
-              <div class="action-grid">
-                <button id="signUpButton" class="button subtle" type="button">Sign Up</button>
-                <button id="signInButton" class="button primary" type="button">Sign In</button>
-              </div>
-              <label>
-                <span>Confirmation code</span>
-                <input id="confirmationInput" type="text" inputmode="numeric" />
-              </label>
-              <button id="confirmButton" class="button subtle" type="button">Confirm Account</button>
-            </div>
-            <div id="signedInPanel" class="account-menu hidden">
-              <div>
-                <span class="account-kicker">Signed in</span>
-                <strong id="currentUserLabel">Account</strong>
-              </div>
-              <button id="accountMenuButton" class="avatar-button" type="button" aria-label="Account menu" aria-expanded="false">
-                <span class="avatar-face" aria-hidden="true"></span>
-              </button>
-              <div id="accountMenu" class="account-menu-popover hidden">
-                <button id="signOutButton" class="button subtle" type="button">Sign Out</button>
-              </div>
-            </div>
-            <p id="authStatus" class="status-line">Signed out</p>
-          </fieldset>
-
-          <fieldset>
-            <legend>Saved Designs</legend>
-            <label>
-              <span>Saved cards</span>
-              <select id="savedCardsInput">
-                <option value="">No saved cards loaded</option>
-              </select>
-            </label>
-            <div class="action-grid">
-              <button id="saveNewButton" class="button primary" type="button">Save New</button>
-              <button id="updateSavedButton" class="button subtle" type="button">Update</button>
-              <button id="loadSavedButton" class="button subtle" type="button">Load</button>
-              <button id="deleteSavedButton" class="button subtle danger" type="button">Delete</button>
-            </div>
-            <p id="saveStatus" class="status-line">Sign in to save designs</p>
-          </fieldset>
-        </section>
         <form id="cardForm">
           <fieldset>
             <legend>Identity</legend>
@@ -274,3 +281,8 @@
     <script src="app.js"></script>
   </body>
 </html>
+
+
+
+
+
