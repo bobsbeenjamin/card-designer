@@ -20,6 +20,7 @@ const elements = {
   card: document.querySelector("#card"),
   artWindow: document.querySelector(".art-window"),
   art: document.querySelector("#cardArt"),
+  rulesPanel: document.querySelector(".rules-panel"),
   cardName: document.querySelector("#cardName"),
   cardType: document.querySelector("#cardType"),
   cardCost: document.querySelector("#cardCost"),
@@ -178,6 +179,55 @@ function setTypeControl(value) {
   syncTypeMode();
 }
 
+function fitCardName() {
+  const name = elements.cardName;
+  name.classList.remove("is-wrapped");
+  name.style.fontSize = "";
+
+  const defaultSize = Number.parseFloat(getComputedStyle(name).fontSize);
+  const minSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.8;
+  let size = defaultSize;
+
+  while (name.scrollWidth > name.clientWidth && size > minSize) {
+    size = Math.max(minSize, size - 1);
+    name.style.fontSize = `${size}px`;
+  }
+
+  if (name.scrollWidth > name.clientWidth) {
+    name.classList.add("is-wrapped");
+  }
+}
+function fitRulesText() {
+  const panel = elements.rulesPanel;
+  const ability = elements.cardAbility;
+  const flavor = elements.cardFlavor;
+  ability.style.fontSize = "";
+  ability.style.lineHeight = "";
+  flavor.style.fontSize = "";
+  flavor.style.lineHeight = "";
+
+  const rootSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const minAbilitySize = rootSize * 0.5;
+  const minFlavorSize = rootSize * 0.48;
+  let abilitySize = Number.parseFloat(getComputedStyle(ability).fontSize);
+  let flavorSize = Number.parseFloat(getComputedStyle(flavor).fontSize);
+
+  while (panel.scrollHeight > panel.clientHeight && (abilitySize > minAbilitySize || flavorSize > minFlavorSize)) {
+    if (abilitySize > minAbilitySize) {
+      abilitySize = Math.max(minAbilitySize, abilitySize - 1);
+      ability.style.fontSize = `${abilitySize}px`;
+      ability.style.lineHeight = "1.22";
+    }
+
+    if (panel.scrollHeight <= panel.clientHeight) break;
+
+    if (flavorSize > minFlavorSize) {
+      flavorSize = Math.max(minFlavorSize, flavorSize - 1);
+      flavor.style.fontSize = `${flavorSize}px`;
+      flavor.style.lineHeight = "1.18";
+    }
+  }
+}
 function syncCard() {
   syncTypeMode();
   const subtype = elements.subtypeInput.value.trim();
@@ -191,6 +241,7 @@ function syncCard() {
   const rarity = elements.rarityInput.value;
 
   updateText(elements.cardName, elements.nameInput.value, "Untitled Card");
+  fitCardName();
   updateText(elements.cardType, typeLine, "Card");
   elements.cardCost.textContent = formatCost(elements.costInput.value);
   updateText(elements.cardAttack, elements.attackInput.value, "0");
@@ -217,6 +268,7 @@ function syncCard() {
   document.documentElement.style.setProperty("--card-text", elements.textColor.value);
   document.documentElement.style.setProperty("--panel", elements.panelColor.value);
   document.documentElement.style.setProperty("--rarity-color", getRarityColor(rarity));
+  fitRulesText();
 }
 
 function isValidImageUri(value) {
@@ -630,6 +682,44 @@ async function deleteSelectedCard() {
   }
 }
 
+function setCanvasFontToFit(ctx, text, fontTemplate, defaultSize, minSize, maxWidth) {
+  let size = defaultSize;
+  ctx.font = fontTemplate(size);
+
+  while (ctx.measureText(text).width > maxWidth && size > minSize) {
+    size = Math.max(minSize, size - 1);
+    ctx.font = fontTemplate(size);
+  }
+
+  return size;
+}
+function splitLongCanvasWord(ctx, word, maxWidth) {
+  const chunks = [];
+  let remaining = word;
+
+  while (remaining && ctx.measureText(remaining).width > maxWidth) {
+    let length = remaining.length;
+    while (length > 1 && ctx.measureText(remaining.slice(0, length)).width > maxWidth) {
+      length -= 1;
+    }
+    chunks.push(remaining.slice(0, length));
+    remaining = remaining.slice(length);
+  }
+
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+function drawFittedCardName(ctx, text, x, y, maxWidth) {
+  const name = String(text || "Untitled Card");
+  const size = setCanvasFontToFit(ctx, name, (fontSize) => `700 ${fontSize}px Georgia`, 26, 17, maxWidth);
+
+  if (ctx.measureText(name).width <= maxWidth) {
+    ctx.fillText(name, x, y, maxWidth);
+    return;
+  }
+
+  drawWrappedText(ctx, name, x, y - 8, maxWidth, Math.ceil(size * 1.12), 2);
+}
 function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
   const paragraphs = String(text || "").split(/\r?\n/);
   let lineCount = 0;
@@ -646,6 +736,24 @@ function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
     }
 
     for (const word of words) {
+      if (ctx.measureText(word).width > maxWidth) {
+        if (line) {
+          ctx.fillText(line, x, y);
+          y += lineHeight;
+          lineCount += 1;
+          if (lineCount >= maxLines) return;
+          line = "";
+        }
+
+        for (const chunk of splitLongCanvasWord(ctx, word, maxWidth)) {
+          ctx.fillText(chunk, x, y);
+          y += lineHeight;
+          lineCount += 1;
+          if (lineCount >= maxLines) return;
+        }
+        continue;
+      }
+
       const testLine = line ? `${line} ${word}` : word;
       if (ctx.measureText(testLine).width > maxWidth && line) {
         ctx.fillText(line, x, y);
@@ -667,6 +775,55 @@ function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
   }
 }
 
+function countWrappedTextLines(ctx, text, maxWidth) {
+  const paragraphs = String(text || "").split(/\r?\n/);
+  let lineCount = 0;
+
+  for (const paragraph of paragraphs) {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    let line = "";
+
+    if (!words.length) {
+      lineCount += 1;
+      continue;
+    }
+
+    for (const word of words) {
+      if (ctx.measureText(word).width > maxWidth) {
+        if (line) {
+          lineCount += 1;
+          line = "";
+        }
+        lineCount += splitLongCanvasWord(ctx, word, maxWidth).length;
+        continue;
+      }
+
+      const testLine = line ? `${line} ${word}` : word;
+      if (ctx.measureText(testLine).width > maxWidth && line) {
+        lineCount += 1;
+        line = word;
+      } else {
+        line = testLine;
+      }
+    }
+
+    if (line) lineCount += 1;
+  }
+
+  return lineCount;
+}
+
+function getFittedTextSize(ctx, text, fontTemplate, defaultSize, minSize, maxWidth, maxLines) {
+  let size = defaultSize;
+  ctx.font = fontTemplate(size);
+
+  while (countWrappedTextLines(ctx, text, maxWidth) > maxLines && size > minSize) {
+    size = Math.max(minSize, size - 1);
+    ctx.font = fontTemplate(size);
+  }
+
+  return size;
+}
 function roundRect(ctx, x, y, width, height, radius) {
   ctx.beginPath();
   ctx.moveTo(x + radius, y);
@@ -728,55 +885,68 @@ async function exportPng() {
   ctx.stroke();
 
   ctx.fillStyle = elements.textColor.value;
+  const cardName = elements.nameInput.value || "Untitled Card";
+  drawFittedCardName(ctx, cardName, 48, 76, 474);
   ctx.font = "700 20px system-ui";
-  ctx.fillText(typeLine, 48, 72);
-  ctx.font = "700 40px Georgia";
-  ctx.fillText(elements.nameInput.value || "Untitled Card", 48, 118);
+  ctx.fillText(typeLine, 48, 116, 474);
 
   ctx.fillStyle = elements.accentColor.value;
   ctx.beginPath();
-  ctx.arc(550, 82, 39, 0, Math.PI * 2);
+  ctx.arc(550, 102, 28, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#191510";
-  ctx.font = "900 38px system-ui";
+  ctx.font = "900 26px system-ui";
   ctx.textAlign = "center";
-  ctx.fillText(formatCost(elements.costInput.value), 550, 96);
+  ctx.fillText(formatCost(elements.costInput.value), 550, 111);
   ctx.textAlign = "left";
 
+  const boxX = 48;
+  const boxWidth = 534;
+  const boxHeight = 284;
+  const artY = 148;
+  const rulesY = artY + boxHeight + 24;
+
   ctx.save();
-  roundRect(ctx, 48, 148, 534, 356, 14);
+  roundRect(ctx, boxX, artY, boxWidth, boxHeight, 14);
   ctx.clip();
   if (elements.art.src) {
-    drawImageFit(ctx, elements.art, 48, 148, 534, 356, elements.fitInput.value);
+    drawImageFit(ctx, elements.art, boxX, artY, boxWidth, boxHeight, elements.fitInput.value);
   } else {
-    const gradient = ctx.createLinearGradient(48, 148, 582, 504);
+    const gradient = ctx.createLinearGradient(boxX, artY, boxX + boxWidth, artY + boxHeight);
     gradient.addColorStop(0, elements.accentColor.value);
     gradient.addColorStop(1, "#35473d");
     ctx.fillStyle = gradient;
-    ctx.fillRect(48, 148, 534, 356);
+    ctx.fillRect(boxX, artY, boxWidth, boxHeight);
     ctx.fillStyle = "rgba(255,255,255,0.72)";
     ctx.font = "900 72px system-ui";
     ctx.textAlign = "center";
-    ctx.fillText("ART", 315, 345);
+    ctx.fillText("ART", boxX + boxWidth / 2, artY + boxHeight / 2 + 24);
     ctx.textAlign = "left";
   }
   ctx.restore();
 
   ctx.save();
   ctx.fillStyle = elements.panelColor.value;
-  roundRect(ctx, 48, 528, 534, 212, 14);
+  roundRect(ctx, boxX, rulesY, boxWidth, boxHeight, 14);
   ctx.fill();
+  const rulesTextWidth = isStatless ? 494 : 330;
+  const abilityText = elements.abilityInput.value || "Add rules text.";
+  const flavorText = elements.flavorInput.value;
+  const abilityMaxLines = flavorText ? 3 : 6;
+  const flavorMaxLines = 3;
+  const abilitySize = getFittedTextSize(ctx, abilityText, (size) => `${size}px system-ui`, 26, 12, rulesTextWidth, abilityMaxLines);
+  const flavorSize = getFittedTextSize(ctx, flavorText, (size) => `italic ${size}px Georgia`, 22, 10, rulesTextWidth, flavorMaxLines);
   ctx.fillStyle = "#242014";
-  ctx.font = "26px system-ui";
-  drawWrappedText(ctx, elements.abilityInput.value || "Add rules text.", 68, 575, 494, 34, 4);
+  ctx.font = `${abilitySize}px system-ui`;
+  drawWrappedText(ctx, abilityText, 68, rulesY + 47, rulesTextWidth, Math.ceil(abilitySize * 1.31), abilityMaxLines);
   ctx.strokeStyle = "rgba(0,0,0,0.2)";
   ctx.beginPath();
-  ctx.moveTo(68, 665);
-  ctx.lineTo(562, 665);
+  ctx.moveTo(68, rulesY + 150);
+  ctx.lineTo(562, rulesY + 150);
   ctx.stroke();
   ctx.fillStyle = "#66573b";
-  ctx.font = "italic 22px Georgia";
-  drawWrappedText(ctx, elements.flavorInput.value, 68, 704, 494, 29, 2);
+  ctx.font = `italic ${flavorSize}px Georgia`;
+  drawWrappedText(ctx, flavorText, 68, rulesY + 188, rulesTextWidth, Math.ceil(flavorSize * 1.32), flavorMaxLines);
   ctx.restore();
 
   ctx.save();
@@ -796,28 +966,28 @@ async function exportPng() {
   if (!isStatless) {
     ctx.fillStyle = "rgba(0,0,0,0.22)";
     if (isLoyalty) {
-      roundRect(ctx, 442, 766, 134, 54, 27);
+      roundRect(ctx, 430, 699, 134, 54, 27);
       ctx.fill();
     } else {
-      roundRect(ctx, 388, 766, 82, 54, 27);
+      roundRect(ctx, 384, 699, 82, 54, 27);
       ctx.fill();
-      roundRect(ctx, 494, 766, 82, 54, 27);
+      roundRect(ctx, 482, 699, 82, 54, 27);
       ctx.fill();
     }
 
     ctx.fillStyle = elements.textColor.value;
     if (isLoyalty) {
       ctx.font = "900 15px system-ui";
-      ctx.fillText("LOYALTY", 460, 799);
+      ctx.fillText("LOYALTY", 448, 732);
       ctx.font = "900 30px system-ui";
-      ctx.fillText(elements.loyaltyInput.value || "0", 540, 802);
+      ctx.fillText(elements.loyaltyInput.value || "0", 528, 735);
     } else {
       ctx.font = "900 18px system-ui";
-      ctx.fillText("ATK", 405, 799);
-      ctx.fillText("HP", 514, 799);
+      ctx.fillText("ATK", 401, 732);
+      ctx.fillText("HP", 502, 732);
       ctx.font = "900 30px system-ui";
-      ctx.fillText(elements.attackInput.value || "0", 445, 802);
-      ctx.fillText(elements.healthInput.value || "0", 550, 802);
+      ctx.fillText(elements.attackInput.value || "0", 441, 735);
+      ctx.fillText(elements.healthInput.value || "0", 538, 735);
     }
   }
 
@@ -859,6 +1029,10 @@ function attachEvents() {
   });
   elements.loadSavedButton.addEventListener("click", loadSelectedCard);
   elements.deleteSavedButton.addEventListener("click", deleteSelectedCard);
+  window.addEventListener("resize", () => {
+    fitCardName();
+    fitRulesText();
+  });
 }
 
 async function initialize() {
@@ -882,6 +1056,3 @@ async function initialize() {
 }
 
 initialize();
-
-
-
