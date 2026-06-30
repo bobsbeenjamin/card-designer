@@ -49,6 +49,7 @@ const elements = {
   collectorInput: document.querySelector("#collectorInput"),
   rarityInput: document.querySelector("#rarityInput"),
   artInput: document.querySelector("#artInput"),
+  artUrlInput: document.querySelector("#artUrlInput"),
   fitInput: document.querySelector("#fitInput"),
   frameColor: document.querySelector("#frameColor"),
   accentColor: document.querySelector("#accentColor"),
@@ -218,6 +219,57 @@ function syncCard() {
   document.documentElement.style.setProperty("--rarity-color", getRarityColor(rarity));
 }
 
+function isValidImageUri(value) {
+  const artUrl = String(value || "").trim();
+  if (!artUrl) return true;
+  if (artUrl.startsWith("data:image/")) return true;
+
+  try {
+    const url = new URL(artUrl);
+    return ["http:", "https:"].includes(url.protocol);
+  } catch (error) {
+    return false;
+  }
+}
+function clearArt() {
+  elements.art.removeAttribute("src");
+  elements.artWindow.classList.remove("has-image");
+}
+
+function setArtSource(src, statusMessage = "") {
+  const artUrl = String(src || "").trim();
+  if (!artUrl) {
+    clearArt();
+    return;
+  }
+
+  if (!isValidImageUri(artUrl)) {
+    clearArt();
+    setSaveStatus("Enter a valid image URL.");
+    return;
+  }
+
+  elements.art.onload = () => {
+    elements.artWindow.classList.add("has-image");
+    if (statusMessage) setSaveStatus(statusMessage);
+  };
+  elements.art.onerror = () => {
+    clearArt();
+    if (statusMessage) setSaveStatus("Image URL did not load as an image.");
+  };
+
+  if (artUrl.startsWith("data:")) {
+    elements.art.removeAttribute("crossorigin");
+  } else {
+    elements.art.crossOrigin = "anonymous";
+  }
+  elements.art.src = artUrl;
+}
+
+function loadArtUrl() {
+  elements.artInput.value = "";
+  setArtSource(elements.artUrlInput.value, "Image URL loaded");
+}
 function resetCard() {
   state.currentCardId = "";
   elements.nameInput.value = defaults.name;
@@ -239,8 +291,8 @@ function resetCard() {
   elements.textColor.value = defaults.text;
   elements.panelColor.value = defaults.panel;
   elements.artInput.value = "";
-  elements.art.removeAttribute("src");
-  elements.artWindow.classList.remove("has-image");
+  elements.artUrlInput.value = "";
+  clearArt();
   syncCard();
 }
 
@@ -248,10 +300,10 @@ function loadArt(event) {
   const [file] = event.target.files;
   if (!file) return;
 
+  elements.artUrlInput.value = "";
   const reader = new FileReader();
   reader.addEventListener("load", () => {
-    elements.art.src = reader.result;
-    elements.artWindow.classList.add("has-image");
+    setArtSource(reader.result);
   });
   reader.readAsDataURL(file);
 }
@@ -313,12 +365,12 @@ function applyCardData(card) {
   elements.textColor.value = card.colors?.text || defaults.text;
   elements.panelColor.value = card.colors?.panel || defaults.panel;
 
+  elements.artInput.value = "";
+  elements.artUrlInput.value = card.artUrl && !card.artUrl.startsWith("data:") ? card.artUrl : "";
   if (card.artUrl) {
-    elements.art.src = card.artUrl;
-    elements.artWindow.classList.add("has-image");
+    setArtSource(card.artUrl);
   } else {
-    elements.art.removeAttribute("src");
-    elements.artWindow.classList.remove("has-image");
+    clearArt();
   }
 
   syncCard();
@@ -771,8 +823,12 @@ async function exportPng() {
 
   const link = document.createElement("a");
   link.download = `${(elements.nameInput.value || "card").trim().replace(/\W+/g, "-").toLowerCase()}-front.png`;
-  link.href = canvas.toDataURL("image/png");
-  link.click();
+  try {
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  } catch (error) {
+    setSaveStatus("PNG export failed because the image URL does not allow canvas export.");
+  }
 }
 
 function attachEvents() {
@@ -781,6 +837,7 @@ function attachEvents() {
   });
 
   elements.artInput.addEventListener("change", loadArt);
+  elements.artUrlInput.addEventListener("change", loadArtUrl);
   elements.resetCard.addEventListener("click", resetCard);
   elements.exportPng.addEventListener("click", () => exportPng());
   elements.signUpButton.addEventListener("click", signUp);
@@ -825,4 +882,6 @@ async function initialize() {
 }
 
 initialize();
+
+
 
