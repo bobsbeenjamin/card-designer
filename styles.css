@@ -378,6 +378,7 @@ h1 {
   font-size: clamp(0.92rem, 2.4vw, 1.05rem);
   line-height: 1.32;
   margin-bottom: 10px;
+  white-space: pre-line;
 }
 
 .flavor-text {
@@ -389,6 +390,7 @@ h1 {
   line-height: 1.25;
   margin-bottom: 0;
   padding-top: 9px;
+  white-space: pre-line;
 }
 
 .card-footer {
@@ -635,6 +637,7 @@ input[type="color"] {
     width: 44px;
   }
 }
+
 
 
 

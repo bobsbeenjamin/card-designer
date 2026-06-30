@@ -537,25 +537,39 @@ async function deleteSelectedCard() {
 }
 
 function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
-  const words = String(text || "").split(/\s+/).filter(Boolean);
-  let line = "";
-  let lines = 0;
+  const paragraphs = String(text || "").split(/\r?\n/);
+  let lineCount = 0;
 
-  for (const word of words) {
-    const testLine = line ? `${line} ${word}` : word;
-    if (ctx.measureText(testLine).width > maxWidth && line) {
+  for (const paragraph of paragraphs) {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    let line = "";
+
+    if (!words.length) {
+      y += lineHeight;
+      lineCount += 1;
+      if (lineCount >= maxLines) return;
+      continue;
+    }
+
+    for (const word of words) {
+      const testLine = line ? `${line} ${word}` : word;
+      if (ctx.measureText(testLine).width > maxWidth && line) {
+        ctx.fillText(line, x, y);
+        y += lineHeight;
+        lineCount += 1;
+        if (lineCount >= maxLines) return;
+        line = word;
+      } else {
+        line = testLine;
+      }
+    }
+
+    if (line) {
       ctx.fillText(line, x, y);
       y += lineHeight;
-      line = word;
-      lines += 1;
-      if (lines >= maxLines - 1) break;
-    } else {
-      line = testLine;
+      lineCount += 1;
+      if (lineCount >= maxLines) return;
     }
-  }
-
-  if (line && lines < maxLines) {
-    ctx.fillText(line, x, y);
   }
 }
 
