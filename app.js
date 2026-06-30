@@ -1,40 +1,8 @@
 const backendConfig = window.backendConfig;
 
-const defaults = {
-  name: "Spanky and Our Gang",
-  type: "Person",
-  subtype: "Rock Band",
-  cost: "4",
-  statMode: "combat",
-  attack: "1",
-  health: "6",
-  loyalty: "5",
-  ability:
-    "When this enters play or attacks, create a treasure token for each Rock Band you control.",
-  flavor: '"Lazy day! Just right for lovin\' away!"',
-  artist: "Ed Sullivan Show",
-  collector: "012/180",
-  rarity: "uncommon",
-  fit: "cover",
-  frame: "#263a31",
-  accent: "#d69d42",
-  text: "#f8f4e8",
-  panel: "#fff7df",
-};
-
-const rarityColors = {
-  common: "#b8c2bc",
-  uncommon: "#8fb199",
-  rare: "#5a8fcf",
-  mythic: "#d07a35",
-};
-
-const rarityLabels = {
-  common: "Common",
-  uncommon: "Uncommon",
-  rare: "Rare",
-  mythic: "Mythic",
-};
+let defaults = {};
+let rarityColors = {};
+let rarityLabels = {};
 
 function getStoredIdToken() {
   const token = sessionStorage.getItem("cardDesignerIdToken") || "";
@@ -109,6 +77,29 @@ const elements = {
   exportPng: document.querySelector("#exportPng"),
 };
 
+function getRarityColor(rarity) {
+  return rarityColors[rarity] || rarityColors.common || "currentColor";
+}
+
+function getRarityLabel(rarity) {
+  return rarityLabels[rarity] || rarityLabels.common;
+}
+
+async function loadCardDefaults() {
+  const response = await fetch("defaults/card-defaults.json");
+  if (!response.ok) throw new Error("Card defaults failed to load.");
+
+  defaults = await response.json();
+}
+async function loadRarityInfo() {
+  const response = await fetch("defaults/rarity-info.json");
+  if (!response.ok) throw new Error("Rarity defaults failed to load.");
+
+  const rarityInfo = await response.json();
+  rarityColors = rarityInfo.colors || {};
+  rarityLabels = rarityInfo.labels || {};
+}
+
 function updateText(target, value, fallback) {
   target.textContent = String(value || "").trim() || fallback;
 }
@@ -143,8 +134,15 @@ function formatCost(value) {
   return `$${String(value || "").trim() || "0"}`;
 }
 
-const standardTypes = window.cardTypes || [];
+let standardTypes = [];
 const statlessTypes = ["Event", "Item"];
+
+async function loadCardTypes() {
+  const response = await fetch("defaults/card-types.json");
+  if (!response.ok) throw new Error("Card type defaults failed to load.");
+
+  standardTypes = await response.json();
+}
 
 function syncTypeMode() {
   const isCustom = elements.typeInput.value === "__custom";
@@ -203,7 +201,7 @@ function syncCard() {
     "Art: Unknown",
   );
   updateText(elements.cardCollector, elements.collectorInput.value, "000/000");
-  updateText(elements.cardRarity, rarityLabels[rarity], "Common");
+  updateText(elements.cardRarity, getRarityLabel(rarity), getRarityLabel("common"));
 
   elements.card.classList.toggle("is-loyalty", isLoyalty);
   elements.card.classList.toggle("is-statless", isStatless);
@@ -215,7 +213,7 @@ function syncCard() {
   document.documentElement.style.setProperty("--accent", elements.accentColor.value);
   document.documentElement.style.setProperty("--card-text", elements.textColor.value);
   document.documentElement.style.setProperty("--panel", elements.panelColor.value);
-  document.documentElement.style.setProperty("--rarity-color", rarityColors[rarity]);
+  document.documentElement.style.setProperty("--rarity-color", getRarityColor(rarity));
 }
 
 function resetCard() {
@@ -676,12 +674,12 @@ async function exportPng() {
   ctx.save();
   ctx.translate(62, 862);
   ctx.rotate(Math.PI / 4);
-  ctx.fillStyle = rarityColors[rarity];
+  ctx.fillStyle = getRarityColor(rarity);
   ctx.fillRect(-9, -9, 18, 18);
   ctx.restore();
   ctx.fillStyle = elements.textColor.value;
   ctx.font = "700 15px system-ui";
-  ctx.fillText(rarityLabels[rarity], 84, 868);
+  ctx.fillText(getRarityLabel(rarity), 84, 868);
   ctx.fillText(`Art: ${elements.artistInput.value || "Unknown"}`, 162, 868);
   ctx.textAlign = "right";
   ctx.fillText(elements.collectorInput.value || "000/000", 562, 868);
@@ -750,14 +748,24 @@ function attachEvents() {
   elements.deleteSavedButton.addEventListener("click", deleteSelectedCard);
 }
 
-attachEvents();
-syncCard();
-renderSavedCards();
-updateAccountUi();
-if (state.idToken) {
-  setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
-  refreshSavedCards();
-} else if (sessionStorage.getItem("cardDesignerIdToken")) {
-  clearAuthSession();
-  setAuthStatus("Your session expired. Sign in again.");
+async function initialize() {
+  try {
+    await Promise.all([loadCardDefaults(), loadCardTypes(), loadRarityInfo()]);
+  } catch (error) {
+    setSaveStatus(error.message);
+  }
+
+  attachEvents();
+  syncCard();
+  renderSavedCards();
+  updateAccountUi();
+  if (state.idToken) {
+    setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
+    refreshSavedCards();
+  } else if (sessionStorage.getItem("cardDesignerIdToken")) {
+    clearAuthSession();
+    setAuthStatus("Your session expired. Sign in again.");
+  }
 }
+
+initialize();

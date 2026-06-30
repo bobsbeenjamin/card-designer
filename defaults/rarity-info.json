@@ -1,0 +1,14 @@
+{
+  "colors": {
+    "common": "#b8c2bc",
+    "uncommon": "#8fb199",
+    "rare": "#5a8fcf",
+    "mythic": "#d07a35"
+  },
+  "labels": {
+    "common": "Common",
+    "uncommon": "Uncommon",
+    "rare": "Rare",
+    "mythic": "Mythic"
+  }
+}
