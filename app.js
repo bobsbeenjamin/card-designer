@@ -36,8 +36,13 @@ const rarityLabels = {
   mythic: "Mythic",
 };
 
+function getStoredIdToken() {
+  const token = sessionStorage.getItem("cardDesignerIdToken") || "";
+  return isJwtExpired(token) ? "" : token;
+}
+
 const state = {
-  idToken: sessionStorage.getItem("cardDesignerIdToken") || "",
+  idToken: getStoredIdToken(),
   email: sessionStorage.getItem("cardDesignerEmail") || "",
   currentCardId: "",
   savedCards: [],
@@ -356,7 +361,18 @@ async function signIn() {
   }
 }
 
-function signOut() {
+function isJwtExpired(token) {
+  if (!token) return true;
+
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return !payload.exp || payload.exp * 1000 <= Date.now();
+  } catch (error) {
+    return true;
+  }
+}
+
+function clearAuthSession() {
   state.idToken = "";
   state.email = "";
   state.currentCardId = "";
@@ -365,24 +381,34 @@ function signOut() {
   sessionStorage.removeItem("cardDesignerEmail");
   updateAccountUi();
   renderSavedCards();
+}
+
+function signOut() {
+  clearAuthSession();
   setAuthStatus("Signed out");
   setSaveStatus("Sign in to save designs");
 }
 
 async function apiFetch(path, options = {}) {
-  if (!state.idToken) {
-    throw new Error("Sign in before using saved designs.");
+  if (!state.idToken || isJwtExpired(state.idToken)) {
+    clearAuthSession();
+    throw new Error("Your session expired. Sign in again to load saved designs.");
   }
 
   const response = await fetch(`${backendConfig.apiUrl}${path}`, {
     ...options,
     headers: {
-      authorization: `Bearer ${state.idToken}`,
+      Authorization: `Bearer ${state.idToken}`,
       "content-type": "application/json",
       ...(options.headers || {}),
     },
   });
   const data = await response.json().catch(() => ({}));
+
+  if (response.status === 401) {
+    clearAuthSession();
+    throw new Error("Your session expired. Sign in again to load saved designs.");
+  }
 
   if (!response.ok) {
     throw new Error(data.error || `API request failed with ${response.status}.`);
@@ -677,4 +703,7 @@ updateAccountUi();
 if (state.idToken) {
   setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
   refreshSavedCards();
+} else if (sessionStorage.getItem("cardDesignerIdToken")) {
+  clearAuthSession();
+  setAuthStatus("Your session expired. Sign in again.");
 }
