@@ -447,6 +447,11 @@ h1 {
   display: grid;
 }
 
+.is-statless .loyalty-stat,
+.is-statless .stat-pair {
+  display: none;
+}
+
 .stat-label {
   color: color-mix(in srgb, var(--card-text) 70%, var(--accent));
   font-size: 0.7rem;

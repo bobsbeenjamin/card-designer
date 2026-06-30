@@ -144,6 +144,7 @@ function formatCost(value) {
 }
 
 const standardTypes = window.cardTypes || [];
+const statlessTypes = ["Event", "Item"];
 
 function syncTypeMode() {
   const isCustom = elements.typeInput.value === "__custom";
@@ -156,6 +157,10 @@ function getSelectedType() {
   }
 
   return elements.typeInput.value.trim();
+}
+
+function isStatlessType(typeValue) {
+  return statlessTypes.includes(String(typeValue || "").trim());
 }
 
 function setTypeControl(value) {
@@ -177,7 +182,11 @@ function syncCard() {
   const subtype = elements.subtypeInput.value.trim();
   const typeValue = getSelectedType();
   const typeLine = subtype ? `${typeValue || "Card"} - ${subtype}` : typeValue;
-  const isLoyalty = elements.statModeInput.value === "loyalty";
+  const isStatless = isStatlessType(typeValue);
+  if (!isStatless && !["combat", "loyalty"].includes(elements.statModeInput.value)) {
+    elements.statModeInput.value = "combat";
+  }
+  const isLoyalty = !isStatless && elements.statModeInput.value === "loyalty";
   const rarity = elements.rarityInput.value;
 
   updateText(elements.cardName, elements.nameInput.value, "Untitled Card");
@@ -197,8 +206,10 @@ function syncCard() {
   updateText(elements.cardRarity, rarityLabels[rarity], "Common");
 
   elements.card.classList.toggle("is-loyalty", isLoyalty);
-  elements.combatInputs.classList.toggle("hidden", isLoyalty);
-  elements.loyaltyInputs.classList.toggle("hidden", !isLoyalty);
+  elements.card.classList.toggle("is-statless", isStatless);
+  elements.statModeInput.closest("label").classList.toggle("hidden", isStatless);
+  elements.combatInputs.classList.toggle("hidden", isStatless || isLoyalty);
+  elements.loyaltyInputs.classList.toggle("hidden", isStatless || !isLoyalty);
   elements.art.style.objectFit = elements.fitInput.value;
   document.documentElement.style.setProperty("--frame", elements.frameColor.value);
   document.documentElement.style.setProperty("--accent", elements.accentColor.value);
@@ -252,16 +263,22 @@ function collectCardData() {
     setSaveStatus("Design saved without art; uploaded image is too large for DynamoDB.");
   }
 
+  const typeValue = getSelectedType();
+  const isStatless = isStatlessType(typeValue);
+  const statMode = ["combat", "loyalty"].includes(elements.statModeInput.value)
+    ? elements.statModeInput.value
+    : "combat";
+
   return {
     name: elements.nameInput.value.trim() || "Untitled Card",
     artUrl,
     cost: Number(elements.costInput.value || 0),
-    type: getSelectedType(),
+    type: typeValue,
     sub_type: elements.subtypeInput.value.trim(),
-    statMode: elements.statModeInput.value,
-    attack: elements.statModeInput.value === "combat" ? Number(elements.attackInput.value || 0) : null,
-    health: elements.statModeInput.value === "combat" ? Number(elements.healthInput.value || 0) : null,
-    loyalty: elements.statModeInput.value === "loyalty" ? Number(elements.loyaltyInput.value || 0) : null,
+    statMode: isStatless ? "none" : statMode,
+    attack: !isStatless && statMode === "combat" ? Number(elements.attackInput.value || 0) : null,
+    health: !isStatless && statMode === "combat" ? Number(elements.healthInput.value || 0) : null,
+    loyalty: !isStatless && statMode === "loyalty" ? Number(elements.loyaltyInput.value || 0) : null,
     abilities: elements.abilityInput.value,
     flavorText: elements.flavorInput.value,
     artistName: elements.artistInput.value.trim(),
@@ -584,7 +601,11 @@ async function exportPng() {
   const typeValue = getSelectedType();
   const typeLine = subtype ? `${typeValue || "Card"} - ${subtype}` : typeValue || "Card";
   const rarity = elements.rarityInput.value;
-  const isLoyalty = elements.statModeInput.value === "loyalty";
+  const isStatless = isStatlessType(typeValue);
+  const statMode = ["combat", "loyalty"].includes(elements.statModeInput.value)
+    ? elements.statModeInput.value
+    : "combat";
+  const isLoyalty = !isStatless && statMode === "loyalty";
   const canvas = document.createElement("canvas");
   canvas.width = width * scale;
   canvas.height = height * scale;
@@ -666,29 +687,32 @@ async function exportPng() {
   ctx.fillText(elements.collectorInput.value || "000/000", 562, 868);
   ctx.textAlign = "left";
 
-  ctx.fillStyle = "rgba(0,0,0,0.22)";
-  if (isLoyalty) {
-    roundRect(ctx, 442, 766, 134, 54, 27);
-    ctx.fill();
-  } else {
-    roundRect(ctx, 388, 766, 82, 54, 27);
-    ctx.fill();
-    roundRect(ctx, 494, 766, 82, 54, 27);
-    ctx.fill();
-  }
-  ctx.fillStyle = elements.textColor.value;
-  if (isLoyalty) {
-    ctx.font = "900 15px system-ui";
-    ctx.fillText("LOYALTY", 460, 799);
-    ctx.font = "900 30px system-ui";
-    ctx.fillText(elements.loyaltyInput.value || "0", 540, 802);
-  } else {
-    ctx.font = "900 18px system-ui";
-    ctx.fillText("ATK", 405, 799);
-    ctx.fillText("HP", 514, 799);
-    ctx.font = "900 30px system-ui";
-    ctx.fillText(elements.attackInput.value || "0", 445, 802);
-    ctx.fillText(elements.healthInput.value || "0", 550, 802);
+  if (!isStatless) {
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    if (isLoyalty) {
+      roundRect(ctx, 442, 766, 134, 54, 27);
+      ctx.fill();
+    } else {
+      roundRect(ctx, 388, 766, 82, 54, 27);
+      ctx.fill();
+      roundRect(ctx, 494, 766, 82, 54, 27);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = elements.textColor.value;
+    if (isLoyalty) {
+      ctx.font = "900 15px system-ui";
+      ctx.fillText("LOYALTY", 460, 799);
+      ctx.font = "900 30px system-ui";
+      ctx.fillText(elements.loyaltyInput.value || "0", 540, 802);
+    } else {
+      ctx.font = "900 18px system-ui";
+      ctx.fillText("ATK", 405, 799);
+      ctx.fillText("HP", 514, 799);
+      ctx.font = "900 30px system-ui";
+      ctx.fillText(elements.attackInput.value || "0", 445, 802);
+      ctx.fillText(elements.healthInput.value || "0", 550, 802);
+    }
   }
 
   const link = document.createElement("a");
