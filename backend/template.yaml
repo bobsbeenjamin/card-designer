@@ -140,6 +140,12 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /cards/{cardId}
             Method: DELETE
+        ProxyImage:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /image-proxy
+            Method: GET
 
 Outputs:
   ApiUrl:

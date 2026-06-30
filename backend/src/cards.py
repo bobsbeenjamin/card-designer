@@ -1,7 +1,12 @@
-import json
+import base64
 from decimal import Decimal
+import ipaddress
+import json
 import os
+import socket
 import time
+from urllib.parse import unquote_plus, urlparse
+from urllib.request import Request, urlopen
 import uuid
 
 import boto3
@@ -10,6 +15,7 @@ from boto3.dynamodb.conditions import Key
 
 TABLE_NAME = os.environ["TABLE_NAME"]
 TABLE = boto3.resource("dynamodb").Table(TABLE_NAME)
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 ALLOWED_FIELDS = {
     "name",
@@ -36,6 +42,9 @@ def handler(event, _context):
         method = event["requestContext"]["http"]["method"]
         route_key = event["routeKey"]
 
+        if method == "GET" and route_key == "GET /image-proxy":
+            return proxy_image(event)
+
         if method == "GET" and route_key == "GET /cards":
             return ok(list_cards(user_id))
 
@@ -58,6 +67,46 @@ def handler(event, _context):
     except PermissionError:
         return error("Unauthorized", 401)
 
+
+def proxy_image(event):
+    raw_url = (event.get("queryStringParameters") or {}).get("url", "")
+    image_url = unquote_plus(raw_url).strip()
+    validate_image_url(image_url)
+
+    request = Request(image_url, headers={"User-Agent": "card-designer-image-proxy/1.0"})
+    with urlopen(request, timeout=8) as response:
+        content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+        if not content_type.startswith("image/"):
+            raise ValueError("Image URL did not return an image.")
+
+        content_length = response.headers.get("content-length")
+        if content_length and int(content_length) > MAX_IMAGE_BYTES:
+            raise ValueError("Image is larger than 5 MB.")
+
+        image_bytes = response.read(MAX_IMAGE_BYTES + 1)
+        if len(image_bytes) > MAX_IMAGE_BYTES:
+            raise ValueError("Image is larger than 5 MB.")
+
+    return {
+        "statusCode": 200,
+        "headers": {
+            "cache-control": "public, max-age=86400",
+            "content-type": content_type,
+        },
+        "isBase64Encoded": True,
+        "body": base64.b64encode(image_bytes).decode("ascii"),
+    }
+
+
+def validate_image_url(image_url):
+    parsed = urlparse(image_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Enter a valid image URL.")
+
+    for result in socket.getaddrinfo(parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM):
+        address = ipaddress.ip_address(result[4][0])
+        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
+            raise ValueError("Image URL host is not allowed.")
 
 def get_user_id(event):
     claims = (

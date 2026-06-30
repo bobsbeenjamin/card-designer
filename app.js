@@ -283,13 +283,48 @@ function isValidImageUri(value) {
     return false;
   }
 }
+
+function revokeArtObjectUrl() {
+  if (state.artObjectUrl) {
+    URL.revokeObjectURL(state.artObjectUrl);
+    state.artObjectUrl = "";
+  }
+}
+
 function clearArt() {
+  revokeArtObjectUrl();
+  state.artUrl = "";
   elements.art.removeAttribute("src");
+  elements.art.removeAttribute("crossorigin");
   elements.artWindow.classList.remove("has-image");
 }
 
-function setArtSource(src, statusMessage = "") {
+async function getProxiedImageSource(artUrl) {
+  if (!state.idToken || isJwtExpired(state.idToken)) {
+    throw new Error("Sign in to load image URLs through the CORS-safe proxy.");
+  }
+
+  const response = await fetch(`${backendConfig.apiUrl}/image-proxy?url=${encodeURIComponent(artUrl)}`, {
+    headers: { Authorization: `Bearer ${state.idToken}` },
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Image proxy failed with ${response.status}.`);
+  }
+
+  const blob = await response.blob();
+  if (!blob.type.startsWith("image/")) {
+    throw new Error("Image URL did not return an image.");
+  }
+
+  return URL.createObjectURL(blob);
+}
+
+async function setArtSource(src, statusMessage = "") {
   const artUrl = String(src || "").trim();
+  revokeArtObjectUrl();
+  state.artUrl = artUrl;
   if (!artUrl) {
     clearArt();
     return;
@@ -310,12 +345,20 @@ function setArtSource(src, statusMessage = "") {
     if (statusMessage) setSaveStatus("Image URL did not load as an image.");
   };
 
+  elements.art.removeAttribute("crossorigin");
   if (artUrl.startsWith("data:")) {
-    elements.art.removeAttribute("crossorigin");
-  } else {
-    elements.art.crossOrigin = "anonymous";
+    elements.art.src = artUrl;
+    return;
   }
-  elements.art.src = artUrl;
+
+  try {
+    const objectUrl = await getProxiedImageSource(artUrl);
+    state.artObjectUrl = objectUrl;
+    elements.art.src = objectUrl;
+  } catch (error) {
+    elements.art.src = artUrl;
+    setSaveStatus(`${error.message} Preview may work, but PNG export may fail.`);
+  }
 }
 
 function loadArtUrl() {
@@ -361,7 +404,7 @@ function loadArt(event) {
 }
 
 function collectCardData() {
-  let artUrl = elements.art.src || "";
+  let artUrl = state.artUrl || elements.art.src || "";
   if (artUrl.startsWith("data:") && artUrl.length > 300000) {
     artUrl = "";
     setSaveStatus("Design saved without art; uploaded image is too large for DynamoDB.");

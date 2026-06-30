@@ -5,3 +5,4 @@ samconfig.toml
 config.local.js
 *.pem
 *.key
+**/__pycache__/**
