@@ -27,6 +27,7 @@ Globals:
     Environment:
       Variables:
         TABLE_NAME: !Ref CardDesignsTable
+        SETS_TABLE_NAME: !Ref CardSetsTable
 
 Resources:
   CardDesignsTable:
@@ -47,6 +48,24 @@ Resources:
         - AttributeName: cardId
           KeyType: RANGE
 
+  CardSetsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "card-designer-${AppEnvironment}-card-sets"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: code
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: code
+          KeyType: RANGE
+
   CardDesignerUserPool:
     Type: AWS::Cognito::UserPool
     Properties:
@@ -55,6 +74,8 @@ Resources:
         - email
       AutoVerifiedAttributes:
         - email
+      LambdaConfig:
+        PostConfirmation: !GetAtt CardDesignerPostConfirmationFunction.Arn
       Policies:
         PasswordPolicy:
           MinimumLength: 12
@@ -73,6 +94,25 @@ Resources:
         - ALLOW_USER_SRP_AUTH
         - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
+
+
+  CardDesignerPostConfirmationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "card-designer-${AppEnvironment}-post-confirmation"
+      CodeUri: src/
+      Handler: post_confirmation.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CardSetsTable
+
+  CardDesignerPostConfirmationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt CardDesignerPostConfirmationFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt CardDesignerUserPool.Arn
 
   CardDesignerApi:
     Type: AWS::Serverless::HttpApi
@@ -109,7 +149,21 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CardDesignsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CardSetsTable
       Events:
+        ListSets:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /sets
+            Method: GET
+        CreateSet:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /sets
+            Method: POST
         ListCards:
           Type: HttpApi
           Properties:
@@ -158,5 +212,8 @@ Outputs:
     Description: Public Cognito app client id for the browser app.
     Value: !Ref CardDesignerUserPoolClient
   TableName:
-    Description: DynamoDB table name.
+    Description: DynamoDB card designs table name.
     Value: !Ref CardDesignsTable
+  SetsTableName:
+    Description: DynamoDB card sets table name.
+    Value: !Ref CardSetsTable

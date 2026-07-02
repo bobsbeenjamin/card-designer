@@ -50,6 +50,17 @@
             <p id="authStatus" class="status-line">Signed out</p>
           </fieldset>
 
+          <fieldset id="mySetsPanel" class="hidden">
+            <legend>My Sets</legend>
+            <button id="addSetButton" class="button primary" type="button">Add Set</button>
+            <label>
+              <span>Card set</span>
+              <select id="cardSetsInput">
+                <option value="DEFAULT">DEFAULT - Default</option>
+              </select>
+            </label>
+          </fieldset>
+
           <fieldset>
             <legend>Saved Designs</legend>
             <label>
@@ -145,6 +156,12 @@
           <fieldset>
             <legend>Identity</legend>
             <label>
+              <span>Set</span>
+              <select id="setInput">
+                <option value="DEFAULT">DEFAULT - Default</option>
+              </select>
+            </label>
+            <label>
               <span>Name</span>
               <input id="nameInput" type="text" value="Spanky and Our Gang" maxlength="36" />
             </label>
@@ -226,9 +243,9 @@
             <label>
               <span>Art fit</span>
               <select id="fitInput">
-                <option value="cover" selected>Cover</option>
-                <option value="contain">Contain</option>
-                <option value="fill">Fill</option>
+                <option value="cover" selected>Cover (preserve ratio)</option>
+                <option value="contain">Contain (unaltered)</option>
+                <option value="fill">Fill (stretch)</option>
               </select>
             </label>
           </fieldset>
@@ -281,6 +298,32 @@
       </aside>
     </main>
 
+    <dialog id="setDialog" class="modal-dialog" aria-labelledby="setDialogTitle">
+      <form id="setDialogForm" class="modal-card">
+        <h2 id="setDialogTitle">Define a new set</h2>
+        <label>
+          <span>Code</span>
+          <input id="setCodeInput" type="text" maxlength="16" autocomplete="off" />
+        </label>
+        <label>
+          <span>Name</span>
+          <input id="setNameInput" type="text" maxlength="80" />
+        </label>
+        <label>
+          <span>Symbol image URL</span>
+          <input id="setSymbolInput" type="url" inputmode="url" />
+        </label>
+        <label>
+          <span>Copyright info</span>
+          <textarea id="setCopyrightInput" rows="3"></textarea>
+        </label>
+        <p id="setDialogStatus" class="status-line"></p>
+        <div class="modal-actions two-up">
+          <button id="cancelSetButton" class="button subtle" type="button">Cancel</button>
+          <button id="saveSetButton" class="button primary" type="button">Save</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="duplicateSaveDialog" class="modal-dialog" aria-labelledby="duplicateSaveTitle">
       <form method="dialog" class="modal-card">
@@ -293,6 +336,7 @@
         </div>
       </form>
     </dialog>
+
     <script src="config.js"></script>
     <script src="app.js"></script>
   </body>

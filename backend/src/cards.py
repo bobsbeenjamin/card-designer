@@ -14,8 +14,17 @@ from boto3.dynamodb.conditions import Key
 
 
 TABLE_NAME = os.environ["TABLE_NAME"]
-TABLE = boto3.resource("dynamodb").Table(TABLE_NAME)
+SETS_TABLE_NAME = os.environ["SETS_TABLE_NAME"]
+DYNAMODB = boto3.resource("dynamodb")
+TABLE = DYNAMODB.Table(TABLE_NAME)
+SETS_TABLE = DYNAMODB.Table(SETS_TABLE_NAME)
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+DEFAULT_SET = {
+    "code": "DEFAULT",
+    "name": "Default",
+    "symbol": "",
+    "copyrightInfo": "",
+}
 
 ALLOWED_FIELDS = {
     "name",
@@ -33,6 +42,7 @@ ALLOWED_FIELDS = {
     "collectorNumber",
     "rarity",
     "colors",
+    "setCode",
 }
 
 
@@ -44,6 +54,12 @@ def handler(event, _context):
 
         if method == "GET" and route_key == "GET /image-proxy":
             return proxy_image(event)
+
+        if method == "GET" and route_key == "GET /sets":
+            return ok(list_sets(user_id))
+
+        if method == "POST" and route_key == "POST /sets":
+            return ok(save_set(user_id, read_body(event)), status=201)
 
         if method == "GET" and route_key == "GET /cards":
             return ok(list_cards(user_id))
@@ -66,6 +82,7 @@ def handler(event, _context):
         return error(str(exc), 400)
     except PermissionError:
         return error("Unauthorized", 401)
+
 
 
 def proxy_image(event):
@@ -108,6 +125,7 @@ def validate_image_url(image_url):
         if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
             raise ValueError("Image URL host is not allowed.")
 
+
 def get_user_id(event):
     claims = (
         event.get("requestContext", {})
@@ -135,13 +153,98 @@ def clean_card(body):
     card = {key: body[key] for key in ALLOWED_FIELDS if key in body}
     if not card.get("name"):
         raise ValueError("Card name is required.")
+    card["setCode"] = normalize_set_code(card.get("setCode"))
     return card
 
 
-def list_cards(user_id):
+def normalize_set_code(value):
+    code = str(value or DEFAULT_SET["code"]).strip().upper()
+    return code or DEFAULT_SET["code"]
+
+
+def ensure_default_set_if_missing(user_id):
+    item = {"userId": user_id, **DEFAULT_SET}
+    try:
+        SETS_TABLE.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(userId) AND attribute_not_exists(code)",
+        )
+    except SETS_TABLE.meta.client.exceptions.ConditionalCheckFailedException:
+        pass
+
+
+def get_set(user_id, code):
+    response = SETS_TABLE.get_item(Key={"userId": user_id, "code": normalize_set_code(code)})
+    return response.get("Item")
+
+
+def validate_card_set(user_id, set_code):
+    ensure_default_set_if_missing(user_id)
+    if not get_set(user_id, set_code):
+        raise ValueError("Card set does not exist.")
+
+
+def list_sets(user_id):
+    ensure_default_set_if_missing(user_id)
+    response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
+    sets = sorted(response.get("Items", []), key=lambda item: item.get("code", ""))
+    return {"sets": sets}
+
+
+def clean_set(body):
+    code = normalize_set_code(body.get("code"))
+    if code == DEFAULT_SET["code"]:
+        raise ValueError("DEFAULT is reserved for the built-in set.")
+
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise ValueError("Set name is required.")
+
+    symbol = str(body.get("symbol") or "").strip()
+    if symbol:
+        validate_image_url(symbol)
+
+    return {
+        "code": code,
+        "name": name,
+        "symbol": symbol,
+        "copyrightInfo": str(body.get("copyrightInfo") or "").strip(),
+    }
+
+
+def save_set(user_id, body):
+    card_set = clean_set(body)
+    item = {"userId": user_id, **card_set}
+    try:
+        SETS_TABLE.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(userId) AND attribute_not_exists(code)",
+        )
+    except SETS_TABLE.meta.client.exceptions.ConditionalCheckFailedException:
+        raise ValueError("A set with this code already exists.")
+    return {"set": item}
+
+
+def backfill_card_set_codes(user_id):
     response = TABLE.query(
         KeyConditionExpression=Key("userId").eq(user_id),
-        ProjectionExpression="userId, cardId, #name, #type, sub_type, rarity, updatedAt",
+        ProjectionExpression="userId, cardId, setCode",
+    )
+    for item in response.get("Items", []):
+        if not item.get("setCode"):
+            TABLE.update_item(
+                Key={"userId": user_id, "cardId": item["cardId"]},
+                UpdateExpression="SET setCode = :setCode",
+                ExpressionAttributeValues={":setCode": DEFAULT_SET["code"]},
+            )
+
+
+def list_cards(user_id):
+    ensure_default_set_if_missing(user_id)
+    backfill_card_set_codes(user_id)
+    response = TABLE.query(
+        KeyConditionExpression=Key("userId").eq(user_id),
+        ProjectionExpression="userId, cardId, #name, #type, sub_type, rarity, setCode, updatedAt",
         ExpressionAttributeNames={"#name": "name", "#type": "type"},
         ScanIndexForward=False,
     )
@@ -153,12 +256,21 @@ def get_card(user_id, card_id):
     item = response.get("Item")
     if not item:
         raise ValueError("Card not found.")
+    if not item.get("setCode"):
+        item["setCode"] = DEFAULT_SET["code"]
+        TABLE.update_item(
+            Key={"userId": user_id, "cardId": card_id},
+            UpdateExpression="SET setCode = :setCode",
+            ExpressionAttributeValues={":setCode": DEFAULT_SET["code"]},
+        )
+    ensure_default_set_if_missing(user_id)
     return {"card": item}
 
 
 def save_card(user_id, body, card_id=None):
     now = int(time.time())
     card = clean_card(body)
+    validate_card_set(user_id, card["setCode"])
     item = {
         **card,
         "userId": user_id,

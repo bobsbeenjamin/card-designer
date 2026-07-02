@@ -14,6 +14,9 @@ const state = {
   email: sessionStorage.getItem("cardDesignerEmail") || "",
   currentCardId: "",
   savedCards: [],
+  savedSets: [],
+  artObjectUrl: "",
+  artUrl: "",
 };
 
 const elements = {
@@ -33,6 +36,7 @@ const elements = {
   cardCollector: document.querySelector("#cardCollector"),
   cardRarity: document.querySelector("#cardRarity"),
   nameInput: document.querySelector("#nameInput"),
+  setInput: document.querySelector("#setInput"),
   typeInput: document.querySelector("#typeInput"),
   customTypeInput: document.querySelector("#customTypeInput"),
   customTypeLabel: document.querySelector("#customTypeLabel"),
@@ -60,6 +64,18 @@ const elements = {
   passwordInput: document.querySelector("#passwordInput"),
   signInPanel: document.querySelector("#signInPanel"),
   signedInPanel: document.querySelector("#signedInPanel"),
+  mySetsPanel: document.querySelector("#mySetsPanel"),
+  cardSetsInput: document.querySelector("#cardSetsInput"),
+  addSetButton: document.querySelector("#addSetButton"),
+  setDialog: document.querySelector("#setDialog"),
+  setDialogForm: document.querySelector("#setDialogForm"),
+  setCodeInput: document.querySelector("#setCodeInput"),
+  setNameInput: document.querySelector("#setNameInput"),
+  setSymbolInput: document.querySelector("#setSymbolInput"),
+  setCopyrightInput: document.querySelector("#setCopyrightInput"),
+  setDialogStatus: document.querySelector("#setDialogStatus"),
+  cancelSetButton: document.querySelector("#cancelSetButton"),
+  saveSetButton: document.querySelector("#saveSetButton"),
   currentUserLabel: document.querySelector("#currentUserLabel"),
   accountMenuButton: document.querySelector("#accountMenuButton"),
   accountMenu: document.querySelector("#accountMenu"),
@@ -124,6 +140,7 @@ function updateAccountUi() {
   const signedIn = Boolean(state.idToken);
   elements.signInPanel.classList.toggle("hidden", signedIn);
   elements.signedInPanel.classList.toggle("hidden", !signedIn);
+  elements.mySetsPanel.classList.toggle("hidden", !signedIn);
   elements.currentUserLabel.textContent = state.email || "Account";
   if (!signedIn) closeAccountMenu();
 }
@@ -369,6 +386,7 @@ function resetCard() {
   state.currentCardId = "";
   elements.nameInput.value = defaults.name;
   setTypeControl(defaults.type);
+  elements.setInput.value = "DEFAULT";
   elements.subtypeInput.value = defaults.subtype;
   elements.costInput.value = defaults.cost;
   elements.statModeInput.value = defaults.statMode;
@@ -426,6 +444,7 @@ function collectCardData() {
     attack: !isStatless && statMode === "combat" ? Number(elements.attackInput.value || 0) : null,
     health: !isStatless && statMode === "combat" ? Number(elements.healthInput.value || 0) : null,
     loyalty: !isStatless && statMode === "loyalty" ? Number(elements.loyaltyInput.value || 0) : null,
+    setCode: elements.setInput.value || "DEFAULT",
     abilities: elements.abilityInput.value,
     flavorText: elements.flavorInput.value,
     artistName: elements.artistInput.value.trim(),
@@ -455,6 +474,9 @@ function applyCardData(card) {
   elements.artistInput.value = card.artistName || "";
   elements.collectorInput.value = card.collectorNumber || "";
   elements.rarityInput.value = card.rarity || "common";
+  elements.setInput.value = card.setCode || "DEFAULT";
+  elements.cardSetsInput.value = card.setCode || "DEFAULT";
+  renderSavedCards();
   elements.frameColor.value = card.colors?.frame || defaults.frame;
   elements.accentColor.value = card.colors?.accent || defaults.accent;
   elements.textColor.value = card.colors?.text || defaults.text;
@@ -550,7 +572,7 @@ async function signIn() {
     updateAccountUi();
     setAuthStatus(`Signed in as ${email}`);
     setSaveStatus("Loading saved designs...");
-    await refreshSavedCards();
+    await Promise.all([refreshSavedCards(), refreshCardSets()]);
   } catch (error) {
     setAuthStatus(error.message);
   }
@@ -572,10 +594,12 @@ function clearAuthSession() {
   state.email = "";
   state.currentCardId = "";
   state.savedCards = [];
+  state.savedSets = [];
   sessionStorage.removeItem("cardDesignerIdToken");
   sessionStorage.removeItem("cardDesignerEmail");
   updateAccountUi();
   renderSavedCards();
+  renderCardSets();
 }
 
 function signOut() {
@@ -612,8 +636,88 @@ async function apiFetch(path, options = {}) {
   return data;
 }
 
+function populateSetSelect(select, sets, selectedSetCode) {
+  select.innerHTML = "";
+
+  for (const cardSet of sets) {
+    const option = document.createElement("option");
+    option.value = cardSet.code || "DEFAULT";
+    option.textContent = `${option.value} - ${cardSet.name || "Untitled Set"}`;
+    select.append(option);
+  }
+
+  select.value = [...select.options].some((option) => option.value === selectedSetCode)
+    ? selectedSetCode
+    : "DEFAULT";
+}
+
+function renderCardSets() {
+  const selectedFilterSetCode = elements.cardSetsInput.value || "DEFAULT";
+  const selectedDesignSetCode = elements.setInput.value || "DEFAULT";
+  const sets = state.savedSets.length
+    ? state.savedSets
+    : [{ code: "DEFAULT", name: "Default", symbol: "", copyrightInfo: "" }];
+
+  populateSetSelect(elements.cardSetsInput, sets, selectedFilterSetCode);
+  populateSetSelect(elements.setInput, sets, selectedDesignSetCode);
+}
+
+async function refreshCardSets() {
+  try {
+    const data = await apiFetch("/sets");
+    state.savedSets = data.sets || [];
+    renderCardSets();
+  } catch (error) {
+    setSaveStatus(error.message);
+  }
+}
+
+function clearSetDialog() {
+  elements.setDialogForm.reset();
+  elements.setDialogStatus.textContent = "";
+}
+
+function openSetDialog() {
+  clearSetDialog();
+  elements.setDialog.showModal();
+  elements.setCodeInput.focus();
+}
+
+function closeSetDialog() {
+  clearSetDialog();
+  elements.setDialog.close();
+}
+
+async function saveSet() {
+  try {
+    const code = elements.setCodeInput.value.trim().toUpperCase();
+    const name = elements.setNameInput.value.trim();
+    const symbol = elements.setSymbolInput.value.trim();
+    const copyrightInfo = elements.setCopyrightInput.value.trim();
+    if (!code || !name) throw new Error("Enter a set code and name.");
+
+    const data = await apiFetch("/sets", {
+      method: "POST",
+      body: JSON.stringify({ code, name, symbol, copyrightInfo }),
+    });
+    const savedSetCode = data.set?.code || code;
+    await refreshCardSets();
+    elements.cardSetsInput.value = savedSetCode;
+    elements.setInput.value = savedSetCode;
+    renderSavedCards();
+    closeSetDialog();
+    setSaveStatus(`Set ${savedSetCode} saved`);
+  } catch (error) {
+    elements.setDialogStatus.textContent = error.message;
+  }
+}
+
 function renderSavedCards() {
+  const selectedCardId = elements.savedCardsInput.value;
+  const selectedSetCode = elements.cardSetsInput.value || "DEFAULT";
+  const cardsInSet = state.savedCards.filter((card) => (card.setCode || "DEFAULT") === selectedSetCode);
   elements.savedCardsInput.innerHTML = "";
+
   if (!state.savedCards.length) {
     const option = document.createElement("option");
     option.value = "";
@@ -622,11 +726,23 @@ function renderSavedCards() {
     return;
   }
 
-  for (const card of state.savedCards) {
+  if (!cardsInSet.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No saved cards in this set";
+    elements.savedCardsInput.append(option);
+    return;
+  }
+
+  for (const card of cardsInSet) {
     const option = document.createElement("option");
     option.value = card.cardId;
     option.textContent = `${card.name || "Untitled Card"} (${card.collectorNumber || card.rarity || "saved"})`;
     elements.savedCardsInput.append(option);
+  }
+
+  if (cardsInSet.some((card) => card.cardId === selectedCardId)) {
+    elements.savedCardsInput.value = selectedCardId;
   }
 }
 
@@ -674,8 +790,9 @@ async function saveCard(cardId = "") {
       body: JSON.stringify(card),
     });
     state.currentCardId = data.card.cardId;
+    elements.cardSetsInput.value = data.card.setCode || card.setCode || "DEFAULT";
     setSaveStatus(cardId ? "Saved changes" : "Saved new design");
-    await refreshSavedCards();
+    await Promise.all([refreshSavedCards(), refreshCardSets()]);
     elements.savedCardsInput.value = state.currentCardId;
   } catch (error) {
     setSaveStatus(error.message);
@@ -719,7 +836,7 @@ async function deleteSelectedCard() {
     await apiFetch(`/cards/${cardId}`, { method: "DELETE" });
     if (state.currentCardId === cardId) state.currentCardId = "";
     setSaveStatus("Deleted design");
-    await refreshSavedCards();
+    await Promise.all([refreshSavedCards(), refreshCardSets()]);
   } catch (error) {
     setSaveStatus(error.message);
   }
@@ -1051,6 +1168,15 @@ function attachEvents() {
 
   elements.artInput.addEventListener("change", loadArt);
   elements.artUrlInput.addEventListener("change", loadArtUrl);
+  elements.cardSetsInput.addEventListener("change", renderSavedCards);
+  elements.addSetButton.addEventListener("click", openSetDialog);
+  elements.cancelSetButton.addEventListener("click", closeSetDialog);
+  elements.saveSetButton.addEventListener("click", saveSet);
+  elements.setDialogForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveSet();
+  });
+  elements.setDialog.addEventListener("close", clearSetDialog);
   elements.resetCard.addEventListener("click", resetCard);
   elements.exportPng.addEventListener("click", () => exportPng());
   elements.signUpButton.addEventListener("click", signUp);
@@ -1088,10 +1214,12 @@ async function initialize() {
   attachEvents();
   syncCard();
   renderSavedCards();
+  renderCardSets();
   updateAccountUi();
   if (state.idToken) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
     refreshSavedCards();
+    refreshCardSets();
   } else if (sessionStorage.getItem("cardDesignerIdToken")) {
     clearAuthSession();
     setAuthStatus("Your session expired. Sign in again.");
