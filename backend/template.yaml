@@ -28,6 +28,7 @@ Globals:
       Variables:
         TABLE_NAME: !Ref CardDesignsTable
         SETS_TABLE_NAME: !Ref CardSetsTable
+        USER_BUCKET_PREFIX: !Sub "cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}"
 
 Resources:
   CardDesignsTable:
@@ -105,6 +106,14 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CardSetsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:CreateBucket
+                - s3:ListBucket
+                - s3:PutEncryptionConfiguration
+                - s3:PutBucketPublicAccessBlock
+              Resource: !Sub "arn:${AWS::Partition}:s3:::cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}-*"
 
   CardDesignerPostConfirmationPermission:
     Type: AWS::Lambda::Permission
@@ -151,6 +160,20 @@ Resources:
             TableName: !Ref CardDesignsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref CardSetsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:CreateBucket
+                - s3:ListBucket
+                - s3:PutEncryptionConfiguration
+                - s3:PutBucketPublicAccessBlock
+              Resource: !Sub "arn:${AWS::Partition}:s3:::cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}-*"
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:DeleteObject
+              Resource: !Sub "arn:${AWS::Partition}:s3:::cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}-*/*"
       Events:
         ListSets:
           Type: HttpApi

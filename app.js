@@ -67,6 +67,13 @@ const elements = {
   mySetsPanel: document.querySelector("#mySetsPanel"),
   cardSetsInput: document.querySelector("#cardSetsInput"),
   addSetButton: document.querySelector("#addSetButton"),
+  viewSetsButton: document.querySelector("#viewSetsButton"),
+  setLibraryDialog: document.querySelector("#setLibraryDialog"),
+  setLibraryTitle: document.querySelector("#setLibraryTitle"),
+  setLibraryBackButton: document.querySelector("#setLibraryBackButton"),
+  setLibraryCloseButton: document.querySelector("#setLibraryCloseButton"),
+  setLibraryStatus: document.querySelector("#setLibraryStatus"),
+  setLibraryContent: document.querySelector("#setLibraryContent"),
   setDialog: document.querySelector("#setDialog"),
   setDialogForm: document.querySelector("#setDialogForm"),
   setCodeInput: document.querySelector("#setCodeInput"),
@@ -712,6 +719,140 @@ async function saveSet() {
   }
 }
 
+
+function getAvailableSets() {
+  return state.savedSets.length
+    ? state.savedSets
+    : [{ code: "DEFAULT", name: "Default", symbol: "", copyrightInfo: "" }];
+}
+
+function renderSetSymbolPreview(cardSet) {
+  const symbol = document.createElement("div");
+  symbol.className = "set-symbol-preview";
+  if (cardSet.symbol) {
+    const image = document.createElement("img");
+    image.alt = "";
+    image.src = cardSet.symbol;
+    image.addEventListener("error", () => {
+      symbol.replaceChildren(document.createElement("span"));
+    });
+    symbol.append(image);
+  } else {
+    symbol.append(document.createElement("span"));
+  }
+  return symbol;
+}
+
+function renderSetLibraryList() {
+  elements.setLibraryTitle.textContent = "My Sets";
+  elements.setLibraryBackButton.classList.add("hidden");
+  elements.setLibraryStatus.textContent = "";
+  elements.setLibraryContent.innerHTML = "";
+  const list = document.createElement("div");
+  list.className = "set-list";
+
+  for (const cardSet of getAvailableSets()) {
+    const row = document.createElement("div");
+    row.className = "set-row";
+    const code = cardSet.code || "DEFAULT";
+    const codeLink = document.createElement("a");
+    codeLink.href = "#";
+    codeLink.textContent = code;
+    codeLink.addEventListener("click", (event) => {
+      event.preventDefault();
+      renderSetCardGrid(code);
+    });
+    const name = document.createElement("strong");
+    name.textContent = cardSet.name || "Untitled Set";
+    row.append(renderSetSymbolPreview(cardSet), codeLink, name);
+    list.append(row);
+  }
+
+  elements.setLibraryContent.append(list);
+}
+
+function replaceMissingLibraryImage(image, card) {
+  const empty = document.createElement("div");
+  empty.className = "library-card-empty";
+  empty.textContent = card.name || "Untitled Card";
+  image.replaceWith(empty);
+}
+
+function renderSetCardGrid(setCode) {
+  const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === setCode);
+  const cards = state.savedCards.filter((card) => (card.setCode || "DEFAULT") === setCode);
+  elements.setLibraryTitle.textContent = cardSet ? `${cardSet.code} - ${cardSet.name || "Untitled Set"}` : setCode;
+  elements.setLibraryBackButton.classList.remove("hidden");
+  elements.setLibraryStatus.textContent = cards.length ? "" : "No saved cards in this set.";
+  elements.setLibraryContent.innerHTML = "";
+
+  const grid = document.createElement("div");
+  grid.className = "card-library-grid";
+  for (const card of cards) {
+    const tile = document.createElement("button");
+    tile.className = "library-card-tile";
+    tile.type = "button";
+    tile.addEventListener("click", () => loadCardFromLibrary(card.cardId));
+
+    if (card.imageUrl) {
+      const image = document.createElement("img");
+      image.className = "library-card-art";
+      image.alt = card.name || "Saved card";
+      image.src = card.imageUrl;
+      image.addEventListener("error", () => replaceMissingLibraryImage(image, card));
+      tile.append(image);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "library-card-empty";
+      empty.textContent = card.name || "Untitled Card";
+      tile.append(empty);
+    }
+
+    const label = document.createElement("span");
+    label.className = "library-card-name";
+    label.textContent = card.name || "Untitled Card";
+    tile.append(label);
+    grid.append(tile);
+  }
+
+  elements.setLibraryContent.append(grid);
+}
+
+async function openSetLibrary() {
+  if (!state.idToken) {
+    setSaveStatus("Sign in to view your sets.");
+    return;
+  }
+
+  elements.setLibraryDialog.showModal();
+  elements.setLibraryStatus.textContent = "Loading your sets...";
+  elements.setLibraryContent.innerHTML = "";
+  try {
+    await Promise.all([refreshCardSets(), refreshSavedCards()]);
+    renderSetLibraryList();
+  } catch (error) {
+    elements.setLibraryStatus.textContent = error.message;
+  }
+}
+
+function closeSetLibrary() {
+  elements.setLibraryDialog.close();
+}
+
+async function loadCardFromLibrary(cardId) {
+  try {
+    elements.savedCardsInput.value = cardId;
+    const cardSummary = state.savedCards.find((card) => card.cardId === cardId);
+    if (cardSummary) elements.cardSetsInput.value = cardSummary.setCode || "DEFAULT";
+    closeSetLibrary();
+    const data = await apiFetch(`/cards/${cardId}`);
+    applyCardData(data.card);
+    setSaveStatus("Loaded design");
+  } catch (error) {
+    setSaveStatus(error.message);
+  }
+}
+
 function renderSavedCards() {
   const selectedCardId = elements.savedCardsInput.value;
   const selectedSetCode = elements.cardSetsInput.value || "DEFAULT";
@@ -785,13 +926,15 @@ async function refreshSavedCards() {
 async function saveCard(cardId = "") {
   try {
     const card = collectCardData();
+    card.cardImagePng = await getCardPngDataUrl();
     const data = await apiFetch(cardId ? `/cards/${cardId}` : "/cards", {
       method: cardId ? "PUT" : "POST",
       body: JSON.stringify(card),
     });
     state.currentCardId = data.card.cardId;
     elements.cardSetsInput.value = data.card.setCode || card.setCode || "DEFAULT";
-    setSaveStatus(cardId ? "Saved changes" : "Saved new design");
+    const imageStatus = data.card.imageKey ? " and uploaded PNG" : "";
+    setSaveStatus(cardId ? `Saved changes${imageStatus}` : `Saved new design${imageStatus}`);
     await Promise.all([refreshSavedCards(), refreshCardSets()]);
     elements.savedCardsInput.value = state.currentCardId;
   } catch (error) {
@@ -1012,12 +1155,11 @@ function drawImageFit(ctx, image, x, y, width, height, fit) {
   ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
 }
 
-async function exportPng() {
+async function createCardCanvas(scale = 3) {
   if (elements.art.src && !elements.art.complete) {
     await elements.art.decode().catch(() => {});
   }
 
-  const scale = 3;
   const width = 630;
   const height = 880;
   const subtype = elements.subtypeInput.value.trim();
@@ -1151,9 +1293,23 @@ async function exportPng() {
     }
   }
 
-  const link = document.createElement("a");
-  link.download = `${(elements.nameInput.value || "card").trim().replace(/\W+/g, "-").toLowerCase()}-front.png`;
+  return canvas;
+}
+
+async function getCardPngDataUrl() {
+  const canvas = await createCardCanvas(2);
   try {
+    return canvas.toDataURL("image/png");
+  } catch (error) {
+    throw new Error("Card image could not be saved because the image URL does not allow canvas export.");
+  }
+}
+
+async function exportPng() {
+  try {
+    const canvas = await createCardCanvas(3);
+    const link = document.createElement("a");
+    link.download = `${(elements.nameInput.value || "card").trim().replace(/\W+/g, "-").toLowerCase()}-front.png`;
     link.href = canvas.toDataURL("image/png");
     link.click();
   } catch (error) {
@@ -1170,6 +1326,9 @@ function attachEvents() {
   elements.artUrlInput.addEventListener("change", loadArtUrl);
   elements.cardSetsInput.addEventListener("change", renderSavedCards);
   elements.addSetButton.addEventListener("click", openSetDialog);
+  elements.viewSetsButton.addEventListener("click", openSetLibrary);
+  elements.setLibraryBackButton.addEventListener("click", renderSetLibraryList);
+  elements.setLibraryCloseButton.addEventListener("click", closeSetLibrary);
   elements.cancelSetButton.addEventListener("click", closeSetDialog);
   elements.saveSetButton.addEventListener("click", saveSet);
   elements.setDialogForm.addEventListener("submit", (event) => {

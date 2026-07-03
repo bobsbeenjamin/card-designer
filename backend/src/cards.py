@@ -1,5 +1,7 @@
 import base64
+import binascii
 from decimal import Decimal
+import hashlib
 import ipaddress
 import json
 import os
@@ -11,14 +13,18 @@ import uuid
 
 import boto3
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 
 
 TABLE_NAME = os.environ["TABLE_NAME"]
 SETS_TABLE_NAME = os.environ["SETS_TABLE_NAME"]
+USER_BUCKET_PREFIX = os.environ["USER_BUCKET_PREFIX"]
 DYNAMODB = boto3.resource("dynamodb")
 TABLE = DYNAMODB.Table(TABLE_NAME)
 SETS_TABLE = DYNAMODB.Table(SETS_TABLE_NAME)
+S3 = boto3.client("s3")
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_CARD_IMAGE_BYTES = 7 * 1024 * 1024
 DEFAULT_SET = {
     "code": "DEFAULT",
     "name": "Default",
@@ -44,6 +50,7 @@ ALLOWED_FIELDS = {
     "colors",
     "setCode",
 }
+CARD_IMAGE_FIELD = "cardImagePng"
 
 
 def handler(event, _context):
@@ -239,16 +246,30 @@ def backfill_card_set_codes(user_id):
             )
 
 
+def add_card_image_urls(cards):
+    for card in cards:
+        bucket_name = card.get("imageBucket")
+        image_key = card.get("imageKey")
+        if not bucket_name or not image_key:
+            continue
+        card["imageUrl"] = S3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket_name, "Key": image_key},
+            ExpiresIn=900,
+        )
+    return cards
+
+
 def list_cards(user_id):
     ensure_default_set_if_missing(user_id)
     backfill_card_set_codes(user_id)
     response = TABLE.query(
         KeyConditionExpression=Key("userId").eq(user_id),
-        ProjectionExpression="userId, cardId, #name, #type, sub_type, rarity, setCode, updatedAt",
+        ProjectionExpression="userId, cardId, #name, #type, sub_type, rarity, setCode, imageBucket, imageKey, updatedAt",
         ExpressionAttributeNames={"#name": "name", "#type": "type"},
         ScanIndexForward=False,
     )
-    return {"cards": response.get("Items", [])}
+    return {"cards": add_card_image_urls(response.get("Items", []))}
 
 
 def get_card(user_id, card_id):
@@ -267,10 +288,112 @@ def get_card(user_id, card_id):
     return {"card": item}
 
 
+def get_user_bucket_name(user_id):
+    digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:24]
+    return f"{USER_BUCKET_PREFIX}-{digest}".lower()
+
+
+def ensure_user_bucket(user_id):
+    bucket_name = get_user_bucket_name(user_id)
+    try:
+        S3.head_bucket(Bucket=bucket_name)
+        return bucket_name
+    except ClientError as exc:
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if status not in {403, 404}:
+            raise
+
+    create_args = {"Bucket": bucket_name}
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    if region and region != "us-east-1":
+        create_args["CreateBucketConfiguration"] = {"LocationConstraint": region}
+
+    try:
+        S3.create_bucket(**create_args)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") not in {"BucketAlreadyOwnedByYou", "OperationAborted"}:
+            raise
+
+    S3.put_public_access_block(
+        Bucket=bucket_name,
+        PublicAccessBlockConfiguration={
+            "BlockPublicAcls": True,
+            "IgnorePublicAcls": True,
+            "BlockPublicPolicy": True,
+            "RestrictPublicBuckets": True,
+        },
+    )
+    S3.put_bucket_encryption(
+        Bucket=bucket_name,
+        ServerSideEncryptionConfiguration={
+            "Rules": [
+                {"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}
+            ]
+        },
+    )
+    return bucket_name
+
+
+def safe_s3_key_part(value, fallback):
+    cleaned = str(value or fallback).strip().replace("\\", "-").replace("/", "-")
+    cleaned = " ".join(cleaned.split())
+    return cleaned or fallback
+
+
+def get_card_image_key(card):
+    set_code = safe_s3_key_part(normalize_set_code(card.get("setCode")), DEFAULT_SET["code"])
+    card_name = safe_s3_key_part(card.get("name"), "Untitled Card")
+    return f"{set_code}/{card_name}.png"
+
+
+def decode_card_image(body):
+    card_image = str(body.get(CARD_IMAGE_FIELD) or "")
+    if not card_image:
+        return None
+    prefix = "data:image/png;base64,"
+    if not card_image.startswith(prefix):
+        raise ValueError("Card image must be a PNG data URL.")
+    try:
+        image_bytes = base64.b64decode(card_image[len(prefix):], validate=True)
+    except binascii.Error:
+        raise ValueError("Card image could not be decoded.")
+    if len(image_bytes) > MAX_CARD_IMAGE_BYTES:
+        raise ValueError("Card image is larger than 7 MB.")
+    return image_bytes
+
+
+def put_card_image(user_id, card, image_bytes, bucket_name=None):
+    bucket_name = bucket_name or ensure_user_bucket(user_id)
+    image_key = get_card_image_key(card)
+    S3.put_object(
+        Bucket=bucket_name,
+        Key=image_key,
+        Body=image_bytes,
+        ContentType="image/png",
+        ServerSideEncryption="AES256",
+    )
+    card["imageBucket"] = bucket_name
+    card["imageKey"] = image_key
+
+
+def delete_card_image(card):
+    bucket_name = card.get("imageBucket")
+    image_key = card.get("imageKey") or get_card_image_key(card)
+    if not bucket_name or not image_key:
+        return
+    S3.delete_object(Bucket=bucket_name, Key=image_key)
+
+
 def save_card(user_id, body, card_id=None):
     now = int(time.time())
     card = clean_card(body)
+    image_bytes = decode_card_image(body)
     validate_card_set(user_id, card["setCode"])
+    user_bucket_name = ensure_user_bucket(user_id)
+    existing_item = None
+    if card_id:
+        existing_item = TABLE.get_item(Key={"userId": user_id, "cardId": card_id}).get("Item")
+
     item = {
         **card,
         "userId": user_id,
@@ -278,14 +401,32 @@ def save_card(user_id, body, card_id=None):
         "updatedAt": now,
     }
 
-    if not card_id:
+    if existing_item and existing_item.get("createdAt"):
+        item["createdAt"] = existing_item["createdAt"]
+    elif not card_id:
         item["createdAt"] = now
 
+    if image_bytes:
+        put_card_image(user_id, item, image_bytes, user_bucket_name)
+    elif existing_item:
+        item["imageBucket"] = existing_item.get("imageBucket", "")
+        item["imageKey"] = existing_item.get("imageKey", "")
+
     TABLE.put_item(Item=item)
+
+    if existing_item and image_bytes:
+        old_key = existing_item.get("imageKey") or get_card_image_key(existing_item)
+        if existing_item.get("imageBucket") == item.get("imageBucket") and old_key != item.get("imageKey"):
+            delete_card_image(existing_item)
+
     return {"card": item}
 
 
 def delete_card(user_id, card_id):
+    response = TABLE.get_item(Key={"userId": user_id, "cardId": card_id})
+    item = response.get("Item")
+    if item:
+        delete_card_image(item)
     TABLE.delete_item(Key={"userId": user_id, "cardId": card_id})
 
 

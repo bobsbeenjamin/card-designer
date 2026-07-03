@@ -52,7 +52,10 @@
 
           <fieldset id="mySetsPanel" class="hidden">
             <legend>My Sets</legend>
-            <button id="addSetButton" class="button primary" type="button">Add Set</button>
+            <div class="action-grid">
+              <button id="addSetButton" class="button primary" type="button">Add Set</button>
+              <button id="viewSetsButton" class="button subtle" type="button">View my sets</button>
+            </div>
             <label>
               <span>Card set</span>
               <select id="cardSetsInput">
@@ -297,6 +300,19 @@
         </form>
       </aside>
     </main>
+
+
+    <dialog id="setLibraryDialog" class="library-modal" aria-labelledby="setLibraryTitle">
+      <section class="library-modal-shell">
+        <header class="library-modal-header">
+          <button id="setLibraryBackButton" class="button subtle hidden" type="button">Sets</button>
+          <h2 id="setLibraryTitle">My Sets</h2>
+          <button id="setLibraryCloseButton" class="button subtle" type="button">Close</button>
+        </header>
+        <p id="setLibraryStatus" class="status-line"></p>
+        <div id="setLibraryContent" class="library-modal-content"></div>
+      </section>
+    </dialog>
 
     <dialog id="setDialog" class="modal-dialog" aria-labelledby="setDialogTitle">
       <form id="setDialogForm" class="modal-card">
