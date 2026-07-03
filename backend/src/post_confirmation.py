@@ -23,6 +23,7 @@ def get_user_bucket_name(user_id):
 
 
 def ensure_user_bucket(user_id):
+    """Create or verify the user's private S3 bucket and security settings."""
     bucket_name = get_user_bucket_name(user_id)
     create_args = {"Bucket": bucket_name}
     region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
@@ -56,6 +57,7 @@ def ensure_user_bucket(user_id):
 
 
 def handler(event, _context):
+    """Handle Lambda events for the card designer backend."""
     user_id = (
         event.get("request", {})
         .get("userAttributes", {})

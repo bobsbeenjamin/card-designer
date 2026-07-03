@@ -54,6 +54,7 @@ CARD_IMAGE_FIELD = "cardImagePng"
 
 
 def handler(event, _context):
+    """Handle Lambda events for the card designer backend."""
     try:
         user_id = get_user_id(event)
         method = event["requestContext"]["http"]["method"]
@@ -97,6 +98,7 @@ def handler(event, _context):
 
 
 def proxy_image(event):
+    """Fetch and return a validated remote image for browser-safe rendering."""
     raw_url = (event.get("queryStringParameters") or {}).get("url", "")
     image_url = unquote_plus(raw_url).strip()
     validate_image_url(image_url)
@@ -127,6 +129,7 @@ def proxy_image(event):
 
 
 def validate_image_url(image_url):
+    """Validate that an image URL is public HTTP(S) and not private-network hosted."""
     parsed = urlparse(image_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("Enter a valid image URL.")
@@ -138,6 +141,7 @@ def validate_image_url(image_url):
 
 
 def get_user_id(event):
+    """Extract the authenticated Cognito user id from API Gateway claims."""
     claims = (
         event.get("requestContext", {})
         .get("authorizer", {})
@@ -151,6 +155,7 @@ def get_user_id(event):
 
 
 def read_body(event):
+    """Parse and validate a JSON request body."""
     if not event.get("body"):
         return {}
 
@@ -161,6 +166,7 @@ def read_body(event):
 
 
 def clean_card(body):
+    """Keep supported card fields and normalize required card values."""
     card = {key: body[key] for key in ALLOWED_FIELDS if key in body}
     if not card.get("name"):
         raise ValueError("Card name is required.")
@@ -175,6 +181,7 @@ def normalize_set_code(value):
 
 
 def normalize_collector_number(value):
+    """Convert stored collector values to a positive integer."""
     raw_value = str(value or "").strip()
     if not raw_value:
         return 1
@@ -187,6 +194,7 @@ def normalize_collector_number(value):
 
 
 def ensure_default_set_if_missing(user_id):
+    """Create the built-in default set for a user when absent."""
     item = {"userId": user_id, **DEFAULT_SET}
     try:
         SETS_TABLE.put_item(
@@ -209,6 +217,7 @@ def validate_card_set(user_id, set_code):
 
 
 def list_sets(user_id):
+    """Return all sets owned by the user."""
     ensure_default_set_if_missing(user_id)
     response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
     sets = sorted(response.get("Items", []), key=lambda item: item.get("code", ""))
@@ -216,6 +225,7 @@ def list_sets(user_id):
 
 
 def clean_set(body):
+    """Validate and normalize a card-set request body."""
     code = normalize_set_code(body.get("code"))
     if code == DEFAULT_SET["code"]:
         raise ValueError("DEFAULT is reserved for the built-in set.")
@@ -237,6 +247,7 @@ def clean_set(body):
 
 
 def save_set(user_id, body):
+    """Create a new card set for a user."""
     card_set = clean_set(body)
     item = {"userId": user_id, **card_set}
     try:
@@ -250,6 +261,7 @@ def save_set(user_id, body):
 
 
 def backfill_card_set_codes(user_id):
+    """Update older card records that predate set codes."""
     response = TABLE.query(
         KeyConditionExpression=Key("userId").eq(user_id),
         ProjectionExpression="userId, cardId, setCode",
@@ -264,6 +276,7 @@ def backfill_card_set_codes(user_id):
 
 
 def add_card_image_urls(cards):
+    """Attach short-lived signed S3 URLs to card summaries with saved PNGs."""
     for card in cards:
         bucket_name = card.get("imageBucket")
         image_key = card.get("imageKey")
@@ -278,6 +291,7 @@ def add_card_image_urls(cards):
 
 
 def list_cards(user_id):
+    """Return saved card summaries ordered by set and collector number."""
     ensure_default_set_if_missing(user_id)
     backfill_card_set_codes(user_id)
     response = TABLE.query(
@@ -291,6 +305,7 @@ def list_cards(user_id):
 
 
 def get_card(user_id, card_id):
+    """Return a full card record after applying legacy set backfill."""
     response = TABLE.get_item(Key={"userId": user_id, "cardId": card_id})
     item = response.get("Item")
     if not item:
@@ -307,6 +322,13 @@ def get_card(user_id, card_id):
 
 
 def reorder_set_cards(user_id, set_code, body):
+    """Persist drag/drop ordering and collector numbers for every card in a set.
+
+    Args:
+        user_id: Authenticated Cognito user id.
+        set_code: Set whose cards are being reordered.
+        body: Request body containing the complete ordered card id list.
+    """
     normalized_set_code = normalize_set_code(set_code)
     validate_card_set(user_id, normalized_set_code)
     card_ids = body.get("cardIds")
@@ -344,6 +366,7 @@ def get_user_bucket_name(user_id):
 
 
 def ensure_user_bucket(user_id):
+    """Create or verify the user's private S3 bucket and security settings."""
     bucket_name = get_user_bucket_name(user_id)
     try:
         S3.head_bucket(Bucket=bucket_name)
@@ -397,6 +420,7 @@ def get_card_image_key(card):
 
 
 def decode_card_image(body):
+    """Decode the PNG data URL sent by the frontend."""
     card_image = str(body.get(CARD_IMAGE_FIELD) or "")
     if not card_image:
         return None
@@ -413,6 +437,14 @@ def decode_card_image(body):
 
 
 def put_card_image(user_id, card, image_bytes, bucket_name=None):
+    """Store a rendered card PNG in the user's private S3 bucket.
+
+    Args:
+        user_id: Authenticated Cognito user id.
+        card: Card item receiving image metadata.
+        image_bytes: PNG image bytes to store.
+        bucket_name: Optional already-resolved S3 bucket name.
+    """
     bucket_name = bucket_name or ensure_user_bucket(user_id)
     image_key = get_card_image_key(card)
     S3.put_object(
@@ -427,6 +459,7 @@ def put_card_image(user_id, card, image_bytes, bucket_name=None):
 
 
 def delete_card_image(card):
+    """Delete a rendered card PNG from S3 when present."""
     bucket_name = card.get("imageBucket")
     image_key = card.get("imageKey") or get_card_image_key(card)
     if not bucket_name or not image_key:
@@ -435,6 +468,13 @@ def delete_card_image(card):
 
 
 def save_card(user_id, body, card_id=None):
+    """Create or update a card record and its rendered PNG.
+
+    Args:
+        user_id: Authenticated Cognito user id.
+        body: Card request payload.
+        card_id: Existing card id when updating.
+    """
     now = int(time.time())
     card = clean_card(body)
     image_bytes = decode_card_image(body)
@@ -473,6 +513,7 @@ def save_card(user_id, body, card_id=None):
 
 
 def delete_card(user_id, card_id):
+    """Delete a card record and its rendered PNG."""
     response = TABLE.get_item(Key={"userId": user_id, "cardId": card_id})
     item = response.get("Item")
     if item:
@@ -481,6 +522,7 @@ def delete_card(user_id, card_id):
 
 
 def to_json_safe(value):
+    """Convert DynamoDB values into JSON-serializable values."""
     if isinstance(value, list):
         return [to_json_safe(item) for item in value]
     if isinstance(value, dict):
@@ -491,6 +533,7 @@ def to_json_safe(value):
 
 
 def ok(body, status=200):
+    """Build a JSON API Gateway response."""
     return {
         "statusCode": status,
         "headers": {"content-type": "application/json"},

@@ -114,12 +114,14 @@ function getRarityLabel(rarity) {
   return rarityLabels[rarity] || rarityLabels.common;
 }
 
+/** Loads the starter card values from the defaults JSON file. */
 async function loadCardDefaults() {
   const response = await fetch("defaults/card-defaults.json");
   if (!response.ok) throw new Error("Card defaults failed to load.");
 
   defaults = await response.json();
 }
+/** Loads rarity labels and colors used by the preview. */
 async function loadRarityInfo() {
   const response = await fetch("defaults/rarity-info.json");
   if (!response.ok) throw new Error("Rarity defaults failed to load.");
@@ -145,6 +147,7 @@ function closeAccountMenu() {
   elements.accountMenuButton.setAttribute("aria-expanded", "false");
 }
 
+/** Toggles account controls based on the current sign-in state. */
 function updateAccountUi() {
   const signedIn = Boolean(state.idToken);
   elements.signInPanel.classList.toggle("hidden", signedIn);
@@ -154,6 +157,7 @@ function updateAccountUi() {
   if (!signedIn) closeAccountMenu();
 }
 
+/** Opens or closes the account popover. */
 function toggleAccountMenu() {
   const isOpen = !elements.accountMenu.classList.contains("hidden");
   elements.accountMenu.classList.toggle("hidden", isOpen);
@@ -167,6 +171,7 @@ function formatCost(value) {
 let standardTypes = [];
 const statlessTypes = ["Event", "Item"];
 
+/** Loads the built-in card type options. */
 async function loadCardTypes() {
   const response = await fetch("defaults/card-types.json");
   if (!response.ok) throw new Error("Card type defaults failed to load.");
@@ -179,6 +184,7 @@ function syncTypeMode() {
   elements.customTypeLabel.classList.toggle("hidden", !isCustom);
 }
 
+/** Returns either the selected standard type or the custom type text. */
 function getSelectedType() {
   if (elements.typeInput.value === "__custom") {
     return elements.customTypeInput.value.trim();
@@ -191,6 +197,7 @@ function isStatlessType(typeValue) {
   return statlessTypes.includes(String(typeValue || "").trim());
 }
 
+/** Selects the standard/custom type controls for a stored card type. */
 function setTypeControl(value) {
   const typeValue = String(value || "").trim();
 
@@ -205,6 +212,7 @@ function setTypeControl(value) {
   syncTypeMode();
 }
 
+/** Shrinks or wraps the preview name so it stays inside the card header. */
 function fitCardName() {
   const name = elements.cardName;
   name.classList.remove("is-wrapped");
@@ -224,6 +232,7 @@ function fitCardName() {
   }
 }
 
+/** Shrinks rules and flavor text until the text box can contain it. */
 function fitRulesText() {
   const panel = elements.rulesPanel;
   const ability = elements.cardAbility;
@@ -256,6 +265,7 @@ function fitRulesText() {
   }
 }
 
+/** Converts stored collector values to a positive card number. */
 function normalizeCollectorNumber(value) {
   const rawValue = String(value || "").trim();
   const cardNumber = rawValue.split("/", 1)[0].trim();
@@ -263,6 +273,7 @@ function normalizeCollectorNumber(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
+/** Returns saved cards for a set ordered by collector number. */
 function getCardsInSet(setCode) {
   return state.savedCards
     .filter((card) => (card.setCode || "DEFAULT") === (setCode || "DEFAULT"))
@@ -279,6 +290,7 @@ function getSetTotal(setCode) {
   return Math.max(cardsInSet.length, 1);
 }
 
+/** Returns the set total to show for the current editor state. */
 function getPreviewSetTotal(setCode) {
   const cardsInSet = state.savedCards.filter((card) => (card.setCode || "DEFAULT") === (setCode || "DEFAULT"));
   if (state.currentCardId) return Math.max(cardsInSet.length, 1);
@@ -299,12 +311,14 @@ function formatPreviewCollectorNumber() {
   return formatCollectorNumber(elements.collectorInput.value, setCode, getPreviewSetTotal(setCode));
 }
 
+/** Keeps new unsaved cards assigned to the next set slot. */
 function syncCollectorInputForCurrentSet() {
   if (!state.currentCardId) {
     elements.collectorInput.value = getNextCollectorNumber(elements.setInput.value || "DEFAULT");
   }
 }
 
+/** Copies form state into the live card preview. */
 function syncCard() {
   syncTypeMode();
   const subtype = elements.subtypeInput.value.trim();
@@ -349,6 +363,7 @@ function syncCard() {
   fitRulesText();
 }
 
+/** Checks whether artwork input is an acceptable image URI. */
 function isValidImageUri(value) {
   const artUrl = String(value || "").trim();
   if (!artUrl) return true;
@@ -362,6 +377,7 @@ function isValidImageUri(value) {
   }
 }
 
+/** Releases the current object URL used for proxied artwork. */
 function revokeArtObjectUrl() {
   if (state.artObjectUrl) {
     URL.revokeObjectURL(state.artObjectUrl);
@@ -369,6 +385,7 @@ function revokeArtObjectUrl() {
   }
 }
 
+/** Removes artwork from the preview and resets image state. */
 function clearArt() {
   revokeArtObjectUrl();
   state.artUrl = "";
@@ -377,6 +394,7 @@ function clearArt() {
   elements.artWindow.classList.remove("has-image");
 }
 
+/** Fetches a remote image through the authenticated image proxy. */
 async function getProxiedImageSource(artUrl) {
   if (!state.idToken || isJwtExpired(state.idToken)) {
     throw new Error("Sign in to load image URLs through the CORS-safe proxy.");
@@ -399,6 +417,7 @@ async function getProxiedImageSource(artUrl) {
   return URL.createObjectURL(blob);
 }
 
+/** Loads artwork from a file, data URL, proxied URL, or direct URL fallback. */
 async function setArtSource(src, statusMessage = "") {
   const artUrl = String(src || "").trim();
   revokeArtObjectUrl();
@@ -443,6 +462,7 @@ function loadArtUrl() {
   elements.artInput.value = "";
   setArtSource(elements.artUrlInput.value, "Image URL loaded");
 }
+/** Restores the editor to default card values. */
 function resetCard() {
   state.currentCardId = "";
   elements.nameInput.value = defaults.name;
@@ -470,6 +490,7 @@ function resetCard() {
   syncCard();
 }
 
+/** Reads an uploaded artwork file into the preview. */
 function loadArt(event) {
   const [file] = event.target.files;
   if (!file) return;
@@ -482,6 +503,7 @@ function loadArt(event) {
   reader.readAsDataURL(file);
 }
 
+/** Builds the card payload sent to the backend. */
 function collectCardData() {
   let artUrl = state.artUrl || elements.art.src || "";
   if (artUrl.startsWith("data:") && artUrl.length > 300000) {
@@ -520,6 +542,7 @@ function collectCardData() {
   };
 }
 
+/** Loads a saved card record into the editor controls and preview. */
 function applyCardData(card) {
   state.currentCardId = card.cardId || "";
   elements.nameInput.value = card.name || defaults.name;
@@ -554,6 +577,7 @@ function applyCardData(card) {
   syncCard();
 }
 
+/** Calls the Cognito API used by browser auth flows. */
 async function cognitoRequest(target, payload) {
   const response = await fetch(`https://cognito-idp.${backendConfig.region}.amazonaws.com/`, {
     method: "POST",
@@ -572,6 +596,7 @@ async function cognitoRequest(target, payload) {
   return data;
 }
 
+/** Reads and validates the account credential fields. */
 function getCredentials() {
   const email = elements.emailInput.value.trim();
   const password = elements.passwordInput.value;
@@ -581,6 +606,7 @@ function getCredentials() {
   return { email, password };
 }
 
+/** Starts Cognito sign-up for the entered account. */
 async function signUp() {
   try {
     const { email, password } = getCredentials();
@@ -596,6 +622,7 @@ async function signUp() {
   }
 }
 
+/** Confirms a pending Cognito account with the emailed code. */
 async function confirmAccount() {
   try {
     const email = elements.emailInput.value.trim();
@@ -613,6 +640,7 @@ async function confirmAccount() {
   }
 }
 
+/** Signs in and refreshes saved cards and sets. */
 async function signIn() {
   try {
     const { email, password } = getCredentials();
@@ -639,6 +667,7 @@ async function signIn() {
   }
 }
 
+/** Checks whether a JWT is absent, malformed, or expired. */
 function isJwtExpired(token) {
   if (!token) return true;
 
@@ -650,6 +679,7 @@ function isJwtExpired(token) {
   }
 }
 
+/** Clears local auth/session state and saved library state. */
 function clearAuthSession() {
   state.idToken = "";
   state.email = "";
@@ -663,12 +693,14 @@ function clearAuthSession() {
   renderCardSets();
 }
 
+/** Handles the signOut workflow. */
 function signOut() {
   clearAuthSession();
   setAuthStatus("Signed out");
   setSaveStatus("Sign in to save designs");
 }
 
+/** Calls the authenticated backend API and normalizes errors. */
 async function apiFetch(path, options = {}) {
   if (!state.idToken || isJwtExpired(state.idToken)) {
     clearAuthSession();
@@ -697,6 +729,12 @@ async function apiFetch(path, options = {}) {
   return data;
 }
 
+/**
+ * Fills a set dropdown while preserving its selected set when possible.
+ * @param {*} select Dropdown element to populate.
+ * @param {*} sets Available set records.
+ * @param {*} selectedSetCode Preferred selected set code.
+ */
 function populateSetSelect(select, sets, selectedSetCode) {
   select.innerHTML = "";
 
@@ -712,6 +750,7 @@ function populateSetSelect(select, sets, selectedSetCode) {
     : "DEFAULT";
 }
 
+/** Renders both set dropdowns from the saved set list. */
 function renderCardSets() {
   const selectedFilterSetCode = elements.cardSetsInput.value || "DEFAULT";
   const selectedDesignSetCode = elements.setInput.value || "DEFAULT";
@@ -723,6 +762,7 @@ function renderCardSets() {
   populateSetSelect(elements.setInput, sets, selectedDesignSetCode);
 }
 
+/** Loads the signed-in user's sets from the backend. */
 async function refreshCardSets() {
   try {
     const data = await apiFetch("/sets");
@@ -738,6 +778,7 @@ function clearSetDialog() {
   elements.setDialogStatus.textContent = "";
 }
 
+/** Opens the modal for defining a new set. */
 function openSetDialog() {
   clearSetDialog();
   elements.setDialog.showModal();
@@ -749,6 +790,7 @@ function closeSetDialog() {
   elements.setDialog.close();
 }
 
+/** Saves a new set and updates linked dropdowns. */
 async function saveSet() {
   try {
     const code = elements.setCodeInput.value.trim().toUpperCase();
@@ -774,12 +816,14 @@ async function saveSet() {
 }
 
 
+/** Handles the getAvailableSets workflow. */
 function getAvailableSets() {
   return state.savedSets.length
     ? state.savedSets
     : [{ code: "DEFAULT", name: "Default", symbol: "", copyrightInfo: "" }];
 }
 
+/** Builds the symbol cell for a set library row. */
 function renderSetSymbolPreview(cardSet) {
   const symbol = document.createElement("div");
   symbol.className = "set-symbol-preview";
@@ -797,6 +841,7 @@ function renderSetSymbolPreview(cardSet) {
   return symbol;
 }
 
+/** Shows the set list view in the fullscreen library modal. */
 function renderSetLibraryList() {
   elements.setLibraryTitle.textContent = "My Sets";
   elements.setLibraryBackButton.classList.add("hidden");
@@ -825,6 +870,7 @@ function renderSetLibraryList() {
   elements.setLibraryContent.append(list);
 }
 
+/** Swaps a failed card thumbnail for an empty card frame. */
 function replaceMissingLibraryImage(image, card) {
   const empty = document.createElement("div");
   empty.className = "library-card-empty";
@@ -832,6 +878,7 @@ function replaceMissingLibraryImage(image, card) {
   image.replaceWith(empty);
 }
 
+/** Builds a draggable card tile for the set grid. */
 function createLibraryCardTile(card, setCode) {
   const tile = document.createElement("button");
   tile.className = "library-card-tile";
@@ -891,6 +938,7 @@ function createLibraryCardTile(card, setCode) {
   return tile;
 }
 
+/** Shows the cards in a selected set as a five-column grid. */
 function renderSetCardGrid(setCode) {
   const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === setCode);
   const cards = getCardsInSet(setCode);
@@ -908,6 +956,12 @@ function renderSetCardGrid(setCode) {
   elements.setLibraryContent.append(grid);
 }
 
+/**
+ * Persists drag-and-drop card order and collector numbers for a set.
+ * @param {*} setCode Set whose cards are being reordered.
+ * @param {*} draggedCardId Card id moved by drag/drop.
+ * @param {*} targetCardId Card id where the dragged card was dropped.
+ */
 async function reorderCardsInSet(setCode, draggedCardId, targetCardId) {
   if (!draggedCardId || draggedCardId === targetCardId) return;
   const cards = getCardsInSet(setCode);
@@ -943,6 +997,7 @@ async function reorderCardsInSet(setCode, draggedCardId, targetCardId) {
   }
 }
 
+/** Loads set/card data and opens the fullscreen set library. */
 async function openSetLibrary() {
   if (!state.idToken) {
     setSaveStatus("Sign in to view your sets.");
@@ -964,6 +1019,7 @@ function closeSetLibrary() {
   elements.setLibraryDialog.close();
 }
 
+/** Loads a clicked library card into the editor. */
 async function loadCardFromLibrary(cardId) {
   try {
     elements.savedCardsInput.value = cardId;
@@ -978,6 +1034,7 @@ async function loadCardFromLibrary(cardId) {
   }
 }
 
+/** Renders the saved-card dropdown for the currently selected set. */
 function renderSavedCards() {
   const selectedCardId = elements.savedCardsInput.value;
   const selectedSetCode = elements.cardSetsInput.value || "DEFAULT";
@@ -1021,6 +1078,7 @@ function findSavedCardByName(name) {
   return state.savedCards.find((card) => normalizeCardName(card.name) === normalizedName);
 }
 
+/** Asks how to handle saving a card with a duplicate name. */
 function promptDuplicateSave(cardName, existingCard) {
   if (!elements.duplicateSaveDialog) return Promise.resolve("save-new");
 
@@ -1037,6 +1095,7 @@ function promptDuplicateSave(cardName, existingCard) {
     elements.duplicateSaveDialog.showModal();
   });
 }
+/** Loads saved card summaries for the signed-in user. */
 async function refreshSavedCards() {
   try {
     const data = await apiFetch("/cards");
@@ -1048,6 +1107,7 @@ async function refreshSavedCards() {
   }
 }
 
+/** Saves or updates a card and uploads its rendered PNG. */
 async function saveCard(cardId = "") {
   try {
     const card = collectCardData();
@@ -1067,6 +1127,7 @@ async function saveCard(cardId = "") {
   }
 }
 
+/** Handles Save New, including duplicate-name decisions. */
 async function saveNewCard() {
   const cardName = elements.nameInput.value.trim() || "Untitled Card";
   const existingCard = findSavedCardByName(cardName);
@@ -1082,6 +1143,7 @@ async function saveNewCard() {
 
   await saveCard();
 }
+/** Loads the selected saved-card dropdown item into the editor. */
 async function loadSelectedCard() {
   try {
     const cardId = elements.savedCardsInput.value;
@@ -1095,6 +1157,7 @@ async function loadSelectedCard() {
   }
 }
 
+/** Deletes the selected saved card after confirmation. */
 async function deleteSelectedCard() {
   try {
     const cardId = elements.savedCardsInput.value;
@@ -1110,6 +1173,15 @@ async function deleteSelectedCard() {
   }
 }
 
+/**
+ * Reduces a canvas font size until text fits the target width.
+ * @param {*} ctx Canvas 2D rendering context.
+ * @param {*} text Text to measure.
+ * @param {*} fontTemplate Function that returns a font string for a size.
+ * @param {*} defaultSize Starting font size in pixels.
+ * @param {*} minSize Smallest allowed font size in pixels.
+ * @param {*} maxWidth Maximum allowed text width.
+ */
 function setCanvasFontToFit(ctx, text, fontTemplate, defaultSize, minSize, maxWidth) {
   let size = defaultSize;
   ctx.font = fontTemplate(size);
@@ -1121,6 +1193,12 @@ function setCanvasFontToFit(ctx, text, fontTemplate, defaultSize, minSize, maxWi
 
   return size;
 }
+/**
+ * Splits a single long word into chunks that fit the canvas width.
+ * @param {*} ctx Function argument.
+ * @param {*} word Function argument.
+ * @param {*} maxWidth Function argument.
+ */
 function splitLongCanvasWord(ctx, word, maxWidth) {
   const chunks = [];
   let remaining = word;
@@ -1137,6 +1215,14 @@ function splitLongCanvasWord(ctx, word, maxWidth) {
   if (remaining) chunks.push(remaining);
   return chunks;
 }
+/**
+ * Draws the card name on canvas with shrink-then-wrap behavior.
+ * @param {*} ctx Canvas 2D rendering context.
+ * @param {*} text Card name to draw.
+ * @param {*} x Left drawing coordinate.
+ * @param {*} y Baseline drawing coordinate.
+ * @param {*} maxWidth Maximum text width.
+ */
 function drawFittedCardName(ctx, text, x, y, maxWidth) {
   const name = String(text || "Untitled Card");
   const size = setCanvasFontToFit(ctx, name, (fontSize) => `700 ${fontSize}px Georgia`, 26, 17, maxWidth);
@@ -1148,6 +1234,16 @@ function drawFittedCardName(ctx, text, x, y, maxWidth) {
 
   drawWrappedText(ctx, name, x, y - 8, maxWidth, Math.ceil(size * 1.12), 2);
 }
+/**
+ * Draws multiline wrapped canvas text with a maximum line count.
+ * @param {*} ctx Canvas 2D rendering context.
+ * @param {*} text Text to wrap and draw.
+ * @param {*} x Left drawing coordinate.
+ * @param {*} y First baseline coordinate.
+ * @param {*} maxWidth Maximum line width.
+ * @param {*} lineHeight Distance between baselines.
+ * @param {*} maxLines Maximum lines to draw.
+ */
 function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
   const paragraphs = String(text || "").split(/\r?\n/);
   let lineCount = 0;
@@ -1203,6 +1299,12 @@ function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines) {
   }
 }
 
+/**
+ * Counts wrapped canvas text lines without drawing them.
+ * @param {*} ctx Function argument.
+ * @param {*} text Function argument.
+ * @param {*} maxWidth Function argument.
+ */
 function countWrappedTextLines(ctx, text, maxWidth) {
   const paragraphs = String(text || "").split(/\r?\n/);
   let lineCount = 0;
@@ -1241,6 +1343,16 @@ function countWrappedTextLines(ctx, text, maxWidth) {
   return lineCount;
 }
 
+/**
+ * Finds the largest canvas text size that fits a line limit.
+ * @param {*} ctx Canvas 2D rendering context.
+ * @param {*} text Text to measure.
+ * @param {*} fontTemplate Function that returns a font string for a size.
+ * @param {*} defaultSize Starting font size in pixels.
+ * @param {*} minSize Smallest allowed font size in pixels.
+ * @param {*} maxWidth Maximum line width.
+ * @param {*} maxLines Maximum wrapped lines.
+ */
 function getFittedTextSize(ctx, text, fontTemplate, defaultSize, minSize, maxWidth, maxLines) {
   let size = defaultSize;
   ctx.font = fontTemplate(size);
@@ -1252,6 +1364,15 @@ function getFittedTextSize(ctx, text, fontTemplate, defaultSize, minSize, maxWid
 
   return size;
 }
+/**
+ * Adds a rounded rectangle path to the canvas context.
+ * @param {*} ctx Canvas 2D rendering context.
+ * @param {*} x Left coordinate.
+ * @param {*} y Top coordinate.
+ * @param {*} width Rectangle width.
+ * @param {*} height Rectangle height.
+ * @param {*} radius Corner radius.
+ */
 function roundRect(ctx, x, y, width, height, radius) {
   ctx.beginPath();
   ctx.moveTo(x + radius, y);
@@ -1262,6 +1383,16 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
+/**
+ * Draws an image into a canvas box using the selected fit mode.
+ * @param {*} ctx Canvas 2D rendering context.
+ * @param {*} image Image element to draw.
+ * @param {*} x Left coordinate.
+ * @param {*} y Top coordinate.
+ * @param {*} width Target width.
+ * @param {*} height Target height.
+ * @param {*} fit Image fit mode.
+ */
 function drawImageFit(ctx, image, x, y, width, height, fit) {
   if (fit === "fill") {
     ctx.drawImage(image, x, y, width, height);
@@ -1280,6 +1411,7 @@ function drawImageFit(ctx, image, x, y, width, height, fit) {
   ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
 }
 
+/** Renders the current card front to a canvas. */
 async function createCardCanvas(scale = 3) {
   if (elements.art.src && !elements.art.complete) {
     await elements.art.decode().catch(() => {});
@@ -1421,6 +1553,7 @@ async function createCardCanvas(scale = 3) {
   return canvas;
 }
 
+/** Creates the PNG data URL sent to the backend. */
 async function getCardPngDataUrl() {
   const canvas = await createCardCanvas(2);
   try {
@@ -1430,6 +1563,7 @@ async function getCardPngDataUrl() {
   }
 }
 
+/** Downloads the current card front as a PNG. */
 async function exportPng() {
   try {
     const canvas = await createCardCanvas(3);
@@ -1442,6 +1576,7 @@ async function exportPng() {
   }
 }
 
+/** Registers UI event handlers for the app. */
 function attachEvents() {
   document.querySelectorAll("input, textarea, select").forEach((control) => {
     control.addEventListener("input", syncCard);
@@ -1492,6 +1627,7 @@ function attachEvents() {
   });
 }
 
+/** Loads defaults and starts the app. */
 async function initialize() {
   try {
     await Promise.all([loadCardDefaults(), loadCardTypes(), loadRarityInfo()]);
