@@ -597,6 +597,12 @@ textarea {
   resize: vertical;
 }
 
+input[readonly] {
+  background: #eef2ed;
+  color: var(--muted);
+  cursor: default;
+}
+
 input[type="color"] {
   height: 44px;
   padding: 4px;
@@ -715,6 +721,16 @@ input[type="color"] {
   min-width: 0;
   padding: 0;
   text-align: left;
+}
+
+.library-card-tile.is-dragging {
+  opacity: 0.45;
+}
+
+.library-card-tile.is-drop-target .library-card-art,
+.library-card-tile.is-drop-target .library-card-empty {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
 }
 
 .library-card-tile:focus-visible {

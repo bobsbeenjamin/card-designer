@@ -187,6 +187,12 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /sets
             Method: POST
+        ReorderSetCards:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /sets/{setCode}/cards/reorder
+            Method: POST
         ListCards:
           Type: HttpApi
           Properties:

@@ -17,6 +17,8 @@ const state = {
   savedSets: [],
   artObjectUrl: "",
   artUrl: "",
+  libraryDraggedCardId: "",
+  libraryDragMoved: false,
 };
 
 const elements = {
@@ -221,6 +223,7 @@ function fitCardName() {
     name.classList.add("is-wrapped");
   }
 }
+
 function fitRulesText() {
   const panel = elements.rulesPanel;
   const ability = elements.cardAbility;
@@ -252,6 +255,56 @@ function fitRulesText() {
     }
   }
 }
+
+function normalizeCollectorNumber(value) {
+  const rawValue = String(value || "").trim();
+  const cardNumber = rawValue.split("/", 1)[0].trim();
+  const parsed = Number.parseInt(cardNumber, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function getCardsInSet(setCode) {
+  return state.savedCards
+    .filter((card) => (card.setCode || "DEFAULT") === (setCode || "DEFAULT"))
+    .sort((first, second) => {
+      const firstNumber = normalizeCollectorNumber(first.collectorNumber);
+      const secondNumber = normalizeCollectorNumber(second.collectorNumber);
+      if (firstNumber !== secondNumber) return firstNumber - secondNumber;
+      return String(first.name || "").localeCompare(String(second.name || ""));
+    });
+}
+
+function getSetTotal(setCode) {
+  const cardsInSet = state.savedCards.filter((card) => (card.setCode || "DEFAULT") === (setCode || "DEFAULT"));
+  return Math.max(cardsInSet.length, 1);
+}
+
+function getPreviewSetTotal(setCode) {
+  const cardsInSet = state.savedCards.filter((card) => (card.setCode || "DEFAULT") === (setCode || "DEFAULT"));
+  if (state.currentCardId) return Math.max(cardsInSet.length, 1);
+  return Math.max(cardsInSet.length + 1, 1);
+}
+
+function getNextCollectorNumber(setCode) {
+  const cardsInSet = state.savedCards.filter((card) => (card.setCode || "DEFAULT") === (setCode || "DEFAULT"));
+  return cardsInSet.reduce((max, card) => Math.max(max, normalizeCollectorNumber(card.collectorNumber)), 0) + 1;
+}
+
+function formatCollectorNumber(number, setCode, total = getSetTotal(setCode)) {
+  return `${normalizeCollectorNumber(number)}/${total}`;
+}
+
+function formatPreviewCollectorNumber() {
+  const setCode = elements.setInput.value || "DEFAULT";
+  return formatCollectorNumber(elements.collectorInput.value, setCode, getPreviewSetTotal(setCode));
+}
+
+function syncCollectorInputForCurrentSet() {
+  if (!state.currentCardId) {
+    elements.collectorInput.value = getNextCollectorNumber(elements.setInput.value || "DEFAULT");
+  }
+}
+
 function syncCard() {
   syncTypeMode();
   const subtype = elements.subtypeInput.value.trim();
@@ -263,6 +316,7 @@ function syncCard() {
   }
   const isLoyalty = !isStatless && elements.statModeInput.value === "loyalty";
   const rarity = elements.rarityInput.value;
+  syncCollectorInputForCurrentSet();
 
   updateText(elements.cardName, elements.nameInput.value, "Untitled Card");
   fitCardName();
@@ -278,7 +332,7 @@ function syncCard() {
     elements.artistInput.value ? `Art: ${elements.artistInput.value}` : "",
     "Art: Unknown",
   );
-  updateText(elements.cardCollector, elements.collectorInput.value, "000/000");
+  updateText(elements.cardCollector, formatPreviewCollectorNumber(), "1/1");
   updateText(elements.cardRarity, getRarityLabel(rarity), getRarityLabel("common"));
 
   elements.card.classList.toggle("is-loyalty", isLoyalty);
@@ -403,7 +457,7 @@ function resetCard() {
   elements.abilityInput.value = defaults.ability;
   elements.flavorInput.value = defaults.flavor;
   elements.artistInput.value = defaults.artist;
-  elements.collectorInput.value = defaults.collector;
+  elements.collectorInput.value = getNextCollectorNumber(elements.setInput.value || "DEFAULT");
   elements.rarityInput.value = defaults.rarity;
   elements.fitInput.value = defaults.fit;
   elements.frameColor.value = defaults.frame;
@@ -455,7 +509,7 @@ function collectCardData() {
     abilities: elements.abilityInput.value,
     flavorText: elements.flavorInput.value,
     artistName: elements.artistInput.value.trim(),
-    collectorNumber: elements.collectorInput.value.trim(),
+    collectorNumber: normalizeCollectorNumber(elements.collectorInput.value),
     rarity: elements.rarityInput.value,
     colors: {
       frame: elements.frameColor.value,
@@ -479,7 +533,7 @@ function applyCardData(card) {
   elements.abilityInput.value = card.abilities || "";
   elements.flavorInput.value = card.flavorText || "";
   elements.artistInput.value = card.artistName || "";
-  elements.collectorInput.value = card.collectorNumber || "";
+  elements.collectorInput.value = normalizeCollectorNumber(card.collectorNumber);
   elements.rarityInput.value = card.rarity || "common";
   elements.setInput.value = card.setCode || "DEFAULT";
   elements.cardSetsInput.value = card.setCode || "DEFAULT";
@@ -778,9 +832,68 @@ function replaceMissingLibraryImage(image, card) {
   image.replaceWith(empty);
 }
 
+function createLibraryCardTile(card, setCode) {
+  const tile = document.createElement("button");
+  tile.className = "library-card-tile";
+  tile.draggable = true;
+  tile.type = "button";
+  tile.dataset.cardId = card.cardId;
+  tile.addEventListener("click", () => {
+    if (state.libraryDragMoved) {
+      state.libraryDragMoved = false;
+      return;
+    }
+    loadCardFromLibrary(card.cardId);
+  });
+  tile.addEventListener("dragstart", (event) => {
+    state.libraryDraggedCardId = card.cardId;
+    state.libraryDragMoved = false;
+    tile.classList.add("is-dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", card.cardId);
+  });
+  tile.addEventListener("dragend", () => {
+    state.libraryDraggedCardId = "";
+    document.querySelectorAll(".library-card-tile").forEach((cardTile) => {
+      cardTile.classList.remove("is-dragging", "is-drop-target");
+    });
+  });
+  tile.addEventListener("dragover", (event) => {
+    if (!state.libraryDraggedCardId || state.libraryDraggedCardId === card.cardId) return;
+    event.preventDefault();
+    tile.classList.add("is-drop-target");
+  });
+  tile.addEventListener("dragleave", () => tile.classList.remove("is-drop-target"));
+  tile.addEventListener("drop", (event) => {
+    event.preventDefault();
+    tile.classList.remove("is-drop-target");
+    reorderCardsInSet(setCode, state.libraryDraggedCardId, card.cardId);
+  });
+
+  if (card.imageUrl) {
+    const image = document.createElement("img");
+    image.className = "library-card-art";
+    image.alt = card.name || "Saved card";
+    image.src = card.imageUrl;
+    image.addEventListener("error", () => replaceMissingLibraryImage(image, card));
+    tile.append(image);
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "library-card-empty";
+    empty.textContent = card.name || "Untitled Card";
+    tile.append(empty);
+  }
+
+  const label = document.createElement("span");
+  label.className = "library-card-name";
+  label.textContent = `${formatCollectorNumber(card.collectorNumber, setCode)} ${card.name || "Untitled Card"}`;
+  tile.append(label);
+  return tile;
+}
+
 function renderSetCardGrid(setCode) {
   const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === setCode);
-  const cards = state.savedCards.filter((card) => (card.setCode || "DEFAULT") === setCode);
+  const cards = getCardsInSet(setCode);
   elements.setLibraryTitle.textContent = cardSet ? `${cardSet.code} - ${cardSet.name || "Untitled Set"}` : setCode;
   elements.setLibraryBackButton.classList.remove("hidden");
   elements.setLibraryStatus.textContent = cards.length ? "" : "No saved cards in this set.";
@@ -789,33 +902,45 @@ function renderSetCardGrid(setCode) {
   const grid = document.createElement("div");
   grid.className = "card-library-grid";
   for (const card of cards) {
-    const tile = document.createElement("button");
-    tile.className = "library-card-tile";
-    tile.type = "button";
-    tile.addEventListener("click", () => loadCardFromLibrary(card.cardId));
-
-    if (card.imageUrl) {
-      const image = document.createElement("img");
-      image.className = "library-card-art";
-      image.alt = card.name || "Saved card";
-      image.src = card.imageUrl;
-      image.addEventListener("error", () => replaceMissingLibraryImage(image, card));
-      tile.append(image);
-    } else {
-      const empty = document.createElement("div");
-      empty.className = "library-card-empty";
-      empty.textContent = card.name || "Untitled Card";
-      tile.append(empty);
-    }
-
-    const label = document.createElement("span");
-    label.className = "library-card-name";
-    label.textContent = card.name || "Untitled Card";
-    tile.append(label);
-    grid.append(tile);
+    grid.append(createLibraryCardTile(card, setCode));
   }
 
   elements.setLibraryContent.append(grid);
+}
+
+async function reorderCardsInSet(setCode, draggedCardId, targetCardId) {
+  if (!draggedCardId || draggedCardId === targetCardId) return;
+  const cards = getCardsInSet(setCode);
+  const draggedIndex = cards.findIndex((card) => card.cardId === draggedCardId);
+  const targetIndex = cards.findIndex((card) => card.cardId === targetCardId);
+  if (draggedIndex < 0 || targetIndex < 0) return;
+
+  const [draggedCard] = cards.splice(draggedIndex, 1);
+  cards.splice(targetIndex, 0, draggedCard);
+  cards.forEach((card, index) => {
+    card.collectorNumber = index + 1;
+  });
+  state.libraryDragMoved = true;
+  renderSetCardGrid(setCode);
+
+  try {
+    const data = await apiFetch(`/sets/${encodeURIComponent(setCode)}/cards/reorder`, {
+      method: "POST",
+      body: JSON.stringify({ cardIds: cards.map((card) => card.cardId) }),
+    });
+    for (const updatedCard of data.cards || []) {
+      const savedCard = state.savedCards.find((card) => card.cardId === updatedCard.cardId);
+      if (savedCard) Object.assign(savedCard, updatedCard);
+    }
+    renderSavedCards();
+    renderSetCardGrid(setCode);
+    syncCard();
+    setSaveStatus("Collector order saved");
+  } catch (error) {
+    setSaveStatus(error.message);
+    await refreshSavedCards();
+    renderSetCardGrid(setCode);
+  }
 }
 
 async function openSetLibrary() {
@@ -856,7 +981,7 @@ async function loadCardFromLibrary(cardId) {
 function renderSavedCards() {
   const selectedCardId = elements.savedCardsInput.value;
   const selectedSetCode = elements.cardSetsInput.value || "DEFAULT";
-  const cardsInSet = state.savedCards.filter((card) => (card.setCode || "DEFAULT") === selectedSetCode);
+  const cardsInSet = getCardsInSet(selectedSetCode);
   elements.savedCardsInput.innerHTML = "";
 
   if (!state.savedCards.length) {
@@ -878,7 +1003,7 @@ function renderSavedCards() {
   for (const card of cardsInSet) {
     const option = document.createElement("option");
     option.value = card.cardId;
-    option.textContent = `${card.name || "Untitled Card"} (${card.collectorNumber || card.rarity || "saved"})`;
+    option.textContent = `${card.name || "Untitled Card"} (${formatCollectorNumber(card.collectorNumber, selectedSetCode)})`;
     elements.savedCardsInput.append(option);
   }
 
@@ -1262,7 +1387,7 @@ async function createCardCanvas(scale = 3) {
   ctx.fillText(getRarityLabel(rarity), 84, 868);
   ctx.fillText(`Art: ${elements.artistInput.value || "Unknown"}`, 162, 868);
   ctx.textAlign = "right";
-  ctx.fillText(elements.collectorInput.value || "000/000", 562, 868);
+  ctx.fillText(formatPreviewCollectorNumber(), 562, 868);
   ctx.textAlign = "left";
 
   if (!isStatless) {
@@ -1325,6 +1450,10 @@ function attachEvents() {
   elements.artInput.addEventListener("change", loadArt);
   elements.artUrlInput.addEventListener("change", loadArtUrl);
   elements.cardSetsInput.addEventListener("change", renderSavedCards);
+  elements.setInput.addEventListener("change", () => {
+    elements.collectorInput.value = getNextCollectorNumber(elements.setInput.value || "DEFAULT");
+    syncCard();
+  });
   elements.addSetButton.addEventListener("click", openSetDialog);
   elements.viewSetsButton.addEventListener("click", openSetLibrary);
   elements.setLibraryBackButton.addEventListener("click", renderSetLibraryList);

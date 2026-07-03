@@ -68,6 +68,10 @@ def handler(event, _context):
         if method == "POST" and route_key == "POST /sets":
             return ok(save_set(user_id, read_body(event)), status=201)
 
+        if method == "POST" and route_key == "POST /sets/{setCode}/cards/reorder":
+            set_code = event["pathParameters"]["setCode"]
+            return ok(reorder_set_cards(user_id, set_code, read_body(event)))
+
         if method == "GET" and route_key == "GET /cards":
             return ok(list_cards(user_id))
 
@@ -161,12 +165,25 @@ def clean_card(body):
     if not card.get("name"):
         raise ValueError("Card name is required.")
     card["setCode"] = normalize_set_code(card.get("setCode"))
+    card["collectorNumber"] = normalize_collector_number(card.get("collectorNumber"))
     return card
 
 
 def normalize_set_code(value):
     code = str(value or DEFAULT_SET["code"]).strip().upper()
     return code or DEFAULT_SET["code"]
+
+
+def normalize_collector_number(value):
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return 1
+    card_number = raw_value.split("/", 1)[0].strip()
+    try:
+        number = int(card_number)
+    except ValueError:
+        return 1
+    return max(1, number)
 
 
 def ensure_default_set_if_missing(user_id):
@@ -265,11 +282,12 @@ def list_cards(user_id):
     backfill_card_set_codes(user_id)
     response = TABLE.query(
         KeyConditionExpression=Key("userId").eq(user_id),
-        ProjectionExpression="userId, cardId, #name, #type, sub_type, rarity, setCode, imageBucket, imageKey, updatedAt",
+        ProjectionExpression="userId, cardId, #name, #type, sub_type, rarity, setCode, collectorNumber, imageBucket, imageKey, updatedAt",
         ExpressionAttributeNames={"#name": "name", "#type": "type"},
-        ScanIndexForward=False,
     )
-    return {"cards": add_card_image_urls(response.get("Items", []))}
+    cards = response.get("Items", [])
+    cards.sort(key=lambda card: (card.get("setCode") or DEFAULT_SET["code"], normalize_collector_number(card.get("collectorNumber")), card.get("name", "")))
+    return {"cards": add_card_image_urls(cards)}
 
 
 def get_card(user_id, card_id):
@@ -286,6 +304,38 @@ def get_card(user_id, card_id):
         )
     ensure_default_set_if_missing(user_id)
     return {"card": item}
+
+
+def reorder_set_cards(user_id, set_code, body):
+    normalized_set_code = normalize_set_code(set_code)
+    validate_card_set(user_id, normalized_set_code)
+    card_ids = body.get("cardIds")
+    if not isinstance(card_ids, list) or not card_ids:
+        raise ValueError("Card ids are required.")
+    if len(set(card_ids)) != len(card_ids):
+        raise ValueError("Card ids must be unique.")
+
+    response = TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
+    cards_in_set = {
+        item["cardId"]: item
+        for item in response.get("Items", [])
+        if (item.get("setCode") or DEFAULT_SET["code"]) == normalized_set_code
+    }
+    if set(card_ids) != set(cards_in_set):
+        raise ValueError("Reorder list must include every card in the set.")
+
+    now = int(time.time())
+    for index, card_id in enumerate(card_ids, start=1):
+        TABLE.update_item(
+            Key={"userId": user_id, "cardId": card_id},
+            UpdateExpression="SET collectorNumber = :collectorNumber, updatedAt = :updatedAt",
+            ExpressionAttributeValues={":collectorNumber": index, ":updatedAt": now},
+        )
+        cards_in_set[card_id]["collectorNumber"] = index
+        cards_in_set[card_id]["updatedAt"] = now
+
+    reordered_cards = [cards_in_set[card_id] for card_id in card_ids]
+    return {"cards": add_card_image_urls(reordered_cards)}
 
 
 def get_user_bucket_name(user_id):
