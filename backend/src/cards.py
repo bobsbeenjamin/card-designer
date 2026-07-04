@@ -69,6 +69,10 @@ def handler(event, _context):
         if method == "POST" and route_key == "POST /sets":
             return ok(save_set(user_id, read_body(event)), status=201)
 
+        if method == "DELETE" and route_key == "DELETE /sets/{setCode}":
+            set_code = event["pathParameters"]["setCode"]
+            return ok(delete_set(user_id, set_code))
+
         if method == "POST" and route_key == "POST /sets/{setCode}/cards/reorder":
             set_code = event["pathParameters"]["setCode"]
             return ok(reorder_set_cards(user_id, set_code, read_body(event)))
@@ -244,6 +248,35 @@ def clean_set(body):
         "symbol": symbol,
         "copyrightInfo": str(body.get("copyrightInfo") or "").strip(),
     }
+
+
+def get_cards_for_set(user_id, set_code):
+    """Return all cards in a set for cascading operations."""
+    normalized_set_code = normalize_set_code(set_code)
+    response = TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
+    return [
+        item
+        for item in response.get("Items", [])
+        if (item.get("setCode") or DEFAULT_SET["code"]) == normalized_set_code
+    ]
+
+
+def delete_set(user_id, set_code):
+    """Delete a non-default set and every card/image in that set."""
+    normalized_set_code = normalize_set_code(set_code)
+    if normalized_set_code == DEFAULT_SET["code"]:
+        raise ValueError("The default set cannot be deleted.")
+    if not get_set(user_id, normalized_set_code):
+        raise ValueError("Card set does not exist.")
+
+    deleted_cards = 0
+    for card in get_cards_for_set(user_id, normalized_set_code):
+        delete_card_image(card)
+        TABLE.delete_item(Key={"userId": user_id, "cardId": card["cardId"]})
+        deleted_cards += 1
+
+    SETS_TABLE.delete_item(Key={"userId": user_id, "code": normalized_set_code})
+    return {"deleted": True, "setCode": normalized_set_code, "deletedCards": deleted_cards}
 
 
 def save_set(user_id, body):

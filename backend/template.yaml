@@ -187,6 +187,12 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /sets
             Method: POST
+        DeleteSet:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /sets/{setCode}
+            Method: DELETE
         ReorderSetCards:
           Type: HttpApi
           Properties:

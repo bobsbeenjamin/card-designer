@@ -104,6 +104,10 @@ const elements = {
   exportPng: document.querySelector("#exportPng"),
   duplicateSaveDialog: document.querySelector("#duplicateSaveDialog"),
   duplicateSaveMessage: document.querySelector("#duplicateSaveMessage"),
+  deleteSetDialog: document.querySelector("#deleteSetDialog"),
+  deleteSetTitle: document.querySelector("#deleteSetTitle"),
+  deleteSetMessage: document.querySelector("#deleteSetMessage"),
+  confirmDeleteSetButton: document.querySelector("#confirmDeleteSetButton"),
 };
 
 function getRarityColor(rarity) {
@@ -841,6 +845,26 @@ function renderSetSymbolPreview(cardSet) {
   return symbol;
 }
 
+/** Creates the red trash button used to delete a set row. */
+function createSetDeleteButton(cardSet) {
+  const button = document.createElement("button");
+  const setCode = cardSet.code || "DEFAULT";
+  button.className = "set-delete-button";
+  button.type = "button";
+  button.disabled = setCode === "DEFAULT";
+  button.setAttribute("aria-label", `Delete ${cardSet.name || setCode} set`);
+  button.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M3 6h18"></path>
+      <path d="M8 6V4h8v2"></path>
+      <path d="M19 6l-1 14H6L5 6"></path>
+      <path d="M10 11v5"></path>
+      <path d="M14 11v5"></path>
+    </svg>`;
+  button.addEventListener("click", () => promptDeleteSet(cardSet));
+  return button;
+}
+
 /** Shows the set list view in the fullscreen library modal. */
 function renderSetLibraryList() {
   elements.setLibraryTitle.textContent = "My Sets";
@@ -863,11 +887,42 @@ function renderSetLibraryList() {
     });
     const name = document.createElement("strong");
     name.textContent = cardSet.name || "Untitled Set";
-    row.append(renderSetSymbolPreview(cardSet), codeLink, name);
+    row.append(renderSetSymbolPreview(cardSet), codeLink, name, createSetDeleteButton(cardSet));
     list.append(row);
   }
 
   elements.setLibraryContent.append(list);
+}
+
+/** Asks for confirmation before deleting a set and its cards. */
+function promptDeleteSet(cardSet) {
+  const setCode = cardSet.code || "DEFAULT";
+  if (setCode === "DEFAULT") {
+    elements.setLibraryStatus.textContent = "The default set cannot be deleted.";
+    return;
+  }
+
+  const setName = cardSet.name || setCode;
+  elements.deleteSetTitle.textContent = `Are you sure you want to delete the \"${setName}\" set?`;
+  elements.deleteSetMessage.textContent = "This action cannot be undone";
+  elements.confirmDeleteSetButton.dataset.setCode = setCode;
+  elements.deleteSetDialog.showModal();
+}
+
+/** Deletes a set, its cards, and then refreshes the library UI. */
+async function deleteSet(setCode) {
+  try {
+    const resetDeletedEditorCard = elements.setInput.value === setCode;
+    await apiFetch(`/sets/${encodeURIComponent(setCode)}`, { method: "DELETE" });
+    if (elements.cardSetsInput.value === setCode) elements.cardSetsInput.value = "DEFAULT";
+    await Promise.all([refreshCardSets(), refreshSavedCards()]);
+    if (resetDeletedEditorCard) resetCard();
+    renderSetLibraryList();
+    syncCard();
+    setSaveStatus(`Deleted ${setCode} set`);
+  } catch (error) {
+    elements.setLibraryStatus.textContent = error.message;
+  }
 }
 
 /** Swaps a failed card thumbnail for an empty card frame. */
@@ -1593,6 +1648,12 @@ function attachEvents() {
   elements.viewSetsButton.addEventListener("click", openSetLibrary);
   elements.setLibraryBackButton.addEventListener("click", renderSetLibraryList);
   elements.setLibraryCloseButton.addEventListener("click", closeSetLibrary);
+  elements.deleteSetDialog.addEventListener("close", () => {
+    if (elements.deleteSetDialog.returnValue === "delete") {
+      deleteSet(elements.confirmDeleteSetButton.dataset.setCode);
+    }
+    elements.confirmDeleteSetButton.dataset.setCode = "";
+  });
   elements.cancelSetButton.addEventListener("click", closeSetDialog);
   elements.saveSetButton.addEventListener("click", saveSet);
   elements.setDialogForm.addEventListener("submit", (event) => {

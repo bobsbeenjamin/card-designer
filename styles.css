@@ -113,6 +113,10 @@ h1 {
   padding: 0 14px;
 }
 
+.button.no-wrap {
+  white-space: nowrap;
+}
+
 .button.primary {
   background: #1d2b24;
   border-color: #1d2b24;
@@ -662,7 +666,7 @@ input[type="color"] {
   border-radius: 8px;
   display: grid;
   gap: 14px;
-  grid-template-columns: 46px minmax(80px, 120px) minmax(0, 1fr);
+  grid-template-columns: 46px minmax(80px, 120px) minmax(0, 1fr) 42px;
   min-height: 64px;
   padding: 10px 12px;
 }
@@ -678,6 +682,36 @@ input[type="color"] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.set-delete-button {
+  background: #fff5f4;
+  border: 1px solid #e0b5b0;
+  border-radius: 8px;
+  color: #b42318;
+  cursor: pointer;
+  display: grid;
+  height: 38px;
+  place-items: center;
+  width: 38px;
+}
+
+.set-delete-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.36;
+}
+
+.set-delete-button svg {
+  height: 20px;
+  stroke: currentColor;
+  width: 20px;
+}
+
+.set-delete-button:hover:not(:disabled),
+.set-delete-button:focus-visible:not(:disabled) {
+  background: #ffe7e4;
+  border-color: #b42318;
+  outline: 0;
 }
 
 .set-symbol-preview {
@@ -812,6 +846,11 @@ input[type="color"] {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+
+.modal-actions.delete-set-actions {
+  grid-template-columns: repeat(2, minmax(max-content, 1fr));
 }
 
 .modal-actions.two-up {

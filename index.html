@@ -314,6 +314,17 @@
       </section>
     </dialog>
 
+    <dialog id="deleteSetDialog" class="modal-dialog" aria-labelledby="deleteSetTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="deleteSetTitle">Are you sure you want to delete this set?</h2>
+        <p id="deleteSetMessage">This action cannot be undone</p>
+        <div class="modal-actions delete-set-actions">
+          <button id="confirmDeleteSetButton" class="button danger no-wrap" value="delete" type="submit">Yes, delete forever</button>
+          <button class="button subtle no-wrap" value="cancel" type="submit">Cancel (back to safety)</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="setDialog" class="modal-dialog" aria-labelledby="setDialogTitle">
       <form id="setDialogForm" class="modal-card">
         <h2 id="setDialogTitle">Define a new set</h2>
