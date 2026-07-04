@@ -7,7 +7,7 @@ import json
 import os
 import socket
 import time
-from urllib.parse import unquote_plus, urlparse
+from urllib.parse import quote, unquote_plus, urlparse
 from urllib.request import Request, urlopen
 import uuid
 
@@ -19,12 +19,14 @@ from botocore.exceptions import ClientError
 TABLE_NAME = os.environ["TABLE_NAME"]
 SETS_TABLE_NAME = os.environ["SETS_TABLE_NAME"]
 USER_BUCKET_PREFIX = os.environ["USER_BUCKET_PREFIX"]
+ART_BUCKET_NAME = os.environ["ART_BUCKET_NAME"]
 DYNAMODB = boto3.resource("dynamodb")
 TABLE = DYNAMODB.Table(TABLE_NAME)
 SETS_TABLE = DYNAMODB.Table(SETS_TABLE_NAME)
 S3 = boto3.client("s3")
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_CARD_IMAGE_BYTES = 7 * 1024 * 1024
+MAX_ART_IMAGE_BYTES = 7 * 1024 * 1024
 DEFAULT_SET = {
     "code": "DEFAULT",
     "name": "Default",
@@ -51,6 +53,7 @@ ALLOWED_FIELDS = {
     "setCode",
 }
 CARD_IMAGE_FIELD = "cardImagePng"
+ART_IMAGE_FIELD = "artImage"
 
 
 def handler(event, _context):
@@ -62,6 +65,12 @@ def handler(event, _context):
 
         if method == "GET" and route_key == "GET /image-proxy":
             return proxy_image(event)
+
+        if method == "GET" and route_key == "GET /art":
+            return get_saved_art(user_id, event)
+
+        if method == "POST" and route_key == "POST /art":
+            return ok(save_art(user_id, read_body(event)), status=201)
 
         if method == "GET" and route_key == "GET /sets":
             return ok(list_sets(user_id))
@@ -99,6 +108,91 @@ def handler(event, _context):
     except PermissionError:
         return error("Unauthorized", 401)
 
+
+def get_art_user_prefix(user_id):
+    """Return the S3 key prefix reserved for a user's saved art."""
+    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:24]
+
+
+def get_art_key(user_id, set_code, card_name, content_type):
+    """Build the S3 key for saved card art.
+
+    Args:
+        user_id: Authenticated Cognito user id.
+        set_code: Card set code for the art path.
+        card_name: Card name for the art path.
+        content_type: Uploaded image MIME type.
+    """
+    extension = {
+        "image/jpeg": "jpg",
+        "image/png": "png",
+        "image/gif": "gif",
+        "image/webp": "webp",
+    }.get(content_type, "png")
+    user_prefix = get_art_user_prefix(user_id)
+    set_part = safe_s3_key_part(normalize_set_code(set_code), DEFAULT_SET["code"])
+    name_part = safe_s3_key_part(card_name, "Untitled Card")
+    return f"{user_prefix}/{set_part}/{name_part}.{extension}"
+
+
+def decode_art_image(body):
+    """Decode the uploaded artwork data URL."""
+    art_image = str(body.get(ART_IMAGE_FIELD) or "")
+    if not art_image.startswith("data:image/") or ";base64," not in art_image:
+        raise ValueError("Art image must be an image data URL.")
+    metadata, encoded_image = art_image.split(",", 1)
+    content_type = metadata[5:].split(";", 1)[0].lower()
+    if content_type not in {"image/jpeg", "image/png", "image/gif", "image/webp"}:
+        raise ValueError("Art image type is not supported.")
+    try:
+        image_bytes = base64.b64decode(encoded_image, validate=True)
+    except binascii.Error:
+        raise ValueError("Art image could not be decoded.")
+    if len(image_bytes) > MAX_ART_IMAGE_BYTES:
+        raise ValueError("Art image is larger than 7 MB.")
+    return image_bytes, content_type
+
+
+def save_art(user_id, body):
+    """Store uploaded artwork and return an authenticated app URL."""
+    image_bytes, content_type = decode_art_image(body)
+    set_code = normalize_set_code(body.get("setCode"))
+    validate_card_set(user_id, set_code)
+    art_key = get_art_key(user_id, set_code, body.get("cardName"), content_type)
+    S3.put_object(
+        Bucket=ART_BUCKET_NAME,
+        Key=art_key,
+        Body=image_bytes,
+        ContentType=content_type,
+        ServerSideEncryption="AES256",
+    )
+    return {"artKey": art_key, "artUrl": f"/art?key={quote(art_key, safe='')}"}
+
+
+def get_saved_art(user_id, event):
+    """Return saved artwork from the private art bucket."""
+    art_key = unquote_plus((event.get("queryStringParameters") or {}).get("key", "")).strip()
+    user_prefix = f"{get_art_user_prefix(user_id)}/"
+    if not art_key.startswith(user_prefix):
+        raise PermissionError()
+    try:
+        response = S3.get_object(Bucket=ART_BUCKET_NAME, Key=art_key)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in {"NoSuchKey", "404"}:
+            raise ValueError("Saved art was not found.")
+        raise
+    image_bytes = response["Body"].read(MAX_ART_IMAGE_BYTES + 1)
+    if len(image_bytes) > MAX_ART_IMAGE_BYTES:
+        raise ValueError("Saved art is larger than 7 MB.")
+    return {
+        "statusCode": 200,
+        "headers": {
+            "cache-control": "private, max-age=3600",
+            "content-type": response.get("ContentType") or "image/png",
+        },
+        "isBase64Encoded": True,
+        "body": base64.b64encode(image_bytes).decode("ascii"),
+    }
 
 
 def proxy_image(event):

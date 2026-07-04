@@ -17,6 +17,7 @@ const state = {
   savedSets: [],
   artObjectUrl: "",
   artUrl: "",
+  pendingArtUpload: null,
   libraryDraggedCardId: "",
   libraryDragMoved: false,
 };
@@ -108,6 +109,7 @@ const elements = {
   deleteSetTitle: document.querySelector("#deleteSetTitle"),
   deleteSetMessage: document.querySelector("#deleteSetMessage"),
   confirmDeleteSetButton: document.querySelector("#confirmDeleteSetButton"),
+  saveArtDialog: document.querySelector("#saveArtDialog"),
 };
 
 function getRarityColor(rarity) {
@@ -393,6 +395,7 @@ function revokeArtObjectUrl() {
 function clearArt() {
   revokeArtObjectUrl();
   state.artUrl = "";
+  state.pendingArtUpload = null;
   elements.art.removeAttribute("src");
   elements.art.removeAttribute("crossorigin");
   elements.artWindow.classList.remove("has-image");
@@ -404,7 +407,11 @@ async function getProxiedImageSource(artUrl) {
     throw new Error("Sign in to load image URLs through the CORS-safe proxy.");
   }
 
-  const response = await fetch(`${backendConfig.apiUrl}/image-proxy?url=${encodeURIComponent(artUrl)}`, {
+  const isSavedArtUrl = artUrl.startsWith(`${backendConfig.apiUrl}/art?`);
+  const imageRequestUrl = isSavedArtUrl
+    ? artUrl
+    : `${backendConfig.apiUrl}/image-proxy?url=${encodeURIComponent(artUrl)}`;
+  const response = await fetch(imageRequestUrl, {
     headers: { Authorization: `Bearer ${state.idToken}` },
   });
 
@@ -464,6 +471,7 @@ async function setArtSource(src, statusMessage = "") {
 
 function loadArtUrl() {
   elements.artInput.value = "";
+  state.pendingArtUpload = null;
   setArtSource(elements.artUrlInput.value, "Image URL loaded");
 }
 /** Restores the editor to default card values. */
@@ -490,6 +498,7 @@ function resetCard() {
   elements.panelColor.value = defaults.panel;
   elements.artInput.value = "";
   elements.artUrlInput.value = "";
+  state.pendingArtUpload = null;
   clearArt();
   syncCard();
 }
@@ -502,6 +511,11 @@ function loadArt(event) {
   elements.artUrlInput.value = "";
   const reader = new FileReader();
   reader.addEventListener("load", () => {
+    state.pendingArtUpload = {
+      dataUrl: reader.result,
+      fileName: file.name,
+      type: file.type,
+    };
     setArtSource(reader.result);
   });
   reader.readAsDataURL(file);
@@ -1150,6 +1164,7 @@ function promptDuplicateSave(cardName, existingCard) {
     elements.duplicateSaveDialog.showModal();
   });
 }
+
 /** Loads saved card summaries for the signed-in user. */
 async function refreshSavedCards() {
   try {
@@ -1162,9 +1177,43 @@ async function refreshSavedCards() {
   }
 }
 
+/** Asks whether uploaded file art should be saved to the art library. */
+function promptSaveArt() {
+  if (!elements.saveArtDialog) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const handleClose = () => {
+      elements.saveArtDialog.removeEventListener("close", handleClose);
+      resolve(elements.saveArtDialog.returnValue === "yes");
+    };
+    elements.saveArtDialog.addEventListener("close", handleClose);
+    elements.saveArtDialog.showModal();
+  });
+}
+
+/** Uploads selected file art and swaps the editor to the returned app URL. */
+async function savePendingArtForLater() {
+  if (!state.pendingArtUpload) return;
+  const shouldSaveArt = await promptSaveArt();
+  if (!shouldSaveArt) return;
+
+  const data = await apiFetch("/art", {
+    method: "POST",
+    body: JSON.stringify({
+      artImage: state.pendingArtUpload.dataUrl,
+      cardName: elements.nameInput.value.trim() || "Untitled Card",
+      setCode: elements.setInput.value || "DEFAULT",
+    }),
+  });
+  const artUrl = data.artUrl?.startsWith("http") ? data.artUrl : `${backendConfig.apiUrl}${data.artUrl}`;
+  state.pendingArtUpload = null;
+  elements.artUrlInput.value = artUrl;
+  await setArtSource(artUrl, "Art saved for later");
+}
+
 /** Saves or updates a card and uploads its rendered PNG. */
 async function saveCard(cardId = "") {
   try {
+    await savePendingArtForLater();
     const card = collectCardData();
     card.cardImagePng = await getCardPngDataUrl();
     const data = await apiFetch(cardId ? `/cards/${cardId}` : "/cards", {

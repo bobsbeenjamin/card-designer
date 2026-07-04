@@ -29,6 +29,7 @@ Globals:
         TABLE_NAME: !Ref CardDesignsTable
         SETS_TABLE_NAME: !Ref CardSetsTable
         USER_BUCKET_PREFIX: !Sub "cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}"
+        ART_BUCKET_NAME: !Ref CardArtBucket
 
 Resources:
   CardDesignsTable:
@@ -66,6 +67,20 @@ Resources:
           KeyType: HASH
         - AttributeName: code
           KeyType: RANGE
+
+  CardArtBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "card-designer-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}-art"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
 
   CardDesignerUserPool:
     Type: AWS::Cognito::UserPool
@@ -174,7 +189,24 @@ Resources:
                 - s3:PutObject
                 - s3:DeleteObject
               Resource: !Sub "arn:${AWS::Partition}:s3:::cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}-*/*"
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource: !Sub "${CardArtBucket.Arn}/*"
       Events:
+        GetArt:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /art
+            Method: GET
+        SaveArt:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /art
+            Method: POST
         ListSets:
           Type: HttpApi
           Properties:
