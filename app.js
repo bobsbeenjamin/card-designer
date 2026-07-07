@@ -115,6 +115,7 @@ const elements = {
   deleteSetMessage: document.querySelector("#deleteSetMessage"),
   confirmDeleteSetButton: document.querySelector("#confirmDeleteSetButton"),
   saveArtDialog: document.querySelector("#saveArtDialog"),
+  toastRegion: document.querySelector("#toastRegion"),
 };
 
 function getRarityColor(rarity) {
@@ -152,6 +153,31 @@ function setAuthStatus(message) {
 
 function setSaveStatus(message) {
   elements.saveStatus.textContent = message;
+}
+
+/** Shows a dismissible toast message for ten seconds. */
+function showToast(message) {
+  const toast = document.createElement("div");
+  const closeButton = document.createElement("button");
+  const messageText = document.createElement("p");
+  let timeoutId = 0;
+
+  toast.className = "toast-message";
+  messageText.textContent = message;
+  closeButton.className = "toast-close";
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "Close notification");
+  closeButton.textContent = "x";
+
+  const closeToast = () => {
+    window.clearTimeout(timeoutId);
+    toast.remove();
+  };
+
+  closeButton.addEventListener("click", closeToast);
+  toast.append(messageText, closeButton);
+  elements.toastRegion.append(toast);
+  timeoutId = window.setTimeout(closeToast, 10000);
 }
 function closeAccountMenu() {
   elements.accountMenu.classList.add("hidden");
@@ -506,6 +532,7 @@ async function generateImage() {
     syncCard();
   } catch (error) {
     setSaveStatus(error.message);
+    showToast(error.message);
   } finally {
     elements.generateImageButton.disabled = false;
   }
