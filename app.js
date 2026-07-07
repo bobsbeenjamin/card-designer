@@ -56,6 +56,7 @@ const elements = {
   artistInput: document.querySelector("#artistInput"),
   collectorInput: document.querySelector("#collectorInput"),
   rarityInput: document.querySelector("#rarityInput"),
+  generateImageButton: document.querySelector("#generateImageButton"),
   artInput: document.querySelector("#artInput"),
   artUrlInput: document.querySelector("#artUrlInput"),
   fitInput: document.querySelector("#fitInput"),
@@ -67,6 +68,10 @@ const elements = {
   passwordInput: document.querySelector("#passwordInput"),
   signInPanel: document.querySelector("#signInPanel"),
   signedInPanel: document.querySelector("#signedInPanel"),
+  aiSettingsPanel: document.querySelector("#aiSettingsPanel"),
+  openAiKeyInput: document.querySelector("#openAiKeyInput"),
+  saveOpenAiKeyButton: document.querySelector("#saveOpenAiKeyButton"),
+  openAiKeyStatus: document.querySelector("#openAiKeyStatus"),
   mySetsPanel: document.querySelector("#mySetsPanel"),
   cardSetsInput: document.querySelector("#cardSetsInput"),
   addSetButton: document.querySelector("#addSetButton"),
@@ -158,9 +163,14 @@ function updateAccountUi() {
   const signedIn = Boolean(state.idToken);
   elements.signInPanel.classList.toggle("hidden", signedIn);
   elements.signedInPanel.classList.toggle("hidden", !signedIn);
+  elements.aiSettingsPanel.classList.toggle("hidden", !signedIn);
   elements.mySetsPanel.classList.toggle("hidden", !signedIn);
   elements.currentUserLabel.textContent = state.email || "Account";
-  if (!signedIn) closeAccountMenu();
+  if (!signedIn) {
+    closeAccountMenu();
+    elements.openAiKeyInput.value = "";
+    elements.openAiKeyStatus.textContent = "No OpenAI key saved";
+  }
 }
 
 /** Opens or closes the account popover. */
@@ -474,6 +484,33 @@ function loadArtUrl() {
   state.pendingArtUpload = null;
   setArtSource(elements.artUrlInput.value, "Image URL loaded");
 }
+
+/** Generates card art from the current name/flavor and loads the saved art URL. */
+async function generateImage() {
+  try {
+    elements.generateImageButton.disabled = true;
+    setSaveStatus("Generating image...");
+    const data = await apiFetch("/art/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        cardName: elements.nameInput.value.trim() || "Untitled Card",
+        flavorText: elements.flavorInput.value.trim(),
+        setCode: elements.setInput.value || "DEFAULT",
+      }),
+    });
+    const artUrl = data.artUrl?.startsWith("http") ? data.artUrl : `${backendConfig.apiUrl}${data.artUrl}`;
+    state.pendingArtUpload = null;
+    elements.artInput.value = "";
+    elements.artUrlInput.value = artUrl;
+    await setArtSource(artUrl, "Generated image loaded");
+    syncCard();
+  } catch (error) {
+    setSaveStatus(error.message);
+  } finally {
+    elements.generateImageButton.disabled = false;
+  }
+}
+
 /** Restores the editor to default card values. */
 function resetCard() {
   state.currentCardId = "";
@@ -658,6 +695,37 @@ async function confirmAccount() {
   }
 }
 
+/** Loads whether the signed-in user has an OpenAI key stored. */
+async function refreshOpenAiKeyStatus() {
+  if (!state.idToken) return;
+  try {
+    const data = await apiFetch("/settings/openai-key");
+    elements.openAiKeyStatus.textContent = data.configured ? "OpenAI key saved" : "No OpenAI key saved";
+  } catch (error) {
+    elements.openAiKeyStatus.textContent = error.message;
+  }
+}
+
+/** Saves the signed-in user's OpenAI API key for image generation. */
+async function saveOpenAiKey() {
+  const apiKey = elements.openAiKeyInput.value.trim();
+  if (!apiKey) {
+    elements.openAiKeyStatus.textContent = "Enter an OpenAI API key first.";
+    return;
+  }
+
+  try {
+    await apiFetch("/settings/openai-key", {
+      method: "PUT",
+      body: JSON.stringify({ apiKey }),
+    });
+    elements.openAiKeyInput.value = "";
+    elements.openAiKeyStatus.textContent = "OpenAI key saved";
+  } catch (error) {
+    elements.openAiKeyStatus.textContent = error.message;
+  }
+}
+
 /** Signs in and refreshes saved cards and sets. */
 async function signIn() {
   try {
@@ -679,7 +747,7 @@ async function signIn() {
     updateAccountUi();
     setAuthStatus(`Signed in as ${email}`);
     setSaveStatus("Loading saved designs...");
-    await Promise.all([refreshSavedCards(), refreshCardSets()]);
+    await Promise.all([refreshSavedCards(), refreshCardSets(), refreshOpenAiKeyStatus()]);
   } catch (error) {
     setAuthStatus(error.message);
   }
@@ -1686,6 +1754,7 @@ function attachEvents() {
     control.addEventListener("input", syncCard);
   });
 
+  elements.generateImageButton.addEventListener("click", generateImage);
   elements.artInput.addEventListener("change", loadArt);
   elements.artUrlInput.addEventListener("change", loadArtUrl);
   elements.cardSetsInput.addEventListener("change", renderSavedCards);
@@ -1715,6 +1784,7 @@ function attachEvents() {
   elements.signUpButton.addEventListener("click", signUp);
   elements.confirmButton.addEventListener("click", confirmAccount);
   elements.signInButton.addEventListener("click", signIn);
+  elements.saveOpenAiKeyButton.addEventListener("click", saveOpenAiKey);
   elements.accountMenuButton.addEventListener("click", toggleAccountMenu);
   elements.signOutButton.addEventListener("click", signOut);
   document.addEventListener("click", (event) => {
@@ -1752,6 +1822,7 @@ async function initialize() {
   updateAccountUi();
   if (state.idToken) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
+    refreshOpenAiKeyStatus();
     refreshSavedCards();
     refreshCardSets();
   } else if (sessionStorage.getItem("cardDesignerIdToken")) {

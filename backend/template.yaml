@@ -28,6 +28,8 @@ Globals:
       Variables:
         TABLE_NAME: !Ref CardDesignsTable
         SETS_TABLE_NAME: !Ref CardSetsTable
+        USER_SETTINGS_TABLE_NAME: !Ref UserSettingsTable
+        USER_SETTINGS_KEY_ID: !Ref UserSettingsKey
         USER_BUCKET_PREFIX: !Sub "cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}"
         ART_BUCKET_NAME: !Ref CardArtBucket
 
@@ -66,6 +68,45 @@ Resources:
         - AttributeName: userId
           KeyType: HASH
         - AttributeName: code
+          KeyType: RANGE
+
+  UserSettingsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub "KMS key for card designer ${AppEnvironment} user settings"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+
+  UserSettingsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/card-designer-${AppEnvironment}-user-settings"
+      TargetKeyId: !Ref UserSettingsKey
+
+  UserSettingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "card-designer-${AppEnvironment}-user-settings"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: settingKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: settingKey
           KeyType: RANGE
 
   CardArtBucket:
@@ -170,12 +211,20 @@ Resources:
       FunctionName: !Sub "card-designer-${AppEnvironment}-cards"
       CodeUri: src/
       Handler: cards.handler
+      Timeout: 60
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CardDesignsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref CardSetsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UserSettingsTable
         - Statement:
+            - Effect: Allow
+              Action:
+                - kms:Encrypt
+                - kms:Decrypt
+              Resource: !GetAtt UserSettingsKey.Arn
             - Effect: Allow
               Action:
                 - s3:CreateBucket
@@ -207,6 +256,24 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /art
             Method: POST
+        GenerateArt:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /art/generate
+            Method: POST
+        GetOpenAiKey:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /settings/openai-key
+            Method: GET
+        SaveOpenAiKey:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /settings/openai-key
+            Method: PUT
         ListSets:
           Type: HttpApi
           Properties:
@@ -284,3 +351,9 @@ Outputs:
   SetsTableName:
     Description: DynamoDB card sets table name.
     Value: !Ref CardSetsTable
+  UserSettingsTableName:
+    Description: DynamoDB user settings table name.
+    Value: !Ref UserSettingsTable
+  UserSettingsKeyId:
+    Description: KMS key id for user settings encryption.
+    Value: !Ref UserSettingsKey

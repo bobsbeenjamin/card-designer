@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote_plus, urlparse
 from urllib.request import Request, urlopen
 import uuid
@@ -18,12 +19,16 @@ from botocore.exceptions import ClientError
 
 TABLE_NAME = os.environ["TABLE_NAME"]
 SETS_TABLE_NAME = os.environ["SETS_TABLE_NAME"]
+USER_SETTINGS_TABLE_NAME = os.environ["USER_SETTINGS_TABLE_NAME"]
 USER_BUCKET_PREFIX = os.environ["USER_BUCKET_PREFIX"]
 ART_BUCKET_NAME = os.environ["ART_BUCKET_NAME"]
+USER_SETTINGS_KEY_ID = os.environ["USER_SETTINGS_KEY_ID"]
 DYNAMODB = boto3.resource("dynamodb")
 TABLE = DYNAMODB.Table(TABLE_NAME)
 SETS_TABLE = DYNAMODB.Table(SETS_TABLE_NAME)
+USER_SETTINGS_TABLE = DYNAMODB.Table(USER_SETTINGS_TABLE_NAME)
 S3 = boto3.client("s3")
+KMS = boto3.client("kms")
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_CARD_IMAGE_BYTES = 7 * 1024 * 1024
 MAX_ART_IMAGE_BYTES = 7 * 1024 * 1024
@@ -54,6 +59,7 @@ ALLOWED_FIELDS = {
 }
 CARD_IMAGE_FIELD = "cardImagePng"
 ART_IMAGE_FIELD = "artImage"
+OPENAI_KEY_SETTING = "openAiApiKey"
 
 
 def handler(event, _context):
@@ -71,6 +77,15 @@ def handler(event, _context):
 
         if method == "POST" and route_key == "POST /art":
             return ok(save_art(user_id, read_body(event)), status=201)
+
+        if method == "POST" and route_key == "POST /art/generate":
+            return ok(generate_art(user_id, read_body(event)), status=201)
+
+        if method == "GET" and route_key == "GET /settings/openai-key":
+            return ok(get_openai_key_status(user_id))
+
+        if method == "PUT" and route_key == "PUT /settings/openai-key":
+            return ok(save_openai_key(user_id, read_body(event)))
 
         if method == "GET" and route_key == "GET /sets":
             return ok(list_sets(user_id))
@@ -167,6 +182,170 @@ def save_art(user_id, body):
         ServerSideEncryption="AES256",
     )
     return {"artKey": art_key, "artUrl": f"/art?key={quote(art_key, safe='')}"}
+
+
+def get_openai_key_item(user_id):
+    """Return the stored OpenAI key settings item for a user."""
+    response = USER_SETTINGS_TABLE.get_item(Key={"userId": user_id, "settingKey": OPENAI_KEY_SETTING})
+    return response.get("Item")
+
+
+def get_openai_key_status(user_id):
+    """Return whether the signed-in user has an OpenAI key stored."""
+    item = get_openai_key_item(user_id)
+    configured = bool(item and (item.get("apiKeyCiphertext") or item.get("apiKey")))
+    return {"configured": configured, "updatedAt": item.get("updatedAt") if item else None}
+
+
+def get_openai_key_encryption_context(user_id):
+    """Build the KMS encryption context for a user's OpenAI key."""
+    return {"userId": user_id, "settingKey": OPENAI_KEY_SETTING}
+
+
+def encrypt_openai_key(user_id, api_key):
+    """Encrypt a user's OpenAI key before storing it in DynamoDB."""
+    response = KMS.encrypt(
+        KeyId=USER_SETTINGS_KEY_ID,
+        Plaintext=api_key.encode("utf-8"),
+        EncryptionContext=get_openai_key_encryption_context(user_id),
+    )
+    return base64.b64encode(response["CiphertextBlob"]).decode("ascii")
+
+
+def decrypt_openai_key(user_id, ciphertext):
+    """Decrypt a user's stored OpenAI key for image generation."""
+    try:
+        encrypted_key = base64.b64decode(str(ciphertext or ""), validate=True)
+    except binascii.Error:
+        raise ValueError("Saved OpenAI API key could not be decoded.")
+    response = KMS.decrypt(
+        CiphertextBlob=encrypted_key,
+        EncryptionContext=get_openai_key_encryption_context(user_id),
+    )
+    return response["Plaintext"].decode("utf-8").strip()
+
+
+def save_openai_key(user_id, body):
+    """Store the signed-in user's OpenAI API key."""
+    api_key = str(body.get("apiKey") or "").strip()
+    if not api_key:
+        raise ValueError("OpenAI API key is required.")
+    now = int(time.time())
+    USER_SETTINGS_TABLE.put_item(Item={
+        "userId": user_id,
+        "settingKey": OPENAI_KEY_SETTING,
+        "apiKeyCiphertext": encrypt_openai_key(user_id, api_key),
+        "updatedAt": now,
+    })
+    return {"configured": True, "updatedAt": now}
+
+
+def get_openai_api_key(user_id):
+    """Return the signed-in user's stored OpenAI API key."""
+    item = get_openai_key_item(user_id) or {}
+    if item.get("apiKeyCiphertext"):
+        return decrypt_openai_key(user_id, item["apiKeyCiphertext"])
+    return str(item.get("apiKey") or "").strip()
+
+
+def build_art_prompt(body):
+    """Build the image prompt from the current card fields."""
+    card_name = str(body.get("cardName") or "Untitled Card").strip() or "Untitled Card"
+    flavor_text = str(body.get("flavorText") or "").strip()
+    return f"image name is {card_name} and image caption would be {flavor_text}"
+
+
+def read_image_generation_error(exc):
+    """Return the API error message from an image generation failure."""
+    message = "Image generation failed."
+    try:
+        error_body = json.loads(exc.read().decode("utf-8"))
+        return error_body.get("error", {}).get("message") or message
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return message
+
+
+def fetch_generated_image(image_url):
+    """Download a generated image URL and return image bytes."""
+    validate_image_url(image_url)
+    request = Request(image_url, headers={"User-Agent": "card-designer-image-generator/1.0"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+            if not content_type.startswith("image/"):
+                raise ValueError("Generated image URL did not return an image.")
+            image_bytes = response.read(MAX_ART_IMAGE_BYTES + 1)
+    except URLError:
+        raise ValueError("Generated image could not be downloaded.")
+    if len(image_bytes) > MAX_ART_IMAGE_BYTES:
+        raise ValueError("Generated image is larger than 7 MB.")
+    return image_bytes
+
+
+def decode_generated_image(encoded_image):
+    """Decode a generated image from base64 when the API returns one."""
+    try:
+        image_bytes = base64.b64decode(encoded_image, validate=True)
+    except binascii.Error:
+        raise ValueError("Generated image could not be decoded.")
+    if len(image_bytes) > MAX_ART_IMAGE_BYTES:
+        raise ValueError("Generated image is larger than 7 MB.")
+    return image_bytes
+
+
+def generate_openai_image(prompt, api_key):
+    """Generate a PNG image with OpenAI and return its bytes."""
+    if not api_key:
+        raise ValueError("Save an OpenAI API key before generating images.")
+
+    payload = json.dumps({
+        "model": "gpt-image-2",
+        "prompt": prompt,
+        "n": 1,
+        "size": "1024x1024",
+        "quality": "low",
+    }).encode("utf-8")
+    request = Request(
+        "https://api.openai.com/v1/images/generations",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(request, timeout=45) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise ValueError(read_image_generation_error(exc))
+    except URLError:
+        raise ValueError("Image generation service could not be reached.")
+
+    image = (data.get("data") or [{}])[0]
+    if image.get("b64_json"):
+        return decode_generated_image(image["b64_json"])
+    if image.get("url"):
+        return fetch_generated_image(image["url"])
+    raise ValueError("Image generation did not return an image.")
+
+
+def generate_art(user_id, body):
+    """Generate card art, save it in S3, and return an authenticated app URL."""
+    set_code = normalize_set_code(body.get("setCode"))
+    validate_card_set(user_id, set_code)
+    prompt = build_art_prompt(body)
+    image_bytes = generate_openai_image(prompt, get_openai_api_key(user_id))
+    art_key = get_art_key(user_id, set_code, body.get("cardName"), "image/png")
+    S3.put_object(
+        Bucket=ART_BUCKET_NAME,
+        Key=art_key,
+        Body=image_bytes,
+        ContentType="image/png",
+        ServerSideEncryption="AES256",
+    )
+    return {"artKey": art_key, "artUrl": f"/art?key={quote(art_key, safe='')}", "prompt": prompt}
 
 
 def get_saved_art(user_id, event):

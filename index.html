@@ -47,6 +47,18 @@
                 <button id="signOutButton" class="button subtle" type="button">Sign Out</button>
               </div>
             </div>
+            <div id="aiSettingsPanel" class="account-panel hidden">
+              <label>
+                <a
+                  href="https://help.openai.com/en/articles/4936850-where-do-i-find-my-openai-api-key"
+                  target="_blank"
+                  title="Click here to learn about OpenAI Keys"
+                ><span>OpenAI API key 🛈</span></a>
+                <input id="openAiKeyInput" type="password" autocomplete="off" placeholder="Stored for image generation" />
+              </label>
+              <button id="saveOpenAiKeyButton" class="button subtle" type="button">Save OpenAI Key</button>
+              <p id="openAiKeyStatus" class="status-line">No OpenAI key saved</p>
+            </div>
             <p id="authStatus" class="status-line">Signed out</p>
           </fieldset>
 
@@ -235,6 +247,7 @@
 
           <fieldset>
             <legend>Artwork</legend>
+            <button id="generateImageButton" class="button primary" type="button">Generate Image</button>
             <label class="file-input">
               <span>Image file</span>
               <input id="artInput" type="file" accept="image/*" />
