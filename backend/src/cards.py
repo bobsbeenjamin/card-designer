@@ -252,7 +252,7 @@ def build_art_prompt(body):
     """Build the image prompt from the current card fields."""
     card_name = str(body.get("cardName") or "Untitled Card").strip() or "Untitled Card"
     flavor_text = str(body.get("flavorText") or "").strip()
-    return f"image name is {card_name} and image caption would be {flavor_text}"
+    return f'{card_name}. If it were on a website, the caption would be "{flavor_text}"'
 
 
 def read_image_generation_error(exc):
@@ -302,7 +302,7 @@ def generate_openai_image(prompt, api_key):
         "model": "gpt-image-2",
         "prompt": prompt,
         "n": 1,
-        "size": "1024x1024",
+        "size": "1536x1024",
         "quality": "low",
     }).encode("utf-8")
     request = Request(
