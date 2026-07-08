@@ -76,6 +76,11 @@
                 <option value="DEFAULT">DEFAULT - Default</option>
               </select>
             </label>
+            <button id="makeSetPublicButton" class="button subtle" type="button">Make this set public</button>
+            <p id="publicSetLinkLine" class="public-set-link hidden">
+              <span>Link to this set:</span>
+              <a id="publicSetLink" href="#" target="_blank" rel="noopener"></a>
+            </p>
           </fieldset>
 
           <fieldset>
@@ -370,6 +375,10 @@
         <label>
           <span>Copyright info</span>
           <textarea id="setCopyrightInput" rows="3"></textarea>
+        </label>
+        <label class="checkbox-label">
+          <input id="setPublicInput" type="checkbox" />
+          <span>Public set</span>
         </label>
         <p id="setDialogStatus" class="status-line"></p>
         <div class="modal-actions two-up">

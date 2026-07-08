@@ -65,9 +65,13 @@ OPENAI_KEY_SETTING = "openAiApiKey"
 def handler(event, _context):
     """Handle Lambda events for the card designer backend."""
     try:
-        user_id = get_user_id(event)
         method = event["requestContext"]["http"]["method"]
         route_key = event["routeKey"]
+
+        if method == "GET" and route_key == "GET /public/sets":
+            return ok(get_public_set(event))
+
+        user_id = get_user_id(event)
 
         if method == "GET" and route_key == "GET /image-proxy":
             return proxy_image(event)
@@ -96,6 +100,10 @@ def handler(event, _context):
         if method == "DELETE" and route_key == "DELETE /sets/{setCode}":
             set_code = event["pathParameters"]["setCode"]
             return ok(delete_set(user_id, set_code))
+
+        if method == "PUT" and route_key == "PUT /sets/{setCode}/public":
+            set_code = event["pathParameters"]["setCode"]
+            return ok(make_set_public(user_id, set_code))
 
         if method == "POST" and route_key == "POST /sets/{setCode}/cards/reorder":
             set_code = event["pathParameters"]["setCode"]
@@ -520,6 +528,7 @@ def clean_set(body):
         "name": name,
         "symbol": symbol,
         "copyrightInfo": str(body.get("copyrightInfo") or "").strip(),
+        "isPublic": bool(body.get("isPublic")),
     }
 
 
@@ -566,6 +575,22 @@ def save_set(user_id, body):
     return {"set": item}
 
 
+def make_set_public(user_id, set_code):
+    """Mark a user's set as public and return the updated record."""
+    normalized_set_code = normalize_set_code(set_code)
+    ensure_default_set_if_missing(user_id)
+    if not get_set(user_id, normalized_set_code):
+        raise ValueError("Card set does not exist.")
+
+    response = SETS_TABLE.update_item(
+        Key={"userId": user_id, "code": normalized_set_code},
+        UpdateExpression="SET isPublic = :isPublic",
+        ExpressionAttributeValues={":isPublic": True},
+        ReturnValues="ALL_NEW",
+    )
+    return {"set": response.get("Attributes", {})}
+
+
 def backfill_card_set_codes(user_id):
     """Update older card records that predate set codes."""
     response = TABLE.query(
@@ -594,6 +619,83 @@ def add_card_image_urls(cards):
             ExpiresIn=900,
         )
     return cards
+
+
+def get_card_image_url(card):
+    """Return a short-lived signed S3 URL for a saved card PNG."""
+    bucket_name = card.get("imageBucket")
+    image_key = card.get("imageKey")
+    if not bucket_name or not image_key:
+        return ""
+    return S3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": bucket_name, "Key": image_key},
+        ExpiresIn=900,
+    )
+
+
+def public_set_summary(card_set):
+    """Return public-safe display fields for a set."""
+    return {
+        "code": card_set.get("code", ""),
+        "name": card_set.get("name", ""),
+        "symbol": card_set.get("symbol", ""),
+        "copyrightInfo": card_set.get("copyrightInfo", ""),
+        "isPublic": bool(card_set.get("isPublic")),
+    }
+
+
+def public_card_summary(card):
+    """Return public-safe display fields for a card."""
+    return {
+        "cardId": card.get("cardId", ""),
+        "name": card.get("name", "Untitled Card"),
+        "collectorNumber": normalize_collector_number(card.get("collectorNumber")),
+        "imageUrl": get_card_image_url(card),
+    }
+
+
+def find_public_set(user_id, set_identifier):
+    """Find a public set by code or name for a user."""
+    response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
+    wanted = str(set_identifier or "").strip().casefold()
+    for card_set in response.get("Items", []):
+        set_code = str(card_set.get("code") or "").casefold()
+        set_name = str(card_set.get("name") or "").casefold()
+        if wanted in {set_code, set_name}:
+            return card_set
+    return None
+
+
+def get_public_cards(user_id, set_code):
+    """Return public card summaries for one set, ordered by collector number."""
+    normalized_set_code = normalize_set_code(set_code)
+    response = TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
+    cards = [
+        item
+        for item in response.get("Items", [])
+        if (item.get("setCode") or DEFAULT_SET["code"]) == normalized_set_code
+    ]
+    cards.sort(key=lambda card: (normalize_collector_number(card.get("collectorNumber")), card.get("name", "")))
+    return [public_card_summary(card) for card in cards]
+
+
+def get_public_set(event):
+    """Return one opted-in public set and its public card gallery data."""
+    params = event.get("queryStringParameters") or {}
+    user_id = str(params.get("user") or "").strip()
+    set_identifier = str(params.get("set") or params.get("setName") or "").strip()
+    if not user_id or not set_identifier:
+        raise ValueError("Public set links require user and set parameters.")
+
+    card_set = find_public_set(user_id, set_identifier)
+    if not card_set or not card_set.get("isPublic"):
+        raise ValueError("Public set was not found.")
+
+    return {
+        "set": public_set_summary(card_set),
+        "cards": get_public_cards(user_id, card_set["code"]),
+    }
 
 
 def list_cards(user_id):

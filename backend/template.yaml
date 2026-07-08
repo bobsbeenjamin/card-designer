@@ -274,6 +274,14 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /settings/openai-key
             Method: PUT
+        GetPublicSet:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /public/sets
+            Method: GET
+            Auth:
+              Authorizer: NONE
         ListSets:
           Type: HttpApi
           Properties:
@@ -292,6 +300,12 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /sets/{setCode}
             Method: DELETE
+        MakeSetPublic:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /sets/{setCode}/public
+            Method: PUT
         ReorderSetCards:
           Type: HttpApi
           Properties:

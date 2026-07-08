@@ -76,6 +76,9 @@ const elements = {
   mySetsPanel: document.querySelector("#mySetsPanel"),
   cardSetsInput: document.querySelector("#cardSetsInput"),
   addSetButton: document.querySelector("#addSetButton"),
+  makeSetPublicButton: document.querySelector("#makeSetPublicButton"),
+  publicSetLinkLine: document.querySelector("#publicSetLinkLine"),
+  publicSetLink: document.querySelector("#publicSetLink"),
   viewSetsButton: document.querySelector("#viewSetsButton"),
   setLibraryDialog: document.querySelector("#setLibraryDialog"),
   setLibraryTitle: document.querySelector("#setLibraryTitle"),
@@ -89,6 +92,7 @@ const elements = {
   setNameInput: document.querySelector("#setNameInput"),
   setSymbolInput: document.querySelector("#setSymbolInput"),
   setCopyrightInput: document.querySelector("#setCopyrightInput"),
+  setPublicInput: document.querySelector("#setPublicInput"),
   setDialogStatus: document.querySelector("#setDialogStatus"),
   cancelSetButton: document.querySelector("#cancelSetButton"),
   saveSetButton: document.querySelector("#saveSetButton"),
@@ -783,16 +787,22 @@ async function signIn() {
   }
 }
 
-/** Checks whether a JWT is absent, malformed, or expired. */
-function isJwtExpired(token) {
-  if (!token) return true;
+function getJwtPayload(token) {
+  if (!token) return null;
 
   try {
-    const payload = JSON.parse(atob(token.split(".")[1]));
-    return !payload.exp || payload.exp * 1000 <= Date.now();
+    const encodedPayload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const paddedPayload = encodedPayload.padEnd(Math.ceil(encodedPayload.length / 4) * 4, "=");
+    return JSON.parse(atob(paddedPayload));
   } catch (error) {
-    return true;
+    return null;
   }
+}
+
+/** Checks whether a JWT is absent, malformed, or expired. */
+function isJwtExpired(token) {
+  const payload = getJwtPayload(token);
+  return !payload?.exp || payload.exp * 1000 <= Date.now();
 }
 
 /** Clears local auth/session state and saved library state. */
@@ -870,12 +880,11 @@ function populateSetSelect(select, sets, selectedSetCode) {
 function renderCardSets() {
   const selectedFilterSetCode = elements.cardSetsInput.value || "DEFAULT";
   const selectedDesignSetCode = elements.setInput.value || "DEFAULT";
-  const sets = state.savedSets.length
-    ? state.savedSets
-    : [{ code: "DEFAULT", name: "Default", symbol: "", copyrightInfo: "" }];
+  const sets = getAvailableSets();
 
   populateSetSelect(elements.cardSetsInput, sets, selectedFilterSetCode);
   populateSetSelect(elements.setInput, sets, selectedDesignSetCode);
+  updateMakeSetPublicButton();
 }
 
 /** Loads the signed-in user's sets from the backend. */
@@ -891,6 +900,7 @@ async function refreshCardSets() {
 
 function clearSetDialog() {
   elements.setDialogForm.reset();
+  elements.setPublicInput.checked = false;
   elements.setDialogStatus.textContent = "";
 }
 
@@ -913,11 +923,12 @@ async function saveSet() {
     const name = elements.setNameInput.value.trim();
     const symbol = elements.setSymbolInput.value.trim();
     const copyrightInfo = elements.setCopyrightInput.value.trim();
+    const isPublic = elements.setPublicInput.checked;
     if (!code || !name) throw new Error("Enter a set code and name.");
 
     const data = await apiFetch("/sets", {
       method: "POST",
-      body: JSON.stringify({ code, name, symbol, copyrightInfo }),
+      body: JSON.stringify({ code, name, symbol, copyrightInfo, isPublic }),
     });
     const savedSetCode = data.set?.code || code;
     await refreshCardSets();
@@ -939,6 +950,70 @@ function getAvailableSets() {
     : [{ code: "DEFAULT", name: "Default", symbol: "", copyrightInfo: "" }];
 }
 
+function getSetByCode(setCode) {
+  const normalizedSetCode = setCode || "DEFAULT";
+  return getAvailableSets().find((cardSet) => (cardSet.code || "DEFAULT") === normalizedSetCode);
+}
+
+function getSignedInUserId() {
+  return getJwtPayload(state.idToken)?.sub || "";
+}
+
+function getPublicSetUrl(cardSet) {
+  const userId = getSignedInUserId();
+  if (!userId || !cardSet) return "";
+
+  const publicUrl = new URL("public/", window.location.href);
+  publicUrl.search = new URLSearchParams({
+    user: userId,
+    set: cardSet.code || "DEFAULT",
+  }).toString();
+  return publicUrl.toString();
+}
+
+function updatePublicSetLink(cardSet) {
+  const publicUrl = cardSet?.isPublic ? getPublicSetUrl(cardSet) : "";
+  elements.publicSetLinkLine.classList.toggle("hidden", !publicUrl);
+  elements.publicSetLink.href = publicUrl || "#";
+  elements.publicSetLink.textContent = publicUrl;
+}
+
+function updateMakeSetPublicButton() {
+  const cardSet = getSetByCode(elements.cardSetsInput.value || "DEFAULT");
+  const isPublic = Boolean(cardSet?.isPublic);
+  elements.makeSetPublicButton.disabled = isPublic;
+  elements.makeSetPublicButton.textContent = isPublic ? "This set is public" : "Make this set public";
+  updatePublicSetLink(cardSet);
+}
+
+/** Marks a set public in DynamoDB and updates the local set list. */
+async function makeSetPublic(setCode) {
+  const normalizedSetCode = setCode || "DEFAULT";
+  const data = await apiFetch(`/sets/${encodeURIComponent(normalizedSetCode)}/public`, { method: "PUT" });
+  const updatedSet = data.set || {};
+  state.savedSets = getAvailableSets().map((cardSet) => {
+    if ((cardSet.code || "DEFAULT") !== (updatedSet.code || normalizedSetCode)) return cardSet;
+    return { ...cardSet, ...updatedSet, isPublic: true };
+  });
+  renderCardSets();
+  renderSetLibraryList();
+  setSaveStatus(`${updatedSet.code || normalizedSetCode} is public`);
+}
+
+/** Makes the selected Card set dropdown value public. */
+async function makeSelectedSetPublic() {
+  try {
+    const setCode = elements.cardSetsInput.value || "DEFAULT";
+    const cardSet = getSetByCode(setCode);
+    if (cardSet?.isPublic) return;
+    elements.makeSetPublicButton.disabled = true;
+    await makeSetPublic(setCode);
+  } catch (error) {
+    setSaveStatus(error.message);
+    updateMakeSetPublicButton();
+  }
+}
+
 /** Builds the symbol cell for a set library row. */
 function renderSetSymbolPreview(cardSet) {
   const symbol = document.createElement("div");
@@ -955,6 +1030,39 @@ function renderSetSymbolPreview(cardSet) {
     symbol.append(document.createElement("span"));
   }
   return symbol;
+}
+
+/** Creates the one-way public visibility checkbox for a set row. */
+function createSetPublicCheckbox(cardSet) {
+  const checkbox = document.createElement("input");
+  const setCode = cardSet.code || "DEFAULT";
+  checkbox.className = "set-public-checkbox";
+  checkbox.type = "checkbox";
+  checkbox.checked = Boolean(cardSet.isPublic);
+  checkbox.disabled = checkbox.checked;
+  checkbox.setAttribute("aria-label", `${cardSet.name || setCode} is public`);
+  checkbox.addEventListener("click", (event) => {
+    if (cardSet.isPublic) {
+      event.preventDefault();
+      checkbox.checked = true;
+    }
+  });
+  checkbox.addEventListener("change", async () => {
+    if (!checkbox.checked) {
+      checkbox.checked = true;
+      return;
+    }
+
+    checkbox.disabled = true;
+    try {
+      await makeSetPublic(setCode);
+    } catch (error) {
+      checkbox.disabled = false;
+      checkbox.checked = false;
+      elements.setLibraryStatus.textContent = error.message;
+    }
+  });
+  return checkbox;
 }
 
 /** Creates the red trash button used to delete a set row. */
@@ -999,7 +1107,7 @@ function renderSetLibraryList() {
     });
     const name = document.createElement("strong");
     name.textContent = cardSet.name || "Untitled Set";
-    row.append(renderSetSymbolPreview(cardSet), codeLink, name, createSetDeleteButton(cardSet));
+    row.append(createSetPublicCheckbox(cardSet), renderSetSymbolPreview(cardSet), codeLink, name, createSetDeleteButton(cardSet));
     list.append(row);
   }
 
@@ -1787,7 +1895,11 @@ function attachEvents() {
   elements.generateImageButton.addEventListener("click", generateImage);
   elements.artInput.addEventListener("change", loadArt);
   elements.artUrlInput.addEventListener("change", loadArtUrl);
-  elements.cardSetsInput.addEventListener("change", renderSavedCards);
+  elements.cardSetsInput.addEventListener("change", () => {
+    renderSavedCards();
+    updateMakeSetPublicButton();
+  });
+  elements.makeSetPublicButton.addEventListener("click", makeSelectedSetPublic);
   elements.setInput.addEventListener("change", () => {
     elements.collectorInput.value = getNextCollectorNumber(elements.setInput.value || "DEFAULT");
     syncCard();
