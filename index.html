@@ -249,7 +249,10 @@
 
           <fieldset>
             <legend>Artwork</legend>
-            <button id="generateImageButton" class="button primary" type="button">Generate Image</button>
+            <div class="generate-image-row">
+              <button id="generateImageButton" class="button primary" type="button">Generate Image</button>
+              <span id="generateImageSpinner" class="inline-spinner hidden" aria-label="Generating image" role="status"></span>
+            </div>
             <label class="file-input">
               <span>Image file</span>
               <input id="artInput" type="file" accept="image/*" />

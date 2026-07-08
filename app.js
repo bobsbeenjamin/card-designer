@@ -57,6 +57,7 @@ const elements = {
   collectorInput: document.querySelector("#collectorInput"),
   rarityInput: document.querySelector("#rarityInput"),
   generateImageButton: document.querySelector("#generateImageButton"),
+  generateImageSpinner: document.querySelector("#generateImageSpinner"),
   artInput: document.querySelector("#artInput"),
   artUrlInput: document.querySelector("#artUrlInput"),
   fitInput: document.querySelector("#fitInput"),
@@ -515,6 +516,7 @@ function loadArtUrl() {
 async function generateImage() {
   try {
     elements.generateImageButton.disabled = true;
+    elements.generateImageSpinner.classList.remove("hidden");
     setSaveStatus("Generating image...");
     const data = await apiFetch("/art/generate", {
       method: "POST",
@@ -535,6 +537,7 @@ async function generateImage() {
     showToast(error.message);
   } finally {
     elements.generateImageButton.disabled = false;
+    elements.generateImageSpinner.classList.add("hidden");
   }
 }
 

@@ -133,6 +133,33 @@ h1 {
   color: #9f2f24;
 }
 
+.button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.generate-image-row {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+}
+
+.inline-spinner {
+  animation: spin 0.8s linear infinite;
+  border: 3px solid #cbd2c9;
+  border-radius: 50%;
+  border-top-color: #1d2b24;
+  display: inline-block;
+  height: 24px;
+  width: 24px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .service-panel {
   display: grid;
   gap: 18px;
