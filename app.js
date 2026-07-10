@@ -401,7 +401,7 @@ function syncCard() {
   elements.statModeInput.closest("label").classList.toggle("hidden", isStatless);
   elements.combatInputs.classList.toggle("hidden", isStatless || isLoyalty);
   elements.loyaltyInputs.classList.toggle("hidden", isStatless || !isLoyalty);
-  elements.art.style.objectFit = elements.fitInput.value;
+  updateArtFit();
   document.documentElement.style.setProperty("--frame", elements.frameColor.value);
   document.documentElement.style.setProperty("--accent", elements.accentColor.value);
   document.documentElement.style.setProperty("--card-text", elements.textColor.value);
@@ -439,7 +439,21 @@ function clearArt() {
   state.pendingArtUpload = null;
   elements.art.removeAttribute("src");
   elements.art.removeAttribute("crossorigin");
+  setArtWindowImage("");
   elements.artWindow.classList.remove("has-image");
+}
+
+function setArtWindowImage(src) {
+  elements.artWindow.style.backgroundImage = src
+    ? `url("${String(src).replace(/"/g, "%22")}")`
+    : "";
+  updateArtFit();
+}
+
+function updateArtFit() {
+  const fit = elements.fitInput.value || "cover";
+  const backgroundSize = fit === "fill" ? "100% 100%" : fit;
+  elements.artWindow.style.backgroundSize = backgroundSize;
 }
 
 /** Fetches a remote image through the authenticated image proxy. */
@@ -486,6 +500,7 @@ async function setArtSource(src, statusMessage = "") {
   }
 
   elements.art.onload = () => {
+    setArtWindowImage(elements.art.currentSrc || elements.art.src);
     elements.artWindow.classList.add("has-image");
     if (statusMessage) setSaveStatus(statusMessage);
   };
@@ -942,7 +957,6 @@ async function saveSet() {
   }
 }
 
-
 /** Handles the getAvailableSets workflow. */
 function getAvailableSets() {
   return state.savedSets.length
@@ -1150,7 +1164,7 @@ function replaceMissingLibraryImage(image, card) {
   const empty = document.createElement("div");
   empty.className = "library-card-empty";
   empty.textContent = card.name || "Untitled Card";
-  image.replaceWith(empty);
+  (image.closest(".library-card-art-frame") || image).replaceWith(empty);
 }
 
 /** Builds a draggable card tile for the set grid. */
@@ -1193,12 +1207,15 @@ function createLibraryCardTile(card, setCode) {
   });
 
   if (card.imageUrl) {
+    const frame = document.createElement("div");
     const image = document.createElement("img");
+    frame.className = "library-card-art-frame";
     image.className = "library-card-art";
     image.alt = card.name || "Saved card";
-    image.src = card.imageUrl;
     image.addEventListener("error", () => replaceMissingLibraryImage(image, card));
-    tile.append(image);
+    image.src = card.imageUrl;
+    frame.append(image);
+    tile.append(frame);
   } else {
     const empty = document.createElement("div");
     empty.className = "library-card-empty";
@@ -1721,146 +1738,126 @@ function drawImageFit(ctx, image, x, y, width, height, fit) {
   ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
 }
 
-/** Renders the current card front to a canvas. */
+/** Returns current preview CSS variables so the SVG snapshot inherits live colors. */
+function getSnapshotCssVariables() {
+  const rootStyle = getComputedStyle(document.documentElement);
+  return ["--accent", "--card-ratio", "--card-text", "--frame", "--panel", "--rarity-color"]
+    .map((name) => `${name}: ${rootStyle.getPropertyValue(name).trim()};`)
+    .join(" ");
+}
+
+/** Copies resolved browser styles from the live preview into its clone. */
+function inlineSnapshotStyles(source, target) {
+  const sourceElements = [source, ...source.querySelectorAll("*")];
+  const targetElements = [target, ...target.querySelectorAll("*")];
+  sourceElements.forEach((sourceElement, index) => {
+    const targetElement = targetElements[index];
+    if (!targetElement) return;
+
+    const computedStyle = getComputedStyle(sourceElement);
+    const inlineStyle = [...computedStyle]
+      .map((property) => `${property}: ${computedStyle.getPropertyValue(property)};`)
+      .join(" ");
+    targetElement.setAttribute("style", `${targetElement.getAttribute("style") || ""}; ${inlineStyle}`);
+  });
+}
+
+/** Reads a Blob or fetched image response into a data URL. */
+function readBlobAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(reader.result));
+    reader.addEventListener("error", () => reject(new Error("Image could not be embedded in the PNG.")));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Converts an image source to an embeddable data URL for SVG snapshotting. */
+async function getEmbeddableImageSource(src) {
+  if (!src || src.startsWith("data:")) return src;
+
+  const response = await fetch(src);
+  if (!response.ok) throw new Error("Image could not be embedded in the PNG.");
+  const blob = await response.blob();
+  if (!blob.type.startsWith("image/")) throw new Error("Image URL did not return an image.");
+  return readBlobAsDataUrl(blob);
+}
+
+/** Embeds preview images in a cloned card before serializing it to SVG. */
+async function embedSnapshotImages(cardClone) {
+  const originalImages = [...elements.card.querySelectorAll("img")];
+  const clonedImages = [...cardClone.querySelectorAll("img")];
+  await Promise.all(clonedImages.map(async (image, index) => {
+    const originalImage = originalImages[index];
+    const source = originalImage?.currentSrc || originalImage?.src || image.src;
+    if (!source) return;
+    image.setAttribute("src", await getEmbeddableImageSource(source));
+  }));
+}
+
+/** Flattens transparent PNG regions onto the current card frame color. */
+function flattenCardCanvas(canvas) {
+  const flattenedCanvas = document.createElement("canvas");
+  flattenedCanvas.width = canvas.width;
+  flattenedCanvas.height = canvas.height;
+  const ctx = flattenedCanvas.getContext("2d");
+  ctx.fillStyle = elements.frameColor.value || "#263a31";
+  ctx.fillRect(0, 0, flattenedCanvas.width, flattenedCanvas.height);
+  ctx.drawImage(canvas, 0, 0);
+  return flattenedCanvas;
+}
+
+/** Renders the actual preview DOM to a canvas so PNG output matches the card. */
 async function createCardCanvas(scale = 3) {
+  syncCard();
   if (elements.art.src && !elements.art.complete) {
     await elements.art.decode().catch(() => {});
   }
+  if (document.fonts?.ready) await document.fonts.ready;
 
-  const width = 630;
-  const height = 880;
-  const subtype = elements.subtypeInput.value.trim();
-  const typeValue = getSelectedType();
-  const typeLine = subtype ? `${typeValue || "Card"} - ${subtype}` : typeValue || "Card";
-  const rarity = elements.rarityInput.value;
-  const isStatless = isStatlessType(typeValue);
-  const statMode = ["combat", "loyalty"].includes(elements.statModeInput.value)
-    ? elements.statModeInput.value
-    : "combat";
-  const isLoyalty = !isStatless && statMode === "loyalty";
-  const canvas = document.createElement("canvas");
-  canvas.width = width * scale;
-  canvas.height = height * scale;
-  const ctx = canvas.getContext("2d");
-  ctx.scale(scale, scale);
-
-  ctx.fillStyle = elements.frameColor.value;
-  roundRect(ctx, 0, 0, width, height, 32);
-  ctx.fill();
-
-  ctx.strokeStyle = elements.accentColor.value;
-  ctx.lineWidth = 8;
-  roundRect(ctx, 28, 28, width - 56, height - 56, 18);
-  ctx.stroke();
-
-  ctx.fillStyle = elements.textColor.value;
-  const cardName = elements.nameInput.value || "Untitled Card";
-  drawFittedCardName(ctx, cardName, 48, 76, 474);
-  ctx.font = "700 20px system-ui";
-  ctx.fillText(typeLine, 48, 116, 474);
-
-  ctx.fillStyle = elements.accentColor.value;
-  ctx.beginPath();
-  ctx.arc(550, 102, 28, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#191510";
-  ctx.font = "900 26px system-ui";
-  ctx.textAlign = "center";
-  ctx.fillText(formatCost(elements.costInput.value), 550, 111);
-  ctx.textAlign = "left";
-
-  const boxX = 48;
-  const boxWidth = 534;
-  const boxHeight = 284;
-  const artY = 148;
-  const rulesY = artY + boxHeight + 24;
-
-  ctx.save();
-  roundRect(ctx, boxX, artY, boxWidth, boxHeight, 14);
-  ctx.clip();
-  if (elements.art.src) {
-    drawImageFit(ctx, elements.art, boxX, artY, boxWidth, boxHeight, elements.fitInput.value);
-  } else {
-    const gradient = ctx.createLinearGradient(boxX, artY, boxX + boxWidth, artY + boxHeight);
-    gradient.addColorStop(0, elements.accentColor.value);
-    gradient.addColorStop(1, "#35473d");
-    ctx.fillStyle = gradient;
-    ctx.fillRect(boxX, artY, boxWidth, boxHeight);
-    ctx.fillStyle = "rgba(255,255,255,0.72)";
-    ctx.font = "900 72px system-ui";
-    ctx.textAlign = "center";
-    ctx.fillText("ART", boxX + boxWidth / 2, artY + boxHeight / 2 + 24);
-    ctx.textAlign = "left";
-  }
-  ctx.restore();
-
-  ctx.save();
-  ctx.fillStyle = elements.panelColor.value;
-  roundRect(ctx, boxX, rulesY, boxWidth, boxHeight, 14);
-  ctx.fill();
-  const rulesTextWidth = isStatless ? 494 : 330;
-  const abilityText = elements.abilityInput.value || "Add rules text.";
-  const flavorText = elements.flavorInput.value;
-  const abilityMaxLines = flavorText ? 3 : 6;
-  const flavorMaxLines = 3;
-  const abilitySize = getFittedTextSize(ctx, abilityText, (size) => `${size}px system-ui`, 26, 12, rulesTextWidth, abilityMaxLines);
-  const flavorSize = getFittedTextSize(ctx, flavorText, (size) => `italic ${size}px Georgia`, 22, 10, rulesTextWidth, flavorMaxLines);
-  ctx.fillStyle = "#242014";
-  ctx.font = `${abilitySize}px system-ui`;
-  drawWrappedText(ctx, abilityText, 68, rulesY + 47, rulesTextWidth, Math.ceil(abilitySize * 1.31), abilityMaxLines);
-  ctx.strokeStyle = "rgba(0,0,0,0.2)";
-  ctx.beginPath();
-  ctx.moveTo(68, rulesY + 150);
-  ctx.lineTo(562, rulesY + 150);
-  ctx.stroke();
-  ctx.fillStyle = "#66573b";
-  ctx.font = `italic ${flavorSize}px Georgia`;
-  drawWrappedText(ctx, flavorText, 68, rulesY + 188, rulesTextWidth, Math.ceil(flavorSize * 1.32), flavorMaxLines);
-  ctx.restore();
-
-  ctx.save();
-  ctx.translate(62, 862);
-  ctx.rotate(Math.PI / 4);
-  ctx.fillStyle = getRarityColor(rarity);
-  ctx.fillRect(-9, -9, 18, 18);
-  ctx.restore();
-  ctx.fillStyle = elements.textColor.value;
-  ctx.font = "700 15px system-ui";
-  ctx.fillText(getRarityLabel(rarity), 84, 868);
-  ctx.fillText(`Art: ${elements.artistInput.value || "Unknown"}`, 162, 868);
-  ctx.textAlign = "right";
-  ctx.fillText(formatPreviewCollectorNumber(), 562, 868);
-  ctx.textAlign = "left";
-
-  if (!isStatless) {
-    ctx.fillStyle = "rgba(0,0,0,0.22)";
-    if (isLoyalty) {
-      roundRect(ctx, 430, 699, 134, 54, 27);
-      ctx.fill();
-    } else {
-      roundRect(ctx, 384, 699, 82, 54, 27);
-      ctx.fill();
-      roundRect(ctx, 482, 699, 82, 54, 27);
-      ctx.fill();
-    }
-
-    ctx.fillStyle = elements.textColor.value;
-    if (isLoyalty) {
-      ctx.font = "900 15px system-ui";
-      ctx.fillText("LOYALTY", 448, 732);
-      ctx.font = "900 30px system-ui";
-      ctx.fillText(elements.loyaltyInput.value || "0", 528, 735);
-    } else {
-      ctx.font = "900 18px system-ui";
-      ctx.fillText("ATK", 401, 732);
-      ctx.fillText("HP", 502, 732);
-      ctx.font = "900 30px system-ui";
-      ctx.fillText(elements.attackInput.value || "0", 441, 735);
-      ctx.fillText(elements.healthInput.value || "0", 538, 735);
-    }
+  if (window.html2canvas) {
+    const canvas = await window.html2canvas(elements.card, {
+      allowTaint: false,
+      backgroundColor: null,
+      logging: false,
+      scale,
+      useCORS: true,
+    });
+    return flattenCardCanvas(canvas);
   }
 
-  return canvas;
+  const bounds = elements.card.getBoundingClientRect();
+  const width = Math.ceil(bounds.width);
+  const height = Math.ceil(bounds.height);
+  const cardClone = elements.card.cloneNode(true);
+  inlineSnapshotStyles(elements.card, cardClone);
+  cardClone.style.height = `${height}px`;
+  cardClone.style.width = `${width}px`;
+  await embedSnapshotImages(cardClone);
+
+  const snapshot = document.createElement("div");
+  snapshot.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+  snapshot.setAttribute("style", `${getSnapshotCssVariables()} width: ${width}px; height: ${height}px;`);
+  snapshot.append(cardClone);
+
+  const serializedSnapshot = new XMLSerializer().serializeToString(snapshot);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><foreignObject width="100%" height="100%">${serializedSnapshot}</foreignObject></svg>`;
+  const image = new Image();
+  const imageUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+
+  try {
+    image.src = imageUrl;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(scale, scale);
+    ctx.drawImage(image, 0, 0, width, height);
+    return flattenCardCanvas(canvas);
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
 }
 
 /** Creates the PNG data URL sent to the backend. */
@@ -1869,7 +1866,7 @@ async function getCardPngDataUrl() {
   try {
     return canvas.toDataURL("image/png");
   } catch (error) {
-    throw new Error("Card image could not be saved because the image URL does not allow canvas export.");
+    throw new Error(error.message || "Card image could not be saved.");
   }
 }
 
@@ -1882,7 +1879,7 @@ async function exportPng() {
     link.href = canvas.toDataURL("image/png");
     link.click();
   } catch (error) {
-    setSaveStatus("PNG export failed because the image URL does not allow canvas export.");
+    setSaveStatus(`PNG export failed: ${error.message}`);
   }
 }
 

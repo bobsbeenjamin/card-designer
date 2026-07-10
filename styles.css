@@ -398,10 +398,8 @@ h1 {
 }
 
 .card-inner {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 42%),
-    rgba(0, 0, 0, 0.08);
-  border: 2px solid color-mix(in srgb, var(--accent) 84%, white);
+  background: transparent;
+  border: 2px solid var(--accent);
   border-radius: 14px;
   display: grid;
   gap: 12px;
@@ -432,8 +430,9 @@ h1 {
   gap: 2px;
   min-width: 0;
 }
+
 .card-type {
-  color: color-mix(in srgb, var(--card-text) 72%, var(--accent));
+  color: var(--accent);
   font-size: 0.7rem;
   font-weight: 900;
   letter-spacing: 0.1em;
@@ -482,6 +481,9 @@ h1 {
     linear-gradient(135deg, rgba(214, 157, 66, 0.4), transparent 42%),
     linear-gradient(315deg, rgba(89, 129, 103, 0.65), transparent 48%),
     #35473d;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
   border: 3px solid rgba(255, 255, 255, 0.38);
   border-radius: 10px;
   min-height: 0;
@@ -491,13 +493,6 @@ h1 {
 
 .art-window img {
   display: none;
-  height: 100%;
-  object-fit: cover;
-  width: 100%;
-}
-
-.art-window.has-image img {
-  display: block;
 }
 
 .art-window.has-image .art-fallback {
@@ -516,7 +511,6 @@ h1 {
 .rules-panel {
   background: var(--panel);
   border-radius: 10px;
-  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.12);
   color: #242014;
   align-self: stretch;
   height: 100%;
@@ -573,7 +567,7 @@ h1 {
 
 .card-meta {
   bottom: 13px;
-  color: color-mix(in srgb, var(--card-text) 78%, black);
+  color: var(--card-text);
   font-size: 0.66rem;
   font-weight: 800;
   left: 24px;
@@ -641,7 +635,7 @@ h1 {
 }
 
 .stat-label {
-  color: color-mix(in srgb, var(--card-text) 70%, var(--accent));
+  color: var(--accent);
   font-size: 0.7rem;
   font-weight: 900;
 }
@@ -890,7 +884,7 @@ input[type="color"] {
   opacity: 0.45;
 }
 
-.library-card-tile.is-drop-target .library-card-art,
+.library-card-tile.is-drop-target .library-card-art-frame,
 .library-card-tile.is-drop-target .library-card-empty {
   outline: 3px solid var(--accent);
   outline-offset: 4px;
@@ -901,7 +895,7 @@ input[type="color"] {
   outline-offset: 4px;
 }
 
-.library-card-art,
+.library-card-art-frame,
 .library-card-empty {
   aspect-ratio: var(--card-ratio);
   border-radius: 10px;
@@ -909,9 +903,17 @@ input[type="color"] {
   width: 100%;
 }
 
+.library-card-art-frame {
+  background: var(--frame);
+  overflow: hidden;
+}
+
 .library-card-art {
-  background: #e7ebe5;
+  background: var(--frame);
+  display: block;
+  height: 100%;
   object-fit: cover;
+  width: 100%;
 }
 
 .library-card-empty {
