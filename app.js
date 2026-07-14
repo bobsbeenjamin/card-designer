@@ -138,6 +138,7 @@ async function loadCardDefaults() {
 
   defaults = await response.json();
 }
+
 /** Loads rarity labels and colors used by the preview. */
 async function loadRarityInfo() {
   const response = await fetch("defaults/rarity-info.json");
@@ -150,6 +151,20 @@ async function loadRarityInfo() {
 
 function updateText(target, value, fallback) {
   target.textContent = String(value || "").trim() || fallback;
+}
+
+/** Renders entered line breaks with extra spacing while preserving normal wrapping. */
+function updateMultilineText(target, value, fallback) {
+  const text = String(value || "").trim() || fallback;
+  target.replaceChildren();
+  if (!text) return;
+
+  for (const line of text.split(/\r?\n/)) {
+    const lineElement = document.createElement("span");
+    lineElement.className = "card-text-line";
+    lineElement.textContent = line || "\u00a0";
+    target.append(lineElement);
+  }
 }
 
 function setAuthStatus(message) {
@@ -386,8 +401,8 @@ function syncCard() {
   updateText(elements.cardAttack, elements.attackInput.value, "0");
   updateText(elements.cardHealth, elements.healthInput.value, "0");
   updateText(elements.cardLoyalty, elements.loyaltyInput.value, "0");
-  updateText(elements.cardAbility, elements.abilityInput.value, "Add rules text.");
-  updateText(elements.cardFlavor, elements.flavorInput.value, "");
+  updateMultilineText(elements.cardAbility, elements.abilityInput.value, "Add rules text.");
+  updateMultilineText(elements.cardFlavor, elements.flavorInput.value, "");
   updateText(
     elements.cardArtist,
     elements.artistInput.value ? `Art: ${elements.artistInput.value}` : "",
