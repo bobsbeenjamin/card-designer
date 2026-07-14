@@ -260,7 +260,7 @@ def build_art_prompt(body):
     """Build the image prompt from the current card fields."""
     card_name = str(body.get("cardName") or "Untitled Card").strip() or "Untitled Card"
     flavor_text = str(body.get("flavorText") or "").strip()
-    return f'{card_name}. If it were on a website, the caption would be "{flavor_text}". Don\t put any text on the image itself.'
+    return f"{card_name}. If it were on a website, the caption would be \"{flavor_text}\". Don't put any text on the image itself."
 
 
 def read_image_generation_error(exc):

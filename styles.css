@@ -383,14 +383,9 @@ h1 {
 
 .card-frame {
   aspect-ratio: var(--card-ratio);
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.2), transparent 28%),
-    var(--frame);
+  background: var(--frame);
+  border: 2px solid rgba(255, 255, 255, 0.18);
   border-radius: 22px;
-  box-shadow:
-    0 22px 60px rgba(32, 38, 33, 0.28),
-    inset 0 0 0 2px rgba(255, 255, 255, 0.18),
-    inset 0 0 0 7px rgba(0, 0, 0, 0.16);
   color: var(--card-text);
   padding: 14px 14px 38px;
   position: relative;
@@ -477,10 +472,7 @@ h1 {
 }
 
 .art-window {
-  background:
-    linear-gradient(135deg, rgba(214, 157, 66, 0.4), transparent 42%),
-    linear-gradient(315deg, rgba(89, 129, 103, 0.65), transparent 48%),
-    #35473d;
+  background: #35473d;
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
@@ -918,9 +910,7 @@ input[type="color"] {
 
 .library-card-empty {
   align-items: center;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.18), transparent 30%),
-    var(--frame);
+  background: var(--frame);
   border: 8px solid rgba(0, 0, 0, 0.12);
   color: var(--card-text);
   display: grid;
