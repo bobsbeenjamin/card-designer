@@ -401,8 +401,12 @@ function syncCard() {
   updateText(elements.cardAttack, elements.attackInput.value, "0");
   updateText(elements.cardHealth, elements.healthInput.value, "0");
   updateText(elements.cardLoyalty, elements.loyaltyInput.value, "0");
-  updateMultilineText(elements.cardAbility, elements.abilityInput.value, "Add rules text.");
+  updateMultilineText(elements.cardAbility, elements.abilityInput.value, "");
   updateMultilineText(elements.cardFlavor, elements.flavorInput.value, "");
+  elements.cardFlavor.classList.toggle(
+    "has-separator",
+    Boolean(elements.abilityInput.value.trim() && elements.flavorInput.value.trim()),
+  );
   updateText(
     elements.cardArtist,
     elements.artistInput.value ? `Art: ${elements.artistInput.value}` : "",

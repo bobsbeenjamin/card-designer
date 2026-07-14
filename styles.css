@@ -545,15 +545,19 @@ h1 {
 }
 
 .flavor-text {
-  border-top: 1px solid rgba(0, 0, 0, 0.2);
   color: #66573b;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 0.86rem;
   font-style: italic;
   line-height: 1.25;
   margin-bottom: 0;
-  padding-top: 9px;
+  padding-top: 0;
   white-space: normal;
+}
+
+.flavor-text.has-separator {
+  border-top: 1px solid rgba(0, 0, 0, 0.2);
+  padding-top: 9px;
 }
 
 .card-footer {
