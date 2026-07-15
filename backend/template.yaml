@@ -235,6 +235,8 @@ Resources:
                 - s3:ListBucket
                 - s3:PutEncryptionConfiguration
                 - s3:PutBucketPublicAccessBlock
+                - s3:PutBucketPolicy
+                - s3:DeleteBucketPolicy
               Resource: !Sub "arn:${AWS::Partition}:s3:::cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}-*"
             - Effect: Allow
               Action:

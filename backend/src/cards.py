@@ -1086,6 +1086,7 @@ def delete_set(user_id, set_code):
         deleted_cards += 1
 
     SETS_TABLE.delete_item(Key={"userId": user_id, "code": normalized_set_code})
+    sync_user_bucket_public_policy(user_id)
     return {"deleted": True, "setCode": normalized_set_code, "deletedCards": deleted_cards}
 
 
@@ -1100,6 +1101,8 @@ def save_set(user_id, body):
         )
     except SETS_TABLE.meta.client.exceptions.ConditionalCheckFailedException:
         raise ValueError("A set with this code already exists.")
+    if item.get("isPublic"):
+        sync_user_bucket_public_policy(user_id)
     return {"set": item}
 
 
@@ -1116,6 +1119,7 @@ def make_set_public(user_id, set_code):
         ExpressionAttributeValues={":isPublic": True},
         ReturnValues="ALL_NEW",
     )
+    sync_user_bucket_public_policy(user_id)
     return {"set": response.get("Attributes", {})}
 
 
@@ -1134,22 +1138,17 @@ def backfill_card_set_codes(user_id):
             )
 
 
-def add_card_image_urls(cards):
-    """Attach short-lived signed S3 URLs to card summaries with saved PNGs."""
-    for card in cards:
-        bucket_name = card.get("imageBucket")
-        image_key = card.get("imageKey")
-        if not bucket_name or not image_key:
-            continue
-        card["imageUrl"] = S3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket_name, "Key": image_key},
-            ExpiresIn=900,
-        )
-    return cards
+def get_card_public_image_url(card):
+    """Return a durable public S3 URL for a card PNG."""
+    bucket_name = card.get("imageBucket")
+    image_key = card.get("imageKey")
+    if not bucket_name or not image_key:
+        return ""
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+    return f"https://{bucket_name}.s3.{region}.amazonaws.com/{quote(image_key, safe='/')}"
 
 
-def get_card_image_url(card):
+def get_card_signed_image_url(card):
     """Return a short-lived signed S3 URL for a saved card PNG."""
     bucket_name = card.get("imageBucket")
     image_key = card.get("imageKey")
@@ -1160,6 +1159,20 @@ def get_card_image_url(card):
         Params={"Bucket": bucket_name, "Key": image_key},
         ExpiresIn=900,
     )
+
+
+def add_card_image_urls(cards, public_set_codes=None):
+    """Attach public or signed S3 URLs to card summaries with saved PNGs."""
+    public_set_codes = {normalize_set_code(code) for code in (public_set_codes or set())}
+    for card in cards:
+        if not card.get("imageBucket") or not card.get("imageKey"):
+            continue
+        if normalize_set_code(card.get("setCode")) in public_set_codes:
+            card["publicImageUrl"] = get_card_public_image_url(card)
+            card["imageUrl"] = card["publicImageUrl"]
+        else:
+            card["imageUrl"] = get_card_signed_image_url(card)
+    return cards
 
 
 def public_set_summary(card_set):
@@ -1179,7 +1192,8 @@ def public_card_summary(card):
         "cardId": card.get("cardId", ""),
         "name": card.get("name", "Untitled Card"),
         "collectorNumber": normalize_collector_number(card.get("collectorNumber")),
-        "imageUrl": get_card_image_url(card),
+        "imageUrl": get_card_public_image_url(card),
+        "publicImageUrl": get_card_public_image_url(card),
     }
 
 
@@ -1220,6 +1234,7 @@ def get_public_set(event):
     if not card_set or not card_set.get("isPublic"):
         raise ValueError("Public set was not found.")
 
+    sync_user_bucket_public_policy(user_id)
     return {
         "set": public_set_summary(card_set),
         "cards": get_public_cards(user_id, card_set["code"]),
@@ -1237,7 +1252,10 @@ def list_cards(user_id):
     )
     cards = response.get("Items", [])
     cards.sort(key=lambda card: (card.get("setCode") or DEFAULT_SET["code"], normalize_collector_number(card.get("collectorNumber")), card.get("name", "")))
-    return {"cards": add_card_image_urls(cards)}
+    public_set_codes = get_public_set_codes(user_id)
+    if public_set_codes:
+        sync_user_bucket_public_policy(user_id, public_set_codes)
+    return {"cards": add_card_image_urls(cards, public_set_codes)}
 
 
 def get_card(user_id, card_id):
@@ -1293,12 +1311,79 @@ def reorder_set_cards(user_id, set_code, body):
         cards_in_set[card_id]["updatedAt"] = now
 
     reordered_cards = [cards_in_set[card_id] for card_id in card_ids]
-    return {"cards": add_card_image_urls(reordered_cards)}
+    return {"cards": add_card_image_urls(reordered_cards, get_public_set_codes(user_id))}
 
 
 def get_user_bucket_name(user_id):
     digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:24]
     return f"{USER_BUCKET_PREFIX}-{digest}".lower()
+
+
+def get_public_set_codes(user_id):
+    """Return the set codes the user has made public."""
+    response = SETS_TABLE.query(
+        KeyConditionExpression=Key("userId").eq(user_id),
+        ProjectionExpression="#code, isPublic",
+        ExpressionAttributeNames={"#code": "code"},
+    )
+    return {
+        normalize_set_code(item.get("code"))
+        for item in response.get("Items", [])
+        if item.get("isPublic")
+    }
+
+
+def set_user_bucket_public_policy_block(bucket_name, allow_public_policy):
+    """Toggle bucket-level public policy support without using public ACLs."""
+    S3.put_public_access_block(
+        Bucket=bucket_name,
+        PublicAccessBlockConfiguration={
+            "BlockPublicAcls": True,
+            "IgnorePublicAcls": True,
+            "BlockPublicPolicy": not allow_public_policy,
+            "RestrictPublicBuckets": not allow_public_policy,
+        },
+    )
+
+
+def build_public_set_bucket_policy(bucket_name, public_set_codes):
+    """Build an S3 bucket policy for public card PNG prefixes only."""
+    resources = [
+        f"arn:aws:s3:::{bucket_name}/{safe_s3_key_part(code, DEFAULT_SET['code'])}/*"
+        for code in sorted(public_set_codes)
+    ]
+    return {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "PublicReadPublicCardSets",
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": "s3:GetObject",
+                "Resource": resources,
+            }
+        ],
+    }
+
+
+def sync_user_bucket_public_policy(user_id, public_set_codes=None):
+    """Publish only public set image prefixes and keep other card images private."""
+    public_set_codes = public_set_codes if public_set_codes is not None else get_public_set_codes(user_id)
+    bucket_name = ensure_user_bucket(user_id)
+    if not public_set_codes:
+        try:
+            S3.delete_bucket_policy(Bucket=bucket_name)
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "NoSuchBucketPolicy":
+                raise
+        set_user_bucket_public_policy_block(bucket_name, False)
+        return
+
+    set_user_bucket_public_policy_block(bucket_name, True)
+    S3.put_bucket_policy(
+        Bucket=bucket_name,
+        Policy=json.dumps(build_public_set_bucket_policy(bucket_name, public_set_codes)),
+    )
 
 
 def ensure_user_bucket(user_id):

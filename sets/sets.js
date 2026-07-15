@@ -260,6 +260,7 @@ async function makeSetPublic(setCode) {
   const normalizedSetCode = setCode || "DEFAULT";
   const data = await apiFetch(`/sets/${encodeURIComponent(normalizedSetCode)}/public`, { method: "PUT" });
   const updatedSet = data.set || { code: normalizedSetCode, isPublic: true };
+  await refreshSetsAndCards(false);
   state.savedSets = getAvailableSets().map((cardSet) => {
     if ((cardSet.code || "DEFAULT") !== normalizedSetCode) return cardSet;
     return { ...cardSet, ...updatedSet, isPublic: true };
@@ -273,7 +274,7 @@ function buildTabletopSimulatorDeckJson(cardSet) {
   const cards = getExportCards(cardSet);
   if (!cards.length) throw new Error("This set has no cards to export.");
 
-  const missingImages = cards.filter((card) => !card.imageUrl);
+  const missingImages = cards.filter((card) => !getExportCardImageUrl(card));
   if (missingImages.length) {
     throw new Error("Export needs saved PNG images for every card in this set.");
   }
@@ -283,11 +284,11 @@ function buildTabletopSimulatorDeckJson(cardSet) {
     const deckKey = String(index + 1);
     const cardId = (index + 1) * 100;
     customDeck[deckKey] = {
-      FaceURL: card.imageUrl,
+      FaceURL: getExportCardImageUrl(card),
       BackURL: SOLID_BLACK_CARD_BACK_URL,
       NumWidth: 1,
       NumHeight: 1,
-      BackIsHidden: true,
+      BackIsHidden: false,
       UniqueBack: false,
       Type: 0,
       CardWidth: STANDARD_CARD_DIMENSIONS.widthInches,
@@ -370,6 +371,10 @@ function buildTabletopSimulatorDeckJson(cardSet) {
 function getExportCards(cardSet) {
   const setCode = cardSet.code || "DEFAULT";
   return getCardsInSet(setCode);
+}
+
+function getExportCardImageUrl(card) {
+  return card.publicImageUrl || card.imageUrl || "";
 }
 
 /** Saves JSON with the browser save picker, falling back to a download link. */
