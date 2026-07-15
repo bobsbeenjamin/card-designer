@@ -1492,22 +1492,9 @@ async function reorderCardsInSet(setCode, draggedCardId, targetCardId) {
   }
 }
 
-/** Loads set/card data and opens the fullscreen set library. */
-async function openSetLibrary() {
-  if (!state.idToken) {
-    setSaveStatus("Sign in to view your sets.");
-    return;
-  }
-
-  elements.setLibraryDialog.showModal();
-  elements.setLibraryStatus.textContent = "Loading your sets...";
-  elements.setLibraryContent.innerHTML = "";
-  try {
-    await Promise.all([refreshCardSets(), refreshSavedCards()]);
-    renderSetLibraryList();
-  } catch (error) {
-    elements.setLibraryStatus.textContent = error.message;
-  }
+/** Opens the dedicated My Sets page. */
+function openSetLibrary() {
+  window.location.href = new URL("sets/", window.location.href).toString();
 }
 
 function closeSetLibrary() {
@@ -1524,6 +1511,23 @@ async function loadCardFromLibrary(cardId) {
     const data = await apiFetch(`/cards/${cardId}`);
     applyCardData(data.card);
     setSaveStatus("Loaded design");
+  } catch (error) {
+    setSaveStatus(error.message);
+  }
+}
+
+/** Loads a card requested by the URL query string, then clears the query. */
+async function loadRequestedCardFromUrl() {
+  const url = new URL(window.location.href);
+  const cardId = url.searchParams.get("card") || "";
+  if (!cardId || !state.idToken) return;
+
+  try {
+    const data = await apiFetch(`/cards/${encodeURIComponent(cardId)}`);
+    applyCardData(data.card);
+    setSaveStatus("Loaded design");
+    url.searchParams.delete("card");
+    window.history.replaceState({}, "", url);
   } catch (error) {
     setSaveStatus(error.message);
   }
@@ -1928,9 +1932,8 @@ async function initialize() {
   updateAccountUi();
   if (state.idToken) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
-    refreshImageGenerationSettings();
-    refreshSavedCards();
-    refreshCardSets();
+    await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets()]);
+    await loadRequestedCardFromUrl();
   } else if (sessionStorage.getItem("cardDesignerIdToken")) {
     clearAuthSession();
     setAuthStatus("Your session expired. Sign in again.");

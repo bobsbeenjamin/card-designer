@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My Sets</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <script src="../config.js"></script>
+  </head>
+  <body class="sets-page">
+    <main class="sets-shell">
+      <header class="sets-page-header">
+        <div>
+          <p class="eyebrow">Card Designer</p>
+          <h1 id="setsTitle">My Sets</h1>
+          <p id="setsStatus" class="status-line">Sign in to view your sets.</p>
+        </div>
+        <div class="sets-header-actions">
+          <button id="setsBackButton" class="button subtle hidden" type="button">Sets</button>
+          <a class="button subtle" href="../">Close</a>
+        </div>
+      </header>
+
+      <section id="signInPanel" class="sets-sign-in">
+        <fieldset>
+          <legend>Account</legend>
+          <label>
+            <span>Email</span>
+            <input id="emailInput" type="email" autocomplete="username" />
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="passwordInput" type="password" autocomplete="current-password" />
+          </label>
+          <button id="signInButton" class="button primary" type="button">Sign In</button>
+          <p id="authStatus" class="status-line">Signed out</p>
+        </fieldset>
+      </section>
+
+      <section id="setsPageContent" class="sets-content hidden" aria-label="My sets">
+        <div id="setLibraryContent" class="library-modal-content"></div>
+      </section>
+    </main>
+
+    <dialog id="deleteSetDialog" class="modal-dialog" aria-labelledby="deleteSetTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="deleteSetTitle">Are you sure you want to delete this set?</h2>
+        <p id="deleteSetMessage">This action cannot be undone</p>
+        <div class="modal-actions delete-set-actions">
+          <button id="confirmDeleteSetButton" class="button danger no-wrap" value="delete" type="submit">Yes, delete forever</button>
+          <button class="button subtle no-wrap" value="cancel" type="submit">Cancel (back to safety)</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="sets.js"></script>
+  </body>
+</html>
