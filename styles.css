@@ -190,6 +190,15 @@ h1 {
   margin: 0;
 }
 
+#imageGenerationStatus,
+#saveStatus {
+  max-height: 4.3em;
+  min-width: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .public-set-link {
   color: var(--muted);
   display: flex;
@@ -269,11 +278,10 @@ h1 {
   display: grid;
   gap: 10px;
   left: calc(320px + ((100vw - 320px - 390px) / 2));
-  max-width: min(560px, calc(100vw - 320px - 390px - 32px));
   pointer-events: none;
   position: fixed;
   transform: translateX(-50%);
-  width: max-content;
+  width: min(560px, calc(100vw - 320px - 390px - 32px));
   z-index: 20;
 }
 
@@ -287,10 +295,12 @@ h1 {
   display: grid;
   gap: 14px;
   grid-template-columns: minmax(0, 1fr) auto;
-  max-width: min(560px, calc(100vw - 32px));
-  min-width: min(360px, calc(100vw - 32px));
+  max-height: min(320px, calc(100vh - 32px));
+  min-width: 0;
+  overflow: hidden;
   padding: 14px 14px 14px 16px;
   pointer-events: auto;
+  width: 100%;
 }
 
 .toast-message p {
@@ -298,6 +308,12 @@ h1 {
   font-weight: 800;
   line-height: 1.35;
   margin: 0;
+  max-height: min(260px, calc(100vh - 88px));
+  min-width: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .toast-close {
@@ -1062,7 +1078,7 @@ input[type="color"] {
 
   .toast-region {
     left: 50%;
-    max-width: min(560px, calc(100vw - 32px));
+    width: min(560px, calc(100vw - 32px));
   }
 
   .library-panel,

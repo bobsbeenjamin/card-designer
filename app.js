@@ -652,7 +652,7 @@ async function generateImage() {
     await setArtSource(artUrl, "Generated image loaded");
     syncCard();
   } catch (error) {
-    setSaveStatus(error.message);
+    setSaveStatus("Image generation failed. See the error popup for details.");
     showToast(error.message);
   } finally {
     elements.generateImageButton.disabled = false;
