@@ -85,6 +85,7 @@ const state = {
   libraryDraggedCardId: "",
   libraryDragMoved: false,
   imageGenerationSettings: null,
+  imageProviderCredentialsExpanded: false,
 };
 
 const elements = {
@@ -136,6 +137,8 @@ const elements = {
   signedInPanel: document.querySelector("#signedInPanel"),
   aiSettingsPanel: document.querySelector("#aiSettingsPanel"),
   imageProviderInput: document.querySelector("#imageProviderInput"),
+  providerSelectRow: document.querySelector("#providerSelectRow"),
+  replaceProviderCredentialsButton: document.querySelector("#replaceProviderCredentialsButton"),
   providerApiKeyLabel: document.querySelector("#providerApiKeyLabel"),
   providerApiKeyInput: document.querySelector("#providerApiKeyInput"),
   providerEndpointLabel: document.querySelector("#providerEndpointLabel"),
@@ -286,6 +289,7 @@ function updateAccountUi() {
   if (!signedIn) {
     closeAccountMenu();
     state.imageGenerationSettings = null;
+    state.imageProviderCredentialsExpanded = false;
     elements.providerApiKeyInput.value = "";
     elements.providerEndpointInput.value = "";
     elements.providerModelInput.value = "";
@@ -860,13 +864,18 @@ function syncImageProviderSettingsUi() {
   const provider = elements.imageProviderInput.value || "openai";
   const status = getSelectedProviderStatus();
   const label = status.label || getImageProviderLabel(provider);
-  const showApiKey = !keylessImageProviders.has(provider);
-  const showEndpoint = endpointConfigProviders.has(provider);
-  const showModel = modelConfigProviders.has(provider);
+  const isCollapsed = status.configured && status.apiKeyConfigured && !state.imageProviderCredentialsExpanded;
+  const showApiKey = !isCollapsed && !keylessImageProviders.has(provider);
+  const showEndpoint = !isCollapsed && endpointConfigProviders.has(provider);
+  const showModel = !isCollapsed && modelConfigProviders.has(provider);
+  const showSaveButton = !isCollapsed;
 
+  elements.providerSelectRow.classList.toggle("has-replace-action", isCollapsed);
+  elements.replaceProviderCredentialsButton.classList.toggle("hidden", !isCollapsed);
   elements.providerApiKeyLabel.classList.toggle("hidden", !showApiKey);
   elements.providerEndpointLabel.classList.toggle("hidden", !showEndpoint);
   elements.providerModelLabel.classList.toggle("hidden", !showModel);
+  elements.saveImageGenerationSettingsButton.classList.toggle("hidden", !showSaveButton);
   elements.providerApiKeyLabel.querySelector("span").textContent = `${label} API key`;
   elements.providerEndpointLabel.querySelector("span").textContent = `${label} endpoint URL`;
   elements.providerModelLabel.querySelector("span").textContent = `${label} model or deployment`;
@@ -897,12 +906,35 @@ function getImageProviderLabel(provider) {
 /** Refreshes provider controls and status after the provider selection changes. */
 function handleImageProviderChange() {
   const provider = rememberImageProvider(elements.imageProviderInput.value || "openai");
+  state.imageProviderCredentialsExpanded = false;
   elements.imageProviderInput.value = provider;
   syncImageProviderSettingsUi();
   elements.imageGenerationStatus.textContent = formatImageGenerationStatus({
     provider,
     providers: state.imageGenerationSettings?.providers || {},
   });
+}
+
+/** Focuses the first visible credential setting control. */
+function focusFirstVisibleProviderSetting() {
+  const settings = [
+    [elements.providerApiKeyLabel, elements.providerApiKeyInput],
+    [elements.providerEndpointLabel, elements.providerEndpointInput],
+    [elements.providerModelLabel, elements.providerModelInput],
+  ];
+  const visibleSetting = settings.find(([label]) => !label.classList.contains("hidden"));
+  visibleSetting?.[1].focus();
+}
+
+/** Reveals hidden credential fields so saved provider settings can be replaced. */
+function replaceProviderCredentials() {
+  state.imageProviderCredentialsExpanded = true;
+  syncImageProviderSettingsUi();
+  elements.imageGenerationStatus.textContent = formatImageGenerationStatus({
+    provider: elements.imageProviderInput.value || "openai",
+    providers: state.imageGenerationSettings?.providers || {},
+  });
+  focusFirstVisibleProviderSetting();
 }
 
 /** Loads the signed-in user's image generation settings. */
@@ -912,6 +944,7 @@ async function refreshImageGenerationSettings() {
     const data = await apiFetch("/settings/image-generation");
     const provider = getStoredImageProvider() || data.provider || "openai";
     state.imageGenerationSettings = data;
+    state.imageProviderCredentialsExpanded = false;
     elements.imageProviderInput.value = provider;
     syncImageProviderSettingsUi();
     elements.imageGenerationStatus.textContent = formatImageGenerationStatus({ ...data, provider });
@@ -933,6 +966,7 @@ async function saveImageGenerationSettings() {
       }),
     });
     state.imageGenerationSettings = data;
+    state.imageProviderCredentialsExpanded = false;
     rememberImageProvider(data.provider || elements.imageProviderInput.value || "openai");
     elements.providerApiKeyInput.value = "";
     syncImageProviderSettingsUi();
@@ -995,6 +1029,7 @@ function clearAuthSession() {
   state.savedCards = [];
   state.savedSets = [];
   state.imageGenerationSettings = null;
+  state.imageProviderCredentialsExpanded = false;
   sessionStorage.removeItem("cardDesignerIdToken");
   sessionStorage.removeItem("cardDesignerEmail");
   updateAccountUi();
@@ -1854,6 +1889,7 @@ function attachEvents() {
   elements.confirmButton.addEventListener("click", confirmAccount);
   elements.signInButton.addEventListener("click", signIn);
   elements.imageProviderInput.addEventListener("change", handleImageProviderChange);
+  elements.replaceProviderCredentialsButton.addEventListener("click", replaceProviderCredentials);
   elements.saveImageGenerationSettingsButton.addEventListener("click", saveImageGenerationSettings);
   elements.accountMenuButton.addEventListener("click", toggleAccountMenu);
   elements.signOutButton.addEventListener("click", signOut);
