@@ -29,6 +29,7 @@ SETS_TABLE = DYNAMODB.Table(SETS_TABLE_NAME)
 USER_SETTINGS_TABLE = DYNAMODB.Table(USER_SETTINGS_TABLE_NAME)
 S3 = boto3.client("s3")
 KMS = boto3.client("kms")
+BEDROCK = boto3.client("bedrock-runtime")
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_CARD_IMAGE_BYTES = 7 * 1024 * 1024
 MAX_ART_IMAGE_BYTES = 7 * 1024 * 1024
@@ -60,6 +61,33 @@ ALLOWED_FIELDS = {
 CARD_IMAGE_FIELD = "cardImagePng"
 ART_IMAGE_FIELD = "artImage"
 OPENAI_KEY_SETTING = "openAiApiKey"
+IMAGE_PROVIDER_SETTING = "imageGenerationProvider"
+MIDJOURNEY_SETTING = "midjourneySettings"
+PROVIDER_SETTINGS_PREFIX = "imageProviderSettings#"
+PROVIDER_LABELS = {
+    "openai": "OpenAI",
+    "gemini": "Google Gemini",
+    "aws": "AWS Bedrock",
+    "midjourney": "Midjourney-compatible",
+    "claude": "Claude-compatible",
+    "morphic": "Morphic-compatible",
+    "leonardo": "Leonardo.ai-compatible",
+    "fal": "Fal.ai-compatible",
+    "ace": "ace.ai-compatible",
+    "runware": "Runware-compatible",
+    "firefly": "Adobe Firefly-compatible",
+    "stability": "Stability AI",
+}
+IMAGE_PROVIDERS = set(PROVIDER_LABELS)
+PROVIDER_DEFAULT_ENDPOINTS = {
+    "stability": "https://api.stability.ai/v2beta/stable-image/generate/core",
+}
+PROVIDER_DEFAULT_MODELS = {
+    "openai": "gpt-image-2",
+    "gemini": "gemini-3.1-flash-image",
+    "aws": "amazon.titan-image-generator-v2:0",
+}
+DIRECT_IMAGE_PROVIDERS = {"openai", "gemini", "aws", "stability"}
 
 
 def handler(event, _context):
@@ -90,6 +118,12 @@ def handler(event, _context):
 
         if method == "PUT" and route_key == "PUT /settings/openai-key":
             return ok(save_openai_key(user_id, read_body(event)))
+
+        if method == "GET" and route_key == "GET /settings/image-generation":
+            return ok(get_image_generation_settings_status(user_id))
+
+        if method == "PUT" and route_key == "PUT /settings/image-generation":
+            return ok(save_image_generation_settings(user_id, read_body(event)))
 
         if method == "GET" and route_key == "GET /sets":
             return ok(list_sets(user_id))
@@ -256,6 +290,252 @@ def get_openai_api_key(user_id):
     return str(item.get("apiKey") or "").strip()
 
 
+def normalize_image_provider(provider):
+    """Return a supported image provider id."""
+    normalized_provider = str(provider or "openai").strip().lower()
+    if normalized_provider not in IMAGE_PROVIDERS:
+        raise ValueError("Image provider is not supported.")
+    return normalized_provider
+
+
+def get_setting_item(user_id, setting_key):
+    """Return one stored user setting item."""
+    response = USER_SETTINGS_TABLE.get_item(Key={"userId": user_id, "settingKey": setting_key})
+    return response.get("Item")
+
+
+def get_setting_encryption_context(user_id, setting_key):
+    """Build the KMS encryption context for a user setting."""
+    return {"userId": user_id, "settingKey": setting_key}
+
+
+def encrypt_setting_secret(user_id, setting_key, secret):
+    """Encrypt a user setting secret before storing it."""
+    response = KMS.encrypt(
+        KeyId=USER_SETTINGS_KEY_ID,
+        Plaintext=secret.encode("utf-8"),
+        EncryptionContext=get_setting_encryption_context(user_id, setting_key),
+    )
+    return base64.b64encode(response["CiphertextBlob"]).decode("ascii")
+
+
+def decrypt_setting_secret(user_id, setting_key, ciphertext, label):
+    """Decrypt a stored user setting secret."""
+    try:
+        encrypted_secret = base64.b64decode(str(ciphertext or ""), validate=True)
+    except binascii.Error:
+        raise ValueError(f"Saved {label} could not be decoded.")
+    response = KMS.decrypt(
+        CiphertextBlob=encrypted_secret,
+        EncryptionContext=get_setting_encryption_context(user_id, setting_key),
+    )
+    return response["Plaintext"].decode("utf-8").strip()
+
+
+def get_saved_image_provider(user_id):
+    """Return the user's selected image generation provider."""
+    item = get_setting_item(user_id, IMAGE_PROVIDER_SETTING) or {}
+    return normalize_image_provider(item.get("provider") or "openai")
+
+
+def save_image_provider(user_id, provider):
+    """Persist the user's selected image generation provider."""
+    normalized_provider = normalize_image_provider(provider)
+    now = int(time.time())
+    USER_SETTINGS_TABLE.put_item(Item={
+        "userId": user_id,
+        "settingKey": IMAGE_PROVIDER_SETTING,
+        "provider": normalized_provider,
+        "updatedAt": now,
+    })
+    return normalized_provider
+
+
+def get_provider_label(provider):
+    """Return the display label for an image provider."""
+    return PROVIDER_LABELS[normalize_image_provider(provider)]
+
+
+def get_provider_settings_key(provider):
+    """Return the settings table key for provider-specific settings."""
+    return f"{PROVIDER_SETTINGS_PREFIX}{normalize_image_provider(provider)}"
+
+
+def get_provider_default_endpoint(provider):
+    """Return the default provider endpoint when one exists."""
+    return PROVIDER_DEFAULT_ENDPOINTS.get(normalize_image_provider(provider), "")
+
+
+def get_provider_default_model(provider):
+    """Return the default provider model when one exists."""
+    return PROVIDER_DEFAULT_MODELS.get(normalize_image_provider(provider), "")
+
+
+def provider_requires_api_key(provider):
+    """Return whether a provider needs a stored user API key."""
+    return normalize_image_provider(provider) != "aws"
+
+
+def provider_requires_endpoint(provider):
+    """Return whether a provider must have a user-supplied endpoint."""
+    normalized_provider = normalize_image_provider(provider)
+    return normalized_provider not in DIRECT_IMAGE_PROVIDERS and not get_provider_default_endpoint(normalized_provider)
+
+
+def get_provider_settings_item(user_id, provider):
+    """Return stored settings for one image provider."""
+    normalized_provider = normalize_image_provider(provider)
+    item = get_setting_item(user_id, get_provider_settings_key(normalized_provider))
+    if item:
+        return item
+    if normalized_provider == "midjourney":
+        return get_setting_item(user_id, MIDJOURNEY_SETTING)
+    return None
+
+
+def provider_item_has_api_key(item):
+    """Return whether a settings item includes an API key secret."""
+    return bool(item and (item.get("apiKeyCiphertext") or item.get("apiKey")))
+
+
+def get_provider_api_key(user_id, provider):
+    """Return a decrypted API key for one image provider."""
+    normalized_provider = normalize_image_provider(provider)
+    item = get_provider_settings_item(user_id, normalized_provider) or {}
+    setting_key = item.get("settingKey") or get_provider_settings_key(normalized_provider)
+    if item.get("apiKeyCiphertext"):
+        return decrypt_setting_secret(
+            user_id,
+            setting_key,
+            item["apiKeyCiphertext"],
+            f"{get_provider_label(normalized_provider)} API key",
+        )
+    return str(item.get("apiKey") or "").strip()
+
+
+def get_provider_settings(user_id, provider):
+    """Return decrypted settings for one image provider."""
+    normalized_provider = normalize_image_provider(provider)
+    item = get_provider_settings_item(user_id, normalized_provider) or {}
+    return {
+        "endpointUrl": str(item.get("endpointUrl") or get_provider_default_endpoint(normalized_provider)).strip(),
+        "apiKey": get_provider_api_key(user_id, normalized_provider),
+        "modelId": str(item.get("modelId") or get_provider_default_model(normalized_provider)).strip(),
+    }
+
+
+def get_provider_settings_status(user_id, provider):
+    """Return saved configuration status for one image provider."""
+    normalized_provider = normalize_image_provider(provider)
+    item = get_provider_settings_item(user_id, normalized_provider) or {}
+    if normalized_provider == "openai":
+        api_key_configured = get_openai_key_status(user_id)["configured"]
+    else:
+        api_key_configured = provider_item_has_api_key(item)
+
+    requires_key = provider_requires_api_key(normalized_provider)
+    requires_endpoint = provider_requires_endpoint(normalized_provider)
+    saved_endpoint = str(item.get("endpointUrl") or "").strip()
+    configured = (not requires_key or api_key_configured) and (not requires_endpoint or bool(saved_endpoint))
+    return {
+        "label": get_provider_label(normalized_provider),
+        "configured": configured,
+        "apiKeyConfigured": api_key_configured,
+        "endpointUrl": saved_endpoint,
+        "defaultEndpointUrl": get_provider_default_endpoint(normalized_provider),
+        "modelId": str(item.get("modelId") or get_provider_default_model(normalized_provider)).strip(),
+        "requiresApiKey": requires_key,
+        "requiresEndpoint": requires_endpoint,
+    }
+
+
+def get_image_generation_settings_status(user_id):
+    """Return image generation provider status for the signed-in user."""
+    provider = get_saved_image_provider(user_id)
+    providers = {
+        provider_id: get_provider_settings_status(user_id, provider_id)
+        for provider_id in PROVIDER_LABELS
+    }
+    selected = providers[provider]
+    return {
+        "provider": provider,
+        "providerLabel": selected["label"],
+        "providerConfigured": selected["configured"],
+        "providerEndpointUrl": selected["endpointUrl"],
+        "providerDefaultEndpointUrl": selected["defaultEndpointUrl"],
+        "providerModelId": selected["modelId"],
+        "providers": providers,
+        "openAiConfigured": providers["openai"]["configured"],
+        "midjourneyConfigured": providers["midjourney"]["configured"],
+        "midjourneyEndpointUrl": providers["midjourney"]["endpointUrl"],
+    }
+
+
+def save_provider_settings(user_id, provider, body):
+    """Store endpoint, model, and API key settings for one provider."""
+    normalized_provider = normalize_image_provider(provider)
+    setting_key = get_provider_settings_key(normalized_provider)
+    existing_item = get_provider_settings_item(user_id, normalized_provider) or {}
+    endpoint_url = str(body.get("providerEndpointUrl") or "").strip()
+    api_key = str(body.get("providerApiKey") or "").strip()
+    model_id = str(body.get("providerModelId") or "").strip()
+
+    if normalized_provider == "midjourney":
+        endpoint_url = endpoint_url or str(body.get("midjourneyEndpointUrl") or "").strip()
+        api_key = api_key or str(body.get("midjourneyApiKey") or "").strip()
+    if not endpoint_url:
+        endpoint_url = str(existing_item.get("endpointUrl") or "").strip()
+    if not model_id:
+        model_id = str(existing_item.get("modelId") or get_provider_default_model(normalized_provider)).strip()
+    if endpoint_url:
+        validate_public_url(endpoint_url, f"{get_provider_label(normalized_provider)} endpoint URL")
+
+    item = {
+        "userId": user_id,
+        "settingKey": setting_key,
+        "provider": normalized_provider,
+        "endpointUrl": endpoint_url,
+        "modelId": model_id,
+        "updatedAt": int(time.time()),
+    }
+    if api_key:
+        item["apiKeyCiphertext"] = encrypt_setting_secret(user_id, setting_key, api_key)
+    elif provider_item_has_api_key(existing_item):
+        existing_api_key = get_provider_api_key(user_id, normalized_provider)
+        if existing_api_key:
+            item["apiKeyCiphertext"] = encrypt_setting_secret(user_id, setting_key, existing_api_key)
+    USER_SETTINGS_TABLE.put_item(Item=item)
+    return item
+
+
+def ensure_provider_configured(user_id, provider):
+    """Raise an error when the selected provider is missing required settings."""
+    normalized_provider = normalize_image_provider(provider)
+    status = get_provider_settings_status(user_id, normalized_provider)
+    label = status["label"]
+    if status["configured"]:
+        return
+    if status["requiresEndpoint"] and status["requiresApiKey"]:
+        raise ValueError(f"Save a {label} endpoint and API key before selecting {label}.")
+    if status["requiresEndpoint"]:
+        raise ValueError(f"Save a {label} endpoint before selecting {label}.")
+    if status["requiresApiKey"]:
+        raise ValueError(f"Save a {label} API key before selecting {label}.")
+
+
+def save_image_generation_settings(user_id, body):
+    """Store image generation provider and API settings."""
+    provider = normalize_image_provider(body.get("provider") or get_saved_image_provider(user_id))
+    openai_key = str(body.get("openAiApiKey") or "").strip()
+    provider_key = str(body.get("providerApiKey") or "").strip()
+    if openai_key or (provider == "openai" and provider_key):
+        save_openai_key(user_id, {"apiKey": openai_key or provider_key})
+    if provider != "openai":
+        save_provider_settings(user_id, provider, body)
+    ensure_provider_configured(user_id, provider)
+    save_image_provider(user_id, provider)
+    return get_image_generation_settings_status(user_id)
+
 def build_art_prompt(body):
     """Build the image prompt from the current card fields."""
     card_name = str(body.get("cardName") or "Untitled Card").strip() or "Untitled Card"
@@ -268,7 +548,15 @@ def read_image_generation_error(exc):
     message = "Image generation failed."
     try:
         error_body = json.loads(exc.read().decode("utf-8"))
-        return error_body.get("error", {}).get("message") or message
+        error = error_body.get("error")
+        errors = error_body.get("errors")
+        if isinstance(error, dict):
+            return error.get("message") or message
+        if isinstance(error, str):
+            return error
+        if isinstance(errors, list) and errors:
+            return "; ".join(str(item) for item in errors)
+        return error_body.get("message") or message
     except (json.JSONDecodeError, UnicodeDecodeError):
         return message
 
@@ -339,12 +627,247 @@ def generate_openai_image(prompt, api_key):
     raise ValueError("Image generation did not return an image.")
 
 
+def find_generated_image_value(value):
+    """Find an image URL or base64 payload in a provider response."""
+    if isinstance(value, str):
+        value = value.strip()
+        if value.startswith("http") or value.startswith("data:image/"):
+            return value
+        return ""
+    if isinstance(value, list):
+        for item in value:
+            found = find_generated_image_value(item)
+            if found:
+                return found
+    if isinstance(value, dict):
+        base64_keys = {"b64_json", "base64", "imageBase64", "image_base64"}
+        for key in ("imageUrl", "image_url", "url", "uri", "output", "images", "image", *base64_keys):
+            raw_value = value.get(key)
+            if key in base64_keys and isinstance(raw_value, str) and raw_value.strip():
+                return raw_value.strip()
+            found = find_generated_image_value(raw_value)
+            if found:
+                return found
+        for item in value.values():
+            found = find_generated_image_value(item)
+            if found:
+                return found
+    return ""
+
+
+def find_gemini_image_value(value):
+    """Find Gemini Interactions image output data."""
+    if isinstance(value, list):
+        for item in value:
+            found = find_gemini_image_value(item)
+            if found:
+                return found
+    if isinstance(value, dict):
+        for key in ("output_image", "outputImage", "inlineData", "inline_data"):
+            raw_value = value.get(key)
+            if isinstance(raw_value, dict):
+                image_data = raw_value.get("data")
+                if isinstance(image_data, str) and image_data.strip():
+                    return image_data.strip()
+            found = find_gemini_image_value(raw_value)
+            if found:
+                return found
+        for item in value.values():
+            found = find_gemini_image_value(item)
+            if found:
+                return found
+    return ""
+
+
+def decode_generated_image_value(image_value):
+    """Decode or download an image value returned by an image provider."""
+    if image_value.startswith("data:image/") and ";base64," in image_value:
+        return decode_generated_image(image_value.split(",", 1)[1])
+    if image_value.startswith("http"):
+        return fetch_generated_image(image_value)
+    return decode_generated_image(image_value)
+
+
+def generate_gemini_image(prompt, settings):
+    """Generate an image with the Google Gemini Interactions API."""
+    api_key = settings.get("apiKey") or ""
+    model_id = settings.get("modelId") or PROVIDER_DEFAULT_MODELS["gemini"]
+    if not api_key:
+        raise ValueError("Save a Google Gemini API key before generating images.")
+
+    payload = json.dumps({
+        "model": model_id,
+        "input": [{"type": "text", "text": prompt}],
+    }).encode("utf-8")
+    request = Request(
+        "https://generativelanguage.googleapis.com/v1beta/interactions",
+        data=payload,
+        headers={
+            "x-goog-api-key": api_key,
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=50) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise ValueError(read_image_generation_error(exc))
+    except (URLError, TimeoutError):
+        raise ValueError("Google Gemini image service could not be reached.")
+    image_value = find_gemini_image_value(data) or find_generated_image_value(data)
+    if not image_value:
+        raise ValueError("Google Gemini did not return image data.")
+    return decode_generated_image_value(image_value)
+
+
+def generate_aws_bedrock_image(prompt, settings):
+    """Generate an image with AWS Bedrock Titan Image Generator."""
+    model_id = settings.get("modelId") or PROVIDER_DEFAULT_MODELS["aws"]
+    payload = json.dumps({
+        "taskType": "TEXT_IMAGE",
+        "textToImageParams": {"text": prompt},
+        "imageGenerationConfig": {
+            "numberOfImages": 1,
+            "height": 1024,
+            "width": 1024,
+            "cfgScale": 8.0,
+            "seed": int(time.time()) % 2147483647,
+        },
+    })
+    try:
+        response = BEDROCK.invoke_model(
+            body=payload,
+            modelId=model_id,
+            accept="application/json",
+            contentType="application/json",
+        )
+    except ClientError as exc:
+        message = exc.response.get("Error", {}).get("Message") or "AWS Bedrock image generation failed."
+        raise ValueError(message)
+    data = json.loads(response.get("body").read().decode("utf-8"))
+    if data.get("error"):
+        raise ValueError(f"AWS Bedrock image generation failed: {data['error']}")
+    image_value = find_generated_image_value(data)
+    if not image_value:
+        raise ValueError("AWS Bedrock did not return image data.")
+    return decode_generated_image_value(image_value)
+
+
+def build_multipart_form_data(fields):
+    """Build a small multipart form body for image provider uploads."""
+    boundary = f"----carddesigner{uuid.uuid4().hex}"
+    chunks = []
+    for name, value in fields.items():
+        chunks.append(
+            (
+                f"--{boundary}\\r\\n"
+                f"Content-Disposition: form-data; name=\"{name}\"\\r\\n\\r\\n"
+                f"{value}\\r\\n"
+            ).encode("utf-8")
+        )
+    chunks.append(f"--{boundary}--\\r\\n".encode("utf-8"))
+    return b"".join(chunks), boundary
+
+
+def generate_stability_image(prompt, settings):
+    """Generate an image with Stability AI's image API."""
+    endpoint_url = settings.get("endpointUrl") or PROVIDER_DEFAULT_ENDPOINTS["stability"]
+    api_key = settings.get("apiKey") or ""
+    if not api_key:
+        raise ValueError("Save a Stability AI API key before generating images.")
+    validate_public_url(endpoint_url, "Stability AI endpoint URL")
+
+    body, boundary = build_multipart_form_data({
+        "prompt": prompt,
+        "aspect_ratio": "3:2",
+        "output_format": "png",
+    })
+    request = Request(
+        endpoint_url,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "image/*",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=50) as response:
+            content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+            data = response.read(MAX_ART_IMAGE_BYTES + 1)
+    except HTTPError as exc:
+        raise ValueError(read_image_generation_error(exc))
+    except (URLError, TimeoutError):
+        raise ValueError("Stability AI image service could not be reached.")
+    if content_type.startswith("image/"):
+        if len(data) > MAX_ART_IMAGE_BYTES:
+            raise ValueError("Generated image is larger than 7 MB.")
+        return data
+    image_value = find_generated_image_value(json.loads(data.decode("utf-8")))
+    if not image_value:
+        raise ValueError("Stability AI did not return image data.")
+    return decode_generated_image_value(image_value)
+
+
+def generate_external_provider_image(provider, prompt, settings):
+    """Generate an image through a provider-compatible JSON endpoint."""
+    label = get_provider_label(provider)
+    endpoint_url = settings.get("endpointUrl") or ""
+    api_key = settings.get("apiKey") or ""
+    if not endpoint_url or not api_key:
+        raise ValueError(f"Save a {label} endpoint and API key before generating images.")
+    validate_public_url(endpoint_url, f"{label} endpoint URL")
+
+    payload = {"prompt": prompt, "aspectRatio": "3:2"}
+    if settings.get("modelId"):
+        payload["model"] = settings["modelId"]
+        payload["modelId"] = settings["modelId"]
+    request = Request(
+        endpoint_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=50) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise ValueError(read_image_generation_error(exc))
+    except (URLError, TimeoutError):
+        raise ValueError(f"{label} image service could not be reached.")
+    image_value = find_generated_image_value(data)
+    if not image_value:
+        raise ValueError(f"{label} endpoint did not return an image URL or base64 image.")
+    return decode_generated_image_value(image_value)
+
+
+def generate_provider_image(user_id, body, prompt):
+    """Generate image bytes with the selected provider."""
+    provider = normalize_image_provider(body.get("provider") or get_saved_image_provider(user_id))
+    if provider == "openai":
+        return generate_openai_image(prompt, get_openai_api_key(user_id)), provider
+
+    settings = get_provider_settings(user_id, provider)
+    if provider == "gemini":
+        return generate_gemini_image(prompt, settings), provider
+    if provider == "aws":
+        return generate_aws_bedrock_image(prompt, settings), provider
+    if provider == "stability":
+        return generate_stability_image(prompt, settings), provider
+    return generate_external_provider_image(provider, prompt, settings), provider
+
+
 def generate_art(user_id, body):
     """Generate card art, save it in S3, and return an authenticated app URL."""
     set_code = normalize_set_code(body.get("setCode"))
     validate_card_set(user_id, set_code)
     prompt = build_art_prompt(body)
-    image_bytes = generate_openai_image(prompt, get_openai_api_key(user_id))
+    image_bytes, provider = generate_provider_image(user_id, body, prompt)
     art_key = get_art_key(user_id, set_code, body.get("cardName"), "image/png")
     S3.put_object(
         Bucket=ART_BUCKET_NAME,
@@ -353,7 +876,7 @@ def generate_art(user_id, body):
         ContentType="image/png",
         ServerSideEncryption="AES256",
     )
-    return {"artKey": art_key, "artUrl": f"/art?key={quote(art_key, safe='')}", "prompt": prompt}
+    return {"artKey": art_key, "artUrl": f"/art?key={quote(art_key, safe='')}", "prompt": prompt, "provider": provider}
 
 
 def get_saved_art(user_id, event):
@@ -413,16 +936,21 @@ def proxy_image(event):
     }
 
 
-def validate_image_url(image_url):
-    """Validate that an image URL is public HTTP(S) and not private-network hosted."""
-    parsed = urlparse(image_url)
+def validate_public_url(raw_url, label="URL"):
+    """Validate that a URL is public HTTP(S) and not private-network hosted."""
+    parsed = urlparse(raw_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("Enter a valid image URL.")
+        raise ValueError(f"Enter a valid {label}.")
 
     for result in socket.getaddrinfo(parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM):
         address = ipaddress.ip_address(result[4][0])
         if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
-            raise ValueError("Image URL host is not allowed.")
+            raise ValueError(f"{label.title()} host is not allowed.")
+
+
+def validate_image_url(image_url):
+    """Validate that an image URL is public HTTP(S) and not private-network hosted."""
+    validate_public_url(image_url, "image URL")
 
 
 def get_user_id(event):

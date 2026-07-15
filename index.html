@@ -49,17 +49,36 @@
             </div>
             <div id="aiSettingsPanel" class="account-panel hidden">
               <label>
-                <a
-                  href="https://help.openai.com/en/articles/4936850-where-do-i-find-my-openai-api-key"
-                  target="_blank"
-                  title="Click here to learn about OpenAI Keys"
-                >
-                  <span>OpenAI API key 🛈</span>
-                </a>
-                <input id="openAiKeyInput" type="password" autocomplete="off" placeholder="Stored for image generation" />
+                <span>Image provider</span>
+                <select id="imageProviderInput">
+                  <option value="aws">AWS Bedrock</option>
+                  <option value="gemini">Google Gemini</option>
+                  <option value="openai" default>OpenAI</option>
+                  <option value="stability">Stability AI</option>
+                  <option value="ace">ace.ai-compatible</option>
+                  <option value="firefly">Adobe Firefly-compatible</option>
+                  <option value="claude">Claude-compatible</option>
+                  <option value="fal">Fal.ai-compatible</option>
+                  <option value="leonardo">Leonardo.ai-compatible</option>
+                  <option value="midjourney">Midjourney-compatible</option>
+                  <option value="morphic">Morphic-compatible</option>
+                  <option value="runware">Runware-compatible</option>
+                </select>
               </label>
-              <button id="saveOpenAiKeyButton" class="button subtle" type="button">Save OpenAI Key</button>
-              <p id="openAiKeyStatus" class="status-line">No OpenAI key saved</p>
+              <label id="providerApiKeyLabel">
+                <span>Provider API key</span>
+                <input id="providerApiKeyInput" type="password" autocomplete="off" placeholder="Stored for selected provider" />
+              </label>
+              <label id="providerEndpointLabel">
+                <span>Provider endpoint URL</span>
+                <input id="providerEndpointInput" type="url" inputmode="url" placeholder="Provider-compatible API endpoint" />
+              </label>
+              <label id="providerModelLabel">
+                <span>Model or deployment</span>
+                <input id="providerModelInput" type="text" autocomplete="off" placeholder="Optional provider model or deployment" />
+              </label>
+              <button id="saveImageGenerationSettingsButton" class="button subtle" type="button">Save AI Settings</button>
+              <p id="imageGenerationStatus" class="status-line">No image provider configured</p>
             </div>
             <p id="authStatus" class="status-line">Signed out</p>
           </fieldset>

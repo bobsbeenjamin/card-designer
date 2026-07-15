@@ -4,6 +4,70 @@ let defaults = {};
 let rarityColors = {};
 let rarityLabels = {};
 
+const imageProviderStorageKey = "cardDesignerImageProvider";
+
+const imageProviderLabels = {
+  openai: "OpenAI",
+  gemini: "Google Gemini",
+  aws: "AWS Bedrock",
+  midjourney: "Midjourney-compatible",
+  claude: "Claude-compatible",
+  morphic: "Morphic-compatible",
+  leonardo: "Leonardo.ai-compatible",
+  fal: "Fal.ai-compatible",
+  ace: "ace.ai-compatible",
+  runware: "Runware-compatible",
+  firefly: "Adobe Firefly-compatible",
+  stability: "Stability AI",
+};
+
+const endpointConfigProviders = new Set([
+  "midjourney",
+  "claude",
+  "morphic",
+  "leonardo",
+  "fal",
+  "ace",
+  "runware",
+  "firefly",
+  "stability",
+]);
+const keylessImageProviders = new Set(["aws"]);
+const modelConfigProviders = new Set([
+  "gemini",
+  "aws",
+  "midjourney",
+  "claude",
+  "morphic",
+  "leonardo",
+  "fal",
+  "ace",
+  "runware",
+  "firefly",
+  "stability",
+]);
+
+/** Returns the stored image provider choice when it is still supported. */
+function getStoredImageProvider() {
+  try {
+    const provider = localStorage.getItem(imageProviderStorageKey) || "";
+    return imageProviderLabels[provider] ? provider : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+/** Stores the selected image provider for future page loads. */
+function rememberImageProvider(provider) {
+  const normalizedProvider = imageProviderLabels[provider] ? provider : "openai";
+  try {
+    localStorage.setItem(imageProviderStorageKey, normalizedProvider);
+  } catch (error) {
+    // Storage can be unavailable in private or locked-down browser modes.
+  }
+  return normalizedProvider;
+}
+
 function getStoredIdToken() {
   const token = sessionStorage.getItem("cardDesignerIdToken") || "";
   return isJwtExpired(token) ? "" : token;
@@ -20,6 +84,7 @@ const state = {
   pendingArtUpload: null,
   libraryDraggedCardId: "",
   libraryDragMoved: false,
+  imageGenerationSettings: null,
 };
 
 const elements = {
@@ -70,9 +135,15 @@ const elements = {
   signInPanel: document.querySelector("#signInPanel"),
   signedInPanel: document.querySelector("#signedInPanel"),
   aiSettingsPanel: document.querySelector("#aiSettingsPanel"),
-  openAiKeyInput: document.querySelector("#openAiKeyInput"),
-  saveOpenAiKeyButton: document.querySelector("#saveOpenAiKeyButton"),
-  openAiKeyStatus: document.querySelector("#openAiKeyStatus"),
+  imageProviderInput: document.querySelector("#imageProviderInput"),
+  providerApiKeyLabel: document.querySelector("#providerApiKeyLabel"),
+  providerApiKeyInput: document.querySelector("#providerApiKeyInput"),
+  providerEndpointLabel: document.querySelector("#providerEndpointLabel"),
+  providerEndpointInput: document.querySelector("#providerEndpointInput"),
+  providerModelLabel: document.querySelector("#providerModelLabel"),
+  providerModelInput: document.querySelector("#providerModelInput"),
+  saveImageGenerationSettingsButton: document.querySelector("#saveImageGenerationSettingsButton"),
+  imageGenerationStatus: document.querySelector("#imageGenerationStatus"),
   mySetsPanel: document.querySelector("#mySetsPanel"),
   cardSetsInput: document.querySelector("#cardSetsInput"),
   addSetButton: document.querySelector("#addSetButton"),
@@ -214,8 +285,13 @@ function updateAccountUi() {
   elements.currentUserLabel.textContent = state.email || "Account";
   if (!signedIn) {
     closeAccountMenu();
-    elements.openAiKeyInput.value = "";
-    elements.openAiKeyStatus.textContent = "No OpenAI key saved";
+    state.imageGenerationSettings = null;
+    elements.providerApiKeyInput.value = "";
+    elements.providerEndpointInput.value = "";
+    elements.providerModelInput.value = "";
+    elements.imageProviderInput.value = getStoredImageProvider() || "openai";
+    syncImageProviderSettingsUi();
+    elements.imageGenerationStatus.textContent = "No image provider configured";
   }
 }
 
@@ -561,6 +637,7 @@ async function generateImage() {
       body: JSON.stringify({
         cardName: elements.nameInput.value.trim() || "Untitled Card",
         flavorText: elements.flavorInput.value.trim(),
+        provider: elements.imageProviderInput.value || "openai",
         setCode: elements.setInput.value || "DEFAULT",
       }),
     });
@@ -763,34 +840,105 @@ async function confirmAccount() {
   }
 }
 
-/** Loads whether the signed-in user has an OpenAI key stored. */
-async function refreshOpenAiKeyStatus() {
+/** Returns cached settings status for the selected image provider. */
+function getSelectedProviderStatus() {
+  const provider = elements.imageProviderInput.value || "openai";
+  return state.imageGenerationSettings?.providers?.[provider] || {
+    label: getImageProviderLabel(provider),
+    configured: false,
+    apiKeyConfigured: false,
+    endpointUrl: "",
+    defaultEndpointUrl: "",
+    modelId: "",
+    requiresApiKey: !keylessImageProviders.has(provider),
+    requiresEndpoint: endpointConfigProviders.has(provider) && provider !== "stability",
+  };
+}
+
+/** Updates the provider settings controls for the currently selected provider. */
+function syncImageProviderSettingsUi() {
+  const provider = elements.imageProviderInput.value || "openai";
+  const status = getSelectedProviderStatus();
+  const label = status.label || getImageProviderLabel(provider);
+  const showApiKey = !keylessImageProviders.has(provider);
+  const showEndpoint = endpointConfigProviders.has(provider);
+  const showModel = modelConfigProviders.has(provider);
+
+  elements.providerApiKeyLabel.classList.toggle("hidden", !showApiKey);
+  elements.providerEndpointLabel.classList.toggle("hidden", !showEndpoint);
+  elements.providerModelLabel.classList.toggle("hidden", !showModel);
+  elements.providerApiKeyLabel.querySelector("span").textContent = `${label} API key`;
+  elements.providerEndpointLabel.querySelector("span").textContent = `${label} endpoint URL`;
+  elements.providerModelLabel.querySelector("span").textContent = `${label} model or deployment`;
+  elements.providerApiKeyInput.placeholder = status.apiKeyConfigured
+    ? "Saved; enter a new key to replace it"
+    : `Stored for ${label} generation`;
+  elements.providerEndpointInput.placeholder = status.defaultEndpointUrl || "Provider-compatible API endpoint";
+  elements.providerEndpointInput.value = status.endpointUrl || "";
+  elements.providerModelInput.value = status.modelId || "";
+}
+
+/** Formats provider configuration status for the account panel. */
+function formatImageGenerationStatus(data) {
+  const provider = data.provider || elements.imageProviderInput.value || "openai";
+  const status = data.providers?.[provider] || getSelectedProviderStatus();
+  const label = status.label || getImageProviderLabel(provider);
+  if (status.configured) return `${label} is ready for image generation.`;
+  if (status.requiresEndpoint && status.requiresApiKey) return `${label} needs an endpoint and API key.`;
+  if (status.requiresEndpoint) return `${label} needs an endpoint.`;
+  if (status.requiresApiKey) return `${label} needs an API key.`;
+  return `${label} is selected.`;
+}
+
+function getImageProviderLabel(provider) {
+  return imageProviderLabels[provider] || provider || "OpenAI";
+}
+
+/** Refreshes provider controls and status after the provider selection changes. */
+function handleImageProviderChange() {
+  const provider = rememberImageProvider(elements.imageProviderInput.value || "openai");
+  elements.imageProviderInput.value = provider;
+  syncImageProviderSettingsUi();
+  elements.imageGenerationStatus.textContent = formatImageGenerationStatus({
+    provider,
+    providers: state.imageGenerationSettings?.providers || {},
+  });
+}
+
+/** Loads the signed-in user's image generation settings. */
+async function refreshImageGenerationSettings() {
   if (!state.idToken) return;
   try {
-    const data = await apiFetch("/settings/openai-key");
-    elements.openAiKeyStatus.textContent = data.configured ? "OpenAI key saved" : "No OpenAI key saved";
+    const data = await apiFetch("/settings/image-generation");
+    const provider = getStoredImageProvider() || data.provider || "openai";
+    state.imageGenerationSettings = data;
+    elements.imageProviderInput.value = provider;
+    syncImageProviderSettingsUi();
+    elements.imageGenerationStatus.textContent = formatImageGenerationStatus({ ...data, provider });
   } catch (error) {
-    elements.openAiKeyStatus.textContent = error.message;
+    elements.imageGenerationStatus.textContent = error.message;
   }
 }
 
-/** Saves the signed-in user's OpenAI API key for image generation. */
-async function saveOpenAiKey() {
-  const apiKey = elements.openAiKeyInput.value.trim();
-  if (!apiKey) {
-    elements.openAiKeyStatus.textContent = "Enter an OpenAI API key first.";
-    return;
-  }
-
+/** Saves the selected provider's image generation settings. */
+async function saveImageGenerationSettings() {
   try {
-    await apiFetch("/settings/openai-key", {
+    const data = await apiFetch("/settings/image-generation", {
       method: "PUT",
-      body: JSON.stringify({ apiKey }),
+      body: JSON.stringify({
+        provider: elements.imageProviderInput.value,
+        providerApiKey: elements.providerApiKeyInput.value.trim(),
+        providerEndpointUrl: elements.providerEndpointInput.value.trim(),
+        providerModelId: elements.providerModelInput.value.trim(),
+      }),
     });
-    elements.openAiKeyInput.value = "";
-    elements.openAiKeyStatus.textContent = "OpenAI key saved";
+    state.imageGenerationSettings = data;
+    rememberImageProvider(data.provider || elements.imageProviderInput.value || "openai");
+    elements.providerApiKeyInput.value = "";
+    syncImageProviderSettingsUi();
+    elements.imageGenerationStatus.textContent = formatImageGenerationStatus(data);
   } catch (error) {
-    elements.openAiKeyStatus.textContent = error.message;
+    elements.imageGenerationStatus.textContent = error.message;
   }
 }
 
@@ -815,7 +963,7 @@ async function signIn() {
     updateAccountUi();
     setAuthStatus(`Signed in as ${email}`);
     setSaveStatus("Loading saved designs...");
-    await Promise.all([refreshSavedCards(), refreshCardSets(), refreshOpenAiKeyStatus()]);
+    await Promise.all([refreshSavedCards(), refreshCardSets(), refreshImageGenerationSettings()]);
   } catch (error) {
     setAuthStatus(error.message);
   }
@@ -846,6 +994,7 @@ function clearAuthSession() {
   state.currentCardId = "";
   state.savedCards = [];
   state.savedSets = [];
+  state.imageGenerationSettings = null;
   sessionStorage.removeItem("cardDesignerIdToken");
   sessionStorage.removeItem("cardDesignerEmail");
   updateAccountUi();
@@ -1704,7 +1853,8 @@ function attachEvents() {
   elements.signUpButton.addEventListener("click", signUp);
   elements.confirmButton.addEventListener("click", confirmAccount);
   elements.signInButton.addEventListener("click", signIn);
-  elements.saveOpenAiKeyButton.addEventListener("click", saveOpenAiKey);
+  elements.imageProviderInput.addEventListener("change", handleImageProviderChange);
+  elements.saveImageGenerationSettingsButton.addEventListener("click", saveImageGenerationSettings);
   elements.accountMenuButton.addEventListener("click", toggleAccountMenu);
   elements.signOutButton.addEventListener("click", signOut);
   document.addEventListener("click", (event) => {
@@ -1742,7 +1892,7 @@ async function initialize() {
   updateAccountUi();
   if (state.idToken) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
-    refreshOpenAiKeyStatus();
+    refreshImageGenerationSettings();
     refreshSavedCards();
     refreshCardSets();
   } else if (sessionStorage.getItem("cardDesignerIdToken")) {

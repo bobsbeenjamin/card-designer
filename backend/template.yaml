@@ -227,6 +227,10 @@ Resources:
               Resource: !GetAtt UserSettingsKey.Arn
             - Effect: Allow
               Action:
+                - bedrock:InvokeModel
+              Resource: "*"
+            - Effect: Allow
+              Action:
                 - s3:CreateBucket
                 - s3:ListBucket
                 - s3:PutEncryptionConfiguration
@@ -273,6 +277,18 @@ Resources:
           Properties:
             ApiId: !Ref CardDesignerApi
             Path: /settings/openai-key
+            Method: PUT
+        GetImageGenerationSettings:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /settings/image-generation
+            Method: GET
+        SaveImageGenerationSettings:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /settings/image-generation
             Method: PUT
         GetPublicSet:
           Type: HttpApi
