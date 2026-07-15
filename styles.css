@@ -849,7 +849,7 @@ input[type="color"] {
   border-radius: 8px;
   display: grid;
   gap: 14px;
-  grid-template-columns: 24px 46px minmax(80px, 120px) minmax(0, 1fr) 42px;
+  grid-template-columns: 24px 46px minmax(80px, 120px) minmax(0, 1fr) auto;
   min-height: 64px;
   padding: 10px 12px;
 }
@@ -878,11 +878,15 @@ input[type="color"] {
   cursor: default;
 }
 
-.set-delete-button {
-  background: #fff5f4;
-  border: 1px solid #e0b5b0;
+.set-row-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: end;
+}
+
+.set-delete-button,
+.set-export-button {
   border-radius: 8px;
-  color: #b42318;
   cursor: pointer;
   display: grid;
   height: 38px;
@@ -890,21 +894,48 @@ input[type="color"] {
   width: 38px;
 }
 
+.set-delete-button {
+  background: #fff5f4;
+  border: 1px solid #e0b5b0;
+  color: #b42318;
+}
+
+.set-export-button {
+  background: #f5f8f4;
+  border: 1px solid #c6d1c7;
+  color: #1d2b24;
+}
+
 .set-delete-button:disabled {
   cursor: not-allowed;
   opacity: 0.36;
 }
 
-.set-delete-button svg {
+.set-delete-button svg,
+.set-export-button svg {
   height: 20px;
-  stroke: currentColor;
   width: 20px;
+}
+
+.set-delete-button svg {
+  stroke: currentColor;
+}
+
+.set-export-button svg {
+  fill: currentColor;
 }
 
 .set-delete-button:hover:not(:disabled),
 .set-delete-button:focus-visible:not(:disabled) {
   background: #ffe7e4;
   border-color: #b42318;
+  outline: 0;
+}
+
+.set-export-button:hover,
+.set-export-button:focus-visible {
+  background: #e7eee6;
+  border-color: #7f9282;
   outline: 0;
 }
 
@@ -1035,11 +1066,48 @@ input[type="color"] {
   margin: 0;
 }
 
+.export-set-card {
+  position: relative;
+}
+
+.modal-close-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  font-size: 1.1rem;
+  font-weight: 950;
+  height: 28px;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  width: 28px;
+}
+
+.modal-close-button:hover,
+.modal-close-button:focus-visible {
+  background: #eef2ed;
+  color: var(--ink);
+  outline: 0;
+}
+
 .modal-card p {
   color: var(--muted);
   font-weight: 700;
   line-height: 1.35;
   margin: 0;
+}
+
+#exportSetStatus {
+  max-height: 4.3em;
+  overflow: auto;
+  overflow-wrap: anywhere;
 }
 
 .modal-actions {

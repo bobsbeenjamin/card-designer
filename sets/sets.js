@@ -1,4 +1,11 @@
 const backendConfig = window.backendConfig;
+const STANDARD_CARD_DIMENSIONS = {
+  widthInches: 2.5,
+  heightInches: 3.5,
+  widthMillimeters: 63,
+  heightMillimeters: 88,
+};
+const SOLID_BLACK_CARD_BACK_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR42mNkYGBgAAAABQABXvMqOgAAAABJRU5ErkJggg==";
 
 const state = {
   idToken: getStoredIdToken(),
@@ -7,6 +14,8 @@ const state = {
   savedSets: [],
   libraryDraggedCardId: "",
   libraryDragMoved: false,
+  currentSetCode: "",
+  exportSetCode: "",
 };
 
 const elements = {
@@ -15,8 +24,17 @@ const elements = {
   deleteSetDialog: document.querySelector("#deleteSetDialog"),
   deleteSetMessage: document.querySelector("#deleteSetMessage"),
   deleteSetTitle: document.querySelector("#deleteSetTitle"),
+  closeExportSetButton: document.querySelector("#closeExportSetButton"),
+  closeExportSetXButton: document.querySelector("#closeExportSetXButton"),
+  confirmExportSetButton: document.querySelector("#confirmExportSetButton"),
   emailInput: document.querySelector("#emailInput"),
+  exportFormatInput: document.querySelector("#exportFormatInput"),
+  exportSetDialog: document.querySelector("#exportSetDialog"),
+  exportSetForm: document.querySelector("#exportSetForm"),
+  exportSetStatus: document.querySelector("#exportSetStatus"),
+  exportSetTitle: document.querySelector("#exportSetTitle"),
   passwordInput: document.querySelector("#passwordInput"),
+  setDetailExportButton: document.querySelector("#setDetailExportButton"),
   setLibraryContent: document.querySelector("#setLibraryContent"),
   setsBackButton: document.querySelector("#setsBackButton"),
   setsPageContent: document.querySelector("#setsPageContent"),
@@ -250,6 +268,202 @@ async function makeSetPublic(setCode) {
   renderSetLibraryList();
 }
 
+/** Builds a Tabletop Simulator saved-object JSON document for a set deck. */
+function buildTabletopSimulatorDeckJson(cardSet) {
+  const cards = getExportCards(cardSet);
+  if (!cards.length) throw new Error("This set has no cards to export.");
+
+  const missingImages = cards.filter((card) => !card.imageUrl);
+  if (missingImages.length) {
+    throw new Error("Export needs saved PNG images for every card in this set.");
+  }
+
+  const customDeck = {};
+  const containedObjects = cards.map((card, index) => {
+    const deckKey = String(index + 1);
+    const cardId = (index + 1) * 100;
+    customDeck[deckKey] = {
+      FaceURL: card.imageUrl,
+      BackURL: SOLID_BLACK_CARD_BACK_URL,
+      NumWidth: 1,
+      NumHeight: 1,
+      BackIsHidden: true,
+      UniqueBack: false,
+      Type: 0,
+      CardWidth: STANDARD_CARD_DIMENSIONS.widthInches,
+      CardHeight: STANDARD_CARD_DIMENSIONS.heightInches,
+    };
+
+    return {
+      CardID: cardId,
+      Name: "CardCustom",
+      Nickname: card.name || "Untitled Card",
+      Description: "",
+      GMNotes: "",
+      ColorDiffuse: { r: 0.713, g: 0.713, b: 0.713 },
+      Locked: false,
+      Grid: true,
+      Snap: true,
+      IgnoreFoW: false,
+      MeasureMovement: false,
+      DragSelectable: true,
+      Autoraise: true,
+      Sticky: true,
+      Tooltip: true,
+      GridProjection: false,
+      HideWhenFaceDown: true,
+      Hands: true,
+    };
+  });
+
+  return {
+    SaveName: `Card Designer - ${cardSet.name || cardSet.code || "Set"}`,
+    CardDimensions: { ...STANDARD_CARD_DIMENSIONS, label: "Standard trading card / Magic: The Gathering" },
+    CardBack: { color: "#000000", imageUrl: SOLID_BLACK_CARD_BACK_URL },
+    GameMode: "",
+    Gravity: 0.5,
+    PlayArea: 0.5,
+    Date: new Date().toISOString(),
+    Table: "Table_RPG",
+    Sky: "Sky_Museum",
+    Note: "",
+    Rules: "",
+    XmlUI: "",
+    LuaScript: "",
+    LuaScriptState: "",
+    ObjectStates: [
+      {
+        Name: "DeckCustom",
+        Transform: { posX: 0, posY: 1, posZ: 0, rotX: 0, rotY: 180, rotZ: 0, scaleX: 1, scaleY: 1, scaleZ: 1 },
+        Nickname: cardSet.name || cardSet.code || "Card Set",
+        Description: "",
+        GMNotes: "",
+        AltLookAngle: { x: 0, y: 0, z: 0 },
+        ColorDiffuse: { r: 0.713, g: 0.713, b: 0.713 },
+        LayoutGroupSortIndex: 0,
+        Value: 0,
+        Locked: false,
+        Grid: true,
+        Snap: true,
+        IgnoreFoW: false,
+        MeasureMovement: false,
+        DragSelectable: true,
+        Autoraise: true,
+        Sticky: true,
+        Tooltip: true,
+        GridProjection: false,
+        HideWhenFaceDown: true,
+        Hands: false,
+        SidewaysCard: false,
+        CardDimensions: { ...STANDARD_CARD_DIMENSIONS, label: "Standard trading card / Magic: The Gathering" },
+        CardBack: { color: "#000000", imageUrl: SOLID_BLACK_CARD_BACK_URL },
+        DeckIDs: containedObjects.map((card) => card.CardID),
+        CustomDeck: customDeck,
+        ContainedObjects: containedObjects,
+        LuaScript: "",
+        LuaScriptState: "",
+      },
+    ],
+  };
+}
+
+function getExportCards(cardSet) {
+  const setCode = cardSet.code || "DEFAULT";
+  return getCardsInSet(setCode);
+}
+
+/** Saves JSON with the browser save picker, falling back to a download link. */
+async function saveJsonFile(fileName, jsonText) {
+  const blob = new Blob([jsonText], { type: "application/json;charset=utf-8" });
+  if (window.showSaveFilePicker) {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: fileName,
+      types: [{ description: "JSON files", accept: { "application/json": [".json"] } }],
+    });
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return;
+  }
+
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Opens the export modal for a selected set. */
+function openExportSetDialog(cardSet) {
+  state.exportSetCode = cardSet.code || "DEFAULT";
+  elements.exportSetTitle.textContent = `Export set ${cardSet.name || state.exportSetCode}`;
+  elements.exportSetStatus.textContent = "";
+  elements.exportFormatInput.value = "tabletop-simulator";
+  elements.exportSetDialog.showModal();
+}
+
+/** Closes the export modal and clears transient export state. */
+function closeExportSetDialog() {
+  state.exportSetCode = "";
+  elements.exportSetStatus.textContent = "";
+  elements.exportSetDialog.close();
+}
+
+/** Exports the selected set using the selected export format. */
+async function exportSelectedSet() {
+  const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === state.exportSetCode);
+  if (!cardSet) {
+    elements.exportSetStatus.textContent = "Choose a set to export.";
+    return;
+  }
+
+  try {
+    elements.exportSetStatus.textContent = "Preparing export...";
+    const exportData = buildTabletopSimulatorDeckJson(cardSet);
+    const jsonText = JSON.stringify(exportData, null, 2);
+    const fileName = `${getSafeFileName(cardSet.code || cardSet.name || "card-set")}-tabletop-simulator.json`;
+    await saveJsonFile(fileName, jsonText);
+    elements.exportSetStatus.textContent = "Export ready.";
+  } catch (error) {
+    if (error.name === "AbortError") {
+      elements.exportSetStatus.textContent = "";
+      return;
+    }
+    elements.exportSetStatus.textContent = error.message;
+  }
+}
+
+function getSafeFileName(value, fallback = "card-set") {
+  return String(value || fallback).trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || fallback;
+}
+
+/** Creates the export button used to open the export modal. */
+function createSetExportButton(cardSet) {
+  const button = document.createElement("button");
+  button.className = "set-export-button";
+  button.type = "button";
+  button.title = "Export this set";
+  button.setAttribute("aria-label", `Export ${cardSet.name || cardSet.code || "set"}`);
+  button.innerHTML = `
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 100 100">
+      <path d="M14 20H52V32H26V74H74V58H86V86H14Z"></path>
+      <path d="M45 58C50 40 62 29 76 26V13L96 34L76 55V42C65 43 55 48 45 58Z"></path>
+    </svg>`;
+  button.addEventListener("click", () => openExportSetDialog(cardSet));
+  return button;
+}
+
+/** Builds the action buttons for a set row. */
+function createSetActionButtons(cardSet) {
+  const actions = document.createElement("div");
+  actions.className = "set-row-actions";
+  actions.append(createSetExportButton(cardSet), createSetDeleteButton(cardSet));
+  return actions;
+}
+
 /** Creates the red trash button used to delete a set row. */
 function createSetDeleteButton(cardSet) {
   const button = document.createElement("button");
@@ -258,6 +472,7 @@ function createSetDeleteButton(cardSet) {
   button.type = "button";
   button.disabled = setCode === "DEFAULT";
   button.setAttribute("aria-label", `Delete ${cardSet.name || setCode} set`);
+  button.title = "Delete this set permanently";
   button.innerHTML = `
     <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M3 6h18"></path>
@@ -272,8 +487,10 @@ function createSetDeleteButton(cardSet) {
 
 /** Shows the set list view on the page. */
 function renderSetLibraryList() {
+  state.currentSetCode = "";
   elements.setsTitle.textContent = "My Sets";
   elements.setsBackButton.classList.add("hidden");
+  elements.setDetailExportButton.classList.add("hidden");
   elements.setLibraryContent.innerHTML = "";
   const list = document.createElement("div");
   list.className = "set-list";
@@ -292,7 +509,7 @@ function renderSetLibraryList() {
     });
     const name = document.createElement("strong");
     name.textContent = cardSet.name || "Untitled Set";
-    row.append(createSetPublicCheckbox(cardSet), renderSetSymbolPreview(cardSet), codeLink, name, createSetDeleteButton(cardSet));
+    row.append(createSetPublicCheckbox(cardSet), renderSetSymbolPreview(cardSet), codeLink, name, createSetActionButtons(cardSet));
     list.append(row);
   }
 
@@ -408,10 +625,12 @@ function createLibraryCardTile(card, setCode) {
 
 /** Shows the cards in a selected set as a five-column grid. */
 function renderSetCardGrid(setCode) {
+  state.currentSetCode = setCode;
   const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === setCode);
   const cards = getCardsInSet(setCode);
   elements.setsTitle.textContent = cardSet ? `${cardSet.code} - ${cardSet.name || "Untitled Set"}` : setCode;
   elements.setsBackButton.classList.remove("hidden");
+  elements.setDetailExportButton.classList.toggle("hidden", !cardSet);
   elements.setLibraryContent.innerHTML = "";
 
   const grid = document.createElement("div");
@@ -482,6 +701,14 @@ async function refreshSetsAndCards(renderInitialView = true) {
 /** Registers page event handlers. */
 function attachEvents() {
   elements.signInButton.addEventListener("click", signIn);
+  elements.closeExportSetButton.addEventListener("click", closeExportSetDialog);
+  elements.closeExportSetXButton.addEventListener("click", closeExportSetDialog);
+  elements.confirmExportSetButton.addEventListener("click", exportSelectedSet);
+  elements.exportSetForm.addEventListener("submit", (event) => event.preventDefault());
+  elements.setDetailExportButton.addEventListener("click", () => {
+    const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === state.currentSetCode);
+    if (cardSet) openExportSetDialog(cardSet);
+  });
   elements.setsBackButton.addEventListener("click", () => {
     renderSetLibraryList();
     window.history.replaceState({}, "", new URL("./", window.location.href));

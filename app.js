@@ -1290,6 +1290,7 @@ function createSetDeleteButton(cardSet) {
   button.type = "button";
   button.disabled = setCode === "DEFAULT";
   button.setAttribute("aria-label", `Delete ${cardSet.name || setCode} set`);
+  button.title = "Delete this set permanently";
   button.innerHTML = `
     <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M3 6h18"></path>
