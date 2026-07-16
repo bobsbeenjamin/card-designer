@@ -62,7 +62,12 @@
           <span>Format</span>
           <select id="exportFormatInput">
             <option value="tabletop-simulator">Tabletop Simulator</option>
+            <option value="share-edit-copy">Send this set to another user for editing</option>
           </select>
+        </label>
+        <label id="shareRecipientEmailLabel" class="hidden">
+          <span>User email</span>
+          <input id="shareRecipientEmailInput" type="email" autocomplete="off" />
         </label>
         <p id="exportSetStatus" class="status-line"></p>
         <div class="modal-actions two-up">

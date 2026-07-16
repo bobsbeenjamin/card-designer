@@ -34,6 +34,8 @@ const elements = {
   exportSetStatus: document.querySelector("#exportSetStatus"),
   exportSetTitle: document.querySelector("#exportSetTitle"),
   passwordInput: document.querySelector("#passwordInput"),
+  shareRecipientEmailInput: document.querySelector("#shareRecipientEmailInput"),
+  shareRecipientEmailLabel: document.querySelector("#shareRecipientEmailLabel"),
   setDetailExportButton: document.querySelector("#setDetailExportButton"),
   setLibraryContent: document.querySelector("#setLibraryContent"),
   setsBackButton: document.querySelector("#setsBackButton"),
@@ -407,6 +409,8 @@ function openExportSetDialog(cardSet) {
   elements.exportSetTitle.textContent = `Export set ${cardSet.name || state.exportSetCode}`;
   elements.exportSetStatus.textContent = "";
   elements.exportFormatInput.value = "tabletop-simulator";
+  elements.shareRecipientEmailInput.value = "";
+  syncExportFormatUi();
   elements.exportSetDialog.showModal();
 }
 
@@ -414,7 +418,27 @@ function openExportSetDialog(cardSet) {
 function closeExportSetDialog() {
   state.exportSetCode = "";
   elements.exportSetStatus.textContent = "";
+  elements.shareRecipientEmailInput.value = "";
+  syncExportFormatUi();
   elements.exportSetDialog.close();
+}
+
+function syncExportFormatUi() {
+  const isShareExport = elements.exportFormatInput.value === "share-edit-copy";
+  elements.shareRecipientEmailLabel.classList.toggle("hidden", !isShareExport);
+}
+
+/** Sends the selected set to another user as a pending editable copy. */
+async function shareSelectedSet(cardSet) {
+  const recipientEmail = elements.shareRecipientEmailInput.value.trim();
+  if (!recipientEmail) throw new Error("Enter the user's email address.");
+
+  const data = await apiFetch(`/sets/${encodeURIComponent(cardSet.code || "DEFAULT")}/share`, {
+    method: "POST",
+    body: JSON.stringify({ recipientEmail }),
+  });
+  const cardsCopied = data.cardsCopied ?? 0;
+  elements.exportSetStatus.textContent = `Sent ${cardSet.name || cardSet.code || "set"} to ${recipientEmail} (${cardsCopied} cards).`;
 }
 
 /** Exports the selected set using the selected export format. */
@@ -426,6 +450,12 @@ async function exportSelectedSet() {
   }
 
   try {
+    if (elements.exportFormatInput.value === "share-edit-copy") {
+      elements.exportSetStatus.textContent = "Sending set...";
+      await shareSelectedSet(cardSet);
+      return;
+    }
+
     elements.exportSetStatus.textContent = "Preparing export...";
     const exportData = buildTabletopSimulatorDeckJson(cardSet);
     const jsonText = JSON.stringify(exportData, null, 2);
@@ -709,6 +739,7 @@ function attachEvents() {
   elements.closeExportSetButton.addEventListener("click", closeExportSetDialog);
   elements.closeExportSetXButton.addEventListener("click", closeExportSetDialog);
   elements.confirmExportSetButton.addEventListener("click", exportSelectedSet);
+  elements.exportFormatInput.addEventListener("change", syncExportFormatUi);
   elements.exportSetForm.addEventListener("submit", (event) => event.preventDefault());
   elements.setDetailExportButton.addEventListener("click", () => {
     const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === state.currentSetCode);

@@ -212,6 +212,9 @@ Resources:
       CodeUri: src/
       Handler: cards.handler
       Timeout: 60
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref CardDesignerUserPool
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CardDesignsTable
@@ -229,6 +232,10 @@ Resources:
               Action:
                 - bedrock:InvokeModel
               Resource: "*"
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+              Resource: !GetAtt CardDesignerUserPool.Arn
             - Effect: Allow
               Action:
                 - s3:CreateBucket
@@ -306,6 +313,12 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /sets
             Method: GET
+        ListSetShares:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /set-shares
+            Method: GET
         CreateSet:
           Type: HttpApi
           Properties:
@@ -324,6 +337,24 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /sets/{setCode}/public
             Method: PUT
+        ShareSet:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /sets/{setCode}/share
+            Method: POST
+        AcceptSetShare:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /set-shares/{shareId}/accept
+            Method: POST
+        RejectSetShare:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /set-shares/{shareId}
+            Method: DELETE
         ReorderSetCards:
           Type: HttpApi
           Properties:

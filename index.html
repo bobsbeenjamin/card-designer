@@ -447,6 +447,17 @@
       </form>
     </dialog>
 
+    <dialog id="incomingShareDialog" class="modal-dialog" aria-labelledby="incomingShareTitle">
+      <form id="incomingShareForm" class="modal-card">
+        <h2 id="incomingShareTitle">Shared set copy</h2>
+        <p id="incomingShareMessage">A user sent you a set.</p>
+        <div class="modal-actions two-up">
+          <button id="acceptIncomingShareButton" class="button primary" type="button">Yes</button>
+          <button id="rejectIncomingShareButton" class="button subtle" type="button">No</button>
+        </div>
+      </form>
+    </dialog>
+    
     <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>

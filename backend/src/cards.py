@@ -23,6 +23,7 @@ USER_SETTINGS_TABLE_NAME = os.environ["USER_SETTINGS_TABLE_NAME"]
 USER_BUCKET_PREFIX = os.environ["USER_BUCKET_PREFIX"]
 ART_BUCKET_NAME = os.environ["ART_BUCKET_NAME"]
 USER_SETTINGS_KEY_ID = os.environ["USER_SETTINGS_KEY_ID"]
+USER_POOL_ID = os.environ["USER_POOL_ID"]
 DYNAMODB = boto3.resource("dynamodb")
 TABLE = DYNAMODB.Table(TABLE_NAME)
 SETS_TABLE = DYNAMODB.Table(SETS_TABLE_NAME)
@@ -30,6 +31,7 @@ USER_SETTINGS_TABLE = DYNAMODB.Table(USER_SETTINGS_TABLE_NAME)
 S3 = boto3.client("s3")
 KMS = boto3.client("kms")
 BEDROCK = boto3.client("bedrock-runtime")
+COGNITO = boto3.client("cognito-idp")
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_CARD_IMAGE_BYTES = 7 * 1024 * 1024
 MAX_ART_IMAGE_BYTES = 7 * 1024 * 1024
@@ -100,6 +102,7 @@ def handler(event, _context):
             return ok(get_public_set(event))
 
         user_id = get_user_id(event)
+        user_email = get_user_email(event)
 
         if method == "GET" and route_key == "GET /image-proxy":
             return proxy_image(event)
@@ -128,6 +131,9 @@ def handler(event, _context):
         if method == "GET" and route_key == "GET /sets":
             return ok(list_sets(user_id))
 
+        if method == "GET" and route_key == "GET /set-shares":
+            return ok(list_pending_set_shares(user_id))
+
         if method == "POST" and route_key == "POST /sets":
             return ok(save_set(user_id, read_body(event)), status=201)
 
@@ -138,6 +144,18 @@ def handler(event, _context):
         if method == "PUT" and route_key == "PUT /sets/{setCode}/public":
             set_code = event["pathParameters"]["setCode"]
             return ok(make_set_public(user_id, set_code))
+
+        if method == "POST" and route_key == "POST /sets/{setCode}/share":
+            set_code = event["pathParameters"]["setCode"]
+            return ok(share_set_with_user(user_id, user_email, set_code, read_body(event)), status=201)
+
+        if method == "POST" and route_key == "POST /set-shares/{shareId}/accept":
+            share_id = event["pathParameters"]["shareId"]
+            return ok(accept_set_share(user_id, share_id))
+
+        if method == "DELETE" and route_key == "DELETE /set-shares/{shareId}":
+            share_id = event["pathParameters"]["shareId"]
+            return ok(reject_set_share(user_id, share_id))
 
         if method == "POST" and route_key == "POST /sets/{setCode}/cards/reorder":
             set_code = event["pathParameters"]["setCode"]
@@ -953,18 +971,27 @@ def validate_image_url(image_url):
     validate_public_url(image_url, "image URL")
 
 
-def get_user_id(event):
-    """Extract the authenticated Cognito user id from API Gateway claims."""
-    claims = (
+def get_jwt_claims(event):
+    """Extract authenticated Cognito claims from an API Gateway event."""
+    return (
         event.get("requestContext", {})
         .get("authorizer", {})
         .get("jwt", {})
         .get("claims", {})
     )
-    user_id = claims.get("sub")
+
+
+def get_user_id(event):
+    """Extract the authenticated Cognito user id from API Gateway claims."""
+    user_id = get_jwt_claims(event).get("sub")
     if not user_id:
         raise PermissionError()
     return user_id
+
+
+def get_user_email(event):
+    """Extract the authenticated user's email from API Gateway claims."""
+    return str(get_jwt_claims(event).get("email") or "").strip()
 
 
 def read_body(event):
@@ -1030,10 +1057,11 @@ def validate_card_set(user_id, set_code):
 
 
 def list_sets(user_id):
-    """Return all sets owned by the user."""
+    """Return all accepted sets owned by the user."""
     ensure_default_set_if_missing(user_id)
     response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
-    sets = sorted(response.get("Items", []), key=lambda item: item.get("code", ""))
+    sets = [item for item in response.get("Items", []) if not item.get("pendingShare")]
+    sets.sort(key=lambda item: item.get("code", ""))
     return {"sets": sets}
 
 
@@ -1104,6 +1132,190 @@ def save_set(user_id, body):
     if item.get("isPublic"):
         sync_user_bucket_public_policy(user_id)
     return {"set": item}
+
+
+def get_cognito_user_by_email(email):
+    """Find a confirmed Cognito user by email address."""
+    wanted_email = str(email or "").strip().lower()
+    if not wanted_email or "@" not in wanted_email:
+        raise ValueError("Enter the recipient user's email address.")
+
+    response = COGNITO.list_users(
+        UserPoolId=USER_POOL_ID,
+        Filter=f'email = "{wanted_email}"',
+        Limit=1,
+    )
+    users = response.get("Users", [])
+    if not users:
+        raise ValueError("No user with that email address was found.")
+
+    attributes = {
+        attribute["Name"]: attribute.get("Value", "")
+        for attribute in users[0].get("Attributes", [])
+    }
+    recipient_user_id = attributes.get("sub")
+    if not recipient_user_id:
+        raise ValueError("That user account is missing an id.")
+    return {"userId": recipient_user_id, "email": attributes.get("email", wanted_email)}
+
+
+def get_unique_shared_set_code(user_id, requested_code):
+    """Return a recipient set code that does not collide with existing sets."""
+    base_code = normalize_set_code(requested_code)
+    if base_code == DEFAULT_SET["code"]:
+        base_code = "SHARED"
+
+    response = SETS_TABLE.query(
+        KeyConditionExpression=Key("userId").eq(user_id),
+        ProjectionExpression="#code",
+        ExpressionAttributeNames={"#code": "code"},
+    )
+    existing_codes = {normalize_set_code(item.get("code")) for item in response.get("Items", [])}
+    if base_code not in existing_codes:
+        return base_code
+
+    for index in range(2, 1000):
+        candidate = f"{base_code}{index}"
+        if candidate not in existing_codes:
+            return candidate
+    raise ValueError("The recipient has too many copies of this set.")
+
+
+def copy_shared_card_image(source_card, target_user_id, target_card):
+    """Copy a rendered card PNG into the recipient user's bucket when present."""
+    source_bucket = source_card.get("imageBucket")
+    source_key = source_card.get("imageKey")
+    if not source_bucket or not source_key:
+        return
+
+    target_bucket = ensure_user_bucket(target_user_id)
+    target_key = get_card_image_key(target_card)
+    S3.copy_object(
+        Bucket=target_bucket,
+        Key=target_key,
+        CopySource={"Bucket": source_bucket, "Key": source_key},
+        MetadataDirective="COPY",
+        ServerSideEncryption="AES256",
+    )
+    target_card["imageBucket"] = target_bucket
+    target_card["imageKey"] = target_key
+
+
+def share_set_with_user(sender_user_id, sender_email, set_code, body):
+    """Copy a set and its cards into another user's pending shares."""
+    recipient = get_cognito_user_by_email(body.get("recipientEmail"))
+    if recipient["userId"] == sender_user_id:
+        raise ValueError("Choose another user to share this set with.")
+
+    source_set_code = normalize_set_code(set_code)
+    source_set = get_set(sender_user_id, source_set_code)
+    if not source_set or source_set.get("pendingShare"):
+        raise ValueError("Card set does not exist.")
+
+    share_id = str(uuid.uuid4())
+    target_set_code = get_unique_shared_set_code(recipient["userId"], source_set_code)
+    now = int(time.time())
+    target_set = {
+        key: value
+        for key, value in source_set.items()
+        if key not in {"userId", "code", "isPublic", "pendingShare", "shareId"}
+    }
+    target_set.update({
+        "userId": recipient["userId"],
+        "code": target_set_code,
+        "isPublic": False,
+        "pendingShare": True,
+        "shareId": share_id,
+        "senderUserId": sender_user_id,
+        "senderEmail": sender_email or sender_user_id,
+        "recipientEmail": recipient["email"],
+        "originalSetCode": source_set_code,
+        "sharedAt": now,
+    })
+    SETS_TABLE.put_item(Item=target_set)
+
+    copied_cards = 0
+    for source_card in get_cards_for_set(sender_user_id, source_set_code):
+        target_card = {
+            key: value
+            for key, value in source_card.items()
+            if key not in {"userId", "cardId", "setCode", "imageBucket", "imageKey", "imageUrl", "publicImageUrl"}
+        }
+        target_card.update({
+            "userId": recipient["userId"],
+            "cardId": str(uuid.uuid4()),
+            "setCode": target_set_code,
+            "pendingShare": True,
+            "shareId": share_id,
+            "senderUserId": sender_user_id,
+            "senderEmail": sender_email or sender_user_id,
+            "originalCardId": source_card.get("cardId", ""),
+            "createdAt": now,
+            "updatedAt": now,
+        })
+        copy_shared_card_image(source_card, recipient["userId"], target_card)
+        TABLE.put_item(Item=target_card)
+        copied_cards += 1
+
+    return {"shareId": share_id, "set": target_set, "cardsCopied": copied_cards}
+
+
+def list_pending_set_shares(user_id):
+    """Return incoming pending set copies for the signed-in user."""
+    response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
+    shares = [
+        {
+            "shareId": item.get("shareId", ""),
+            "setCode": item.get("code", ""),
+            "setName": item.get("name", "Untitled Set"),
+            "senderEmail": item.get("senderEmail", "another user"),
+        }
+        for item in response.get("Items", [])
+        if item.get("pendingShare") and item.get("shareId")
+    ]
+    shares.sort(key=lambda item: (item.get("setName", ""), item.get("senderEmail", "")))
+    return {"shares": shares}
+
+
+def get_pending_share_set(user_id, share_id):
+    """Return the pending set record for a share id."""
+    response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
+    for item in response.get("Items", []):
+        if item.get("pendingShare") and item.get("shareId") == share_id:
+            return item
+    raise ValueError("Shared set was not found.")
+
+
+def accept_set_share(user_id, share_id):
+    """Accept a pending shared set and make it editable."""
+    card_set = get_pending_share_set(user_id, share_id)
+    SETS_TABLE.update_item(
+        Key={"userId": user_id, "code": card_set["code"]},
+        UpdateExpression="REMOVE pendingShare, shareId, senderUserId, senderEmail, recipientEmail, originalSetCode, sharedAt",
+    )
+
+    for card in get_cards_for_set(user_id, card_set["code"]):
+        if card.get("shareId") == share_id:
+            TABLE.update_item(
+                Key={"userId": user_id, "cardId": card["cardId"]},
+                UpdateExpression="REMOVE pendingShare, shareId, senderUserId, senderEmail, originalCardId",
+            )
+    card_set.pop("pendingShare", None)
+    card_set.pop("shareId", None)
+    return {"accepted": True, "set": card_set}
+
+
+def reject_set_share(user_id, share_id):
+    """Delete a pending shared set copy and its copied cards."""
+    card_set = get_pending_share_set(user_id, share_id)
+    deleted_cards = 0
+    for card in get_cards_for_set(user_id, card_set["code"]):
+        if card.get("shareId") == share_id:
+            delete_card_image(card)
+            TABLE.delete_item(Key={"userId": user_id, "cardId": card["cardId"]})
+            deleted_cards += 1
+    SETS_TABLE.delete_item(Key={"userId": user_id, "code": card_set["code"]})
+    return {"rejected": True, "shareId": share_id, "deletedCards": deleted_cards}
 
 
 def make_set_public(user_id, set_code):
@@ -1247,10 +1459,10 @@ def list_cards(user_id):
     backfill_card_set_codes(user_id)
     response = TABLE.query(
         KeyConditionExpression=Key("userId").eq(user_id),
-        ProjectionExpression="userId, cardId, #name, #type, sub_type, rarity, setCode, collectorNumber, imageBucket, imageKey, updatedAt",
+        ProjectionExpression="userId, cardId, #name, #type, sub_type, rarity, setCode, collectorNumber, imageBucket, imageKey, updatedAt, pendingShare",
         ExpressionAttributeNames={"#name": "name", "#type": "type"},
     )
-    cards = response.get("Items", [])
+    cards = [card for card in response.get("Items", []) if not card.get("pendingShare")]
     cards.sort(key=lambda card: (card.get("setCode") or DEFAULT_SET["code"], normalize_collector_number(card.get("collectorNumber")), card.get("name", "")))
     public_set_codes = get_public_set_codes(user_id)
     if public_set_codes:

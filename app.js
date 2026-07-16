@@ -195,6 +195,12 @@ const elements = {
   confirmDeleteSetButton: document.querySelector("#confirmDeleteSetButton"),
   saveArtDialog: document.querySelector("#saveArtDialog"),
   toastRegion: document.querySelector("#toastRegion"),
+  incomingShareDialog: document.querySelector("#incomingShareDialog"),
+  incomingShareForm: document.querySelector("#incomingShareForm"),
+  incomingShareTitle: document.querySelector("#incomingShareTitle"),
+  incomingShareMessage: document.querySelector("#incomingShareMessage"),
+  acceptIncomingShareButton: document.querySelector("#acceptIncomingShareButton"),
+  rejectIncomingShareButton: document.querySelector("#rejectIncomingShareButton"),
 };
 
 function getRarityColor(rarity) {
@@ -998,6 +1004,7 @@ async function signIn() {
     setAuthStatus(`Signed in as ${email}`);
     setSaveStatus("Loading saved designs...");
     await Promise.all([refreshSavedCards(), refreshCardSets(), refreshImageGenerationSettings()]);
+    await checkIncomingSetShares();
   } catch (error) {
     setAuthStatus(error.message);
   }
@@ -1228,6 +1235,54 @@ async function makeSelectedSetPublic() {
   } catch (error) {
     setSaveStatus(error.message);
     updateMakeSetPublicButton();
+  }
+}
+
+/** Opens a modal for one incoming shared set copy. */
+function openIncomingShareDialog(share) {
+  elements.incomingShareDialog.dataset.shareId = share.shareId || "";
+  elements.incomingShareTitle.textContent = `Would you like to accept a copy of set ${share.setName || "Untitled Set"} from user ${share.senderEmail || "another user"}?`;
+  elements.incomingShareMessage.textContent = "";
+  elements.incomingShareDialog.showModal();
+}
+
+/** Checks whether another user has sent this account a set copy. */
+async function checkIncomingSetShares() {
+  if (!state.idToken) return;
+  try {
+    const data = await apiFetch("/set-shares");
+    const share = (data.shares || [])[0];
+    if (share) openIncomingShareDialog(share);
+  } catch (error) {
+    setSaveStatus(error.message);
+  }
+}
+
+/** Accepts or rejects the incoming set copy currently shown in the modal. */
+async function respondToIncomingShare(accept) {
+  const shareId = elements.incomingShareDialog.dataset.shareId;
+  if (!shareId) return;
+
+  try {
+    elements.acceptIncomingShareButton.disabled = true;
+    elements.rejectIncomingShareButton.disabled = true;
+    if (accept) {
+      await apiFetch(`/set-shares/${encodeURIComponent(shareId)}/accept`, { method: "POST" });
+      setSaveStatus("Shared set accepted");
+    } else {
+      await apiFetch(`/set-shares/${encodeURIComponent(shareId)}`, { method: "DELETE" });
+      setSaveStatus("Shared set declined");
+    }
+    elements.incomingShareDialog.close();
+    await Promise.all([refreshSavedCards(), refreshCardSets()]);
+    renderSavedCards();
+    renderCardSets();
+    await checkIncomingSetShares();
+  } catch (error) {
+    elements.incomingShareMessage.textContent = error.message;
+  } finally {
+    elements.acceptIncomingShareButton.disabled = false;
+    elements.rejectIncomingShareButton.disabled = false;
   }
 }
 
@@ -1898,6 +1953,9 @@ function attachEvents() {
   elements.saveImageGenerationSettingsButton.addEventListener("click", saveImageGenerationSettings);
   elements.accountMenuButton.addEventListener("click", toggleAccountMenu);
   elements.signOutButton.addEventListener("click", signOut);
+  elements.acceptIncomingShareButton.addEventListener("click", () => respondToIncomingShare(true));
+  elements.rejectIncomingShareButton.addEventListener("click", () => respondToIncomingShare(false));
+  elements.incomingShareForm.addEventListener("submit", (event) => event.preventDefault());
   document.addEventListener("click", (event) => {
     if (!elements.signedInPanel.contains(event.target)) closeAccountMenu();
   });
@@ -1934,6 +1992,7 @@ async function initialize() {
   if (state.idToken) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
     await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets()]);
+    await checkIncomingSetShares();
     await loadRequestedCardFromUrl();
   } else if (sessionStorage.getItem("cardDesignerIdToken")) {
     clearAuthSession();
