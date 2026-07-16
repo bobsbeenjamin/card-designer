@@ -19,6 +19,7 @@ const state = {
 };
 
 const elements = {
+  acceptIncomingShareButton: document.querySelector("#acceptIncomingShareButton"),
   authStatus: document.querySelector("#authStatus"),
   confirmDeleteSetButton: document.querySelector("#confirmDeleteSetButton"),
   deleteSetDialog: document.querySelector("#deleteSetDialog"),
@@ -33,7 +34,12 @@ const elements = {
   exportSetForm: document.querySelector("#exportSetForm"),
   exportSetStatus: document.querySelector("#exportSetStatus"),
   exportSetTitle: document.querySelector("#exportSetTitle"),
+  incomingShareDialog: document.querySelector("#incomingShareDialog"),
+  incomingShareForm: document.querySelector("#incomingShareForm"),
+  incomingShareMessage: document.querySelector("#incomingShareMessage"),
+  incomingShareTitle: document.querySelector("#incomingShareTitle"),
   passwordInput: document.querySelector("#passwordInput"),
+  rejectIncomingShareButton: document.querySelector("#rejectIncomingShareButton"),
   shareRecipientEmailInput: document.querySelector("#shareRecipientEmailInput"),
   shareRecipientEmailLabel: document.querySelector("#shareRecipientEmailLabel"),
   setDetailExportButton: document.querySelector("#setDetailExportButton"),
@@ -167,8 +173,54 @@ async function signIn() {
     renderAuthUi();
     setAuthStatus(`Signed in as ${email}`);
     await refreshSetsAndCards();
+    await checkIncomingSetShares();
   } catch (error) {
     setAuthStatus(error.message);
+  }
+}
+
+/** Opens a modal for one incoming shared set copy. */
+function openIncomingShareDialog(share) {
+  elements.incomingShareDialog.dataset.shareId = share.shareId || "";
+  elements.incomingShareTitle.textContent = `Would you like to accept a copy of set ${share.setName || "Untitled Set"} from user ${share.senderEmail || "another user"}?`;
+  elements.incomingShareMessage.textContent = "";
+  if (!elements.incomingShareDialog.open) elements.incomingShareDialog.showModal();
+}
+
+/** Checks whether another user has sent this account a set copy. */
+async function checkIncomingSetShares() {
+  if (!state.idToken || elements.incomingShareDialog.open) return;
+  try {
+    const data = await apiFetch("/set-shares");
+    const share = (data.shares || [])[0];
+    if (share) openIncomingShareDialog(share);
+  } catch (error) {
+    setStatus(error.message);
+  }
+}
+
+/** Accepts or rejects the incoming set copy currently shown in the modal. */
+async function respondToIncomingShare(accept) {
+  const shareId = elements.incomingShareDialog.dataset.shareId;
+  if (!shareId) return;
+
+  try {
+    elements.acceptIncomingShareButton.disabled = true;
+    elements.rejectIncomingShareButton.disabled = true;
+    if (accept) {
+      await apiFetch(`/set-shares/${encodeURIComponent(shareId)}/accept`, { method: "POST" });
+    } else {
+      await apiFetch(`/set-shares/${encodeURIComponent(shareId)}`, { method: "DELETE" });
+    }
+    elements.incomingShareDialog.close();
+    await refreshSetsAndCards();
+    setStatus(accept ? "Shared set accepted" : "Shared set declined");
+    await checkIncomingSetShares();
+  } catch (error) {
+    elements.incomingShareMessage.textContent = error.message;
+  } finally {
+    elements.acceptIncomingShareButton.disabled = false;
+    elements.rejectIncomingShareButton.disabled = false;
   }
 }
 
@@ -435,7 +487,7 @@ async function shareSelectedSet(cardSet) {
 
   const data = await apiFetch(`/sets/${encodeURIComponent(cardSet.code || "DEFAULT")}/share`, {
     method: "POST",
-    body: JSON.stringify({ recipientEmail }),
+    body: JSON.stringify({ recipientEmail, apiBaseUrl: backendConfig.apiUrl }),
   });
   const cardsCopied = data.cardsCopied ?? 0;
   elements.exportSetStatus.textContent = `Sent ${cardSet.name || cardSet.code || "set"} to ${recipientEmail} (${cardsCopied} cards).`;
@@ -736,6 +788,9 @@ async function refreshSetsAndCards(renderInitialView = true) {
 /** Registers page event handlers. */
 function attachEvents() {
   elements.signInButton.addEventListener("click", signIn);
+  elements.acceptIncomingShareButton.addEventListener("click", () => respondToIncomingShare(true));
+  elements.rejectIncomingShareButton.addEventListener("click", () => respondToIncomingShare(false));
+  elements.incomingShareForm.addEventListener("submit", (event) => event.preventDefault());
   elements.closeExportSetButton.addEventListener("click", closeExportSetDialog);
   elements.closeExportSetXButton.addEventListener("click", closeExportSetDialog);
   elements.confirmExportSetButton.addEventListener("click", exportSelectedSet);
@@ -771,6 +826,7 @@ async function initialize() {
   setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
   try {
     await refreshSetsAndCards();
+    await checkIncomingSetShares();
   } catch (error) {
     setStatus(error.message);
   }

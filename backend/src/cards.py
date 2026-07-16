@@ -8,7 +8,7 @@ import os
 import socket
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, unquote_plus, urlparse
+from urllib.parse import parse_qs, quote, unquote_plus, urlparse
 from urllib.request import Request, urlopen
 import uuid
 
@@ -103,6 +103,7 @@ def handler(event, _context):
 
         user_id = get_user_id(event)
         user_email = get_user_email(event)
+        api_base_url = get_api_base_url(event)
 
         if method == "GET" and route_key == "GET /image-proxy":
             return proxy_image(event)
@@ -147,7 +148,7 @@ def handler(event, _context):
 
         if method == "POST" and route_key == "POST /sets/{setCode}/share":
             set_code = event["pathParameters"]["setCode"]
-            return ok(share_set_with_user(user_id, user_email, set_code, read_body(event)), status=201)
+            return ok(share_set_with_user(user_id, user_email, api_base_url, set_code, read_body(event)), status=201)
 
         if method == "POST" and route_key == "POST /set-shares/{shareId}/accept":
             share_id = event["pathParameters"]["shareId"]
@@ -994,6 +995,26 @@ def get_user_email(event):
     return str(get_jwt_claims(event).get("email") or "").strip()
 
 
+def get_api_base_url(event):
+    """Build the API base URL from API Gateway request context."""
+    request_context = event.get("requestContext", {})
+    headers = {str(k).lower(): str(v) for k, v in (event.get("headers") or {}).items()}
+    domain_name = str(request_context.get("domainName") or headers.get("host") or "").strip()
+    if not domain_name:
+        return ""
+
+    forwarded_proto = str(headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    scheme = forwarded_proto or "https"
+    if not forwarded_proto and (domain_name.startswith("localhost") or domain_name.startswith("127.0.0.1")):
+        scheme = "http"
+    if scheme not in {"http", "https"}:
+        scheme = "https"
+
+    stage = str(request_context.get("stage") or "").strip().strip("/")
+    stage_path = "" if not stage or stage == "$default" else f"/{stage}"
+    return f"{scheme}://{domain_name}{stage_path}"
+
+
 def read_body(event):
     """Parse and validate a JSON request body."""
     if not event.get("body"):
@@ -1181,6 +1202,63 @@ def get_unique_shared_set_code(user_id, requested_code):
     raise ValueError("The recipient has too many copies of this set.")
 
 
+def get_saved_art_key_from_url(art_url):
+    """Return the private art bucket key from a saved /art URL when present."""
+    parsed = urlparse(str(art_url or ""))
+    if parsed.path != "/art":
+        return ""
+    query = parse_qs(parsed.query)
+    return (query.get("key") or [""])[0].strip()
+
+
+def get_shared_art_key(target_user_id, target_card, source_art_key):
+    """Build a recipient-owned S3 art key while preserving the source extension."""
+    extension = os.path.splitext(source_art_key)[1].lstrip(".").lower() or "png"
+    if extension not in {"jpg", "jpeg", "png", "gif", "webp"}:
+        extension = "png"
+    content_type = "image/jpeg" if extension in {"jpg", "jpeg"} else f"image/{extension}"
+    return get_art_key(target_user_id, target_card.get("setCode"), target_card.get("name"), content_type)
+
+
+def get_shared_art_url(api_base_url, target_art_key):
+    """Build the recipient art URL from the card designer API base URL."""
+    encoded_key = quote(target_art_key, safe="")
+    parsed = urlparse(str(api_base_url or "").strip())
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        base_path = parsed.path.rstrip("/")
+        return f"{parsed.scheme}://{parsed.netloc}{base_path}/art?key={encoded_key}"
+    return f"/art?key={encoded_key}"
+
+
+def copy_shared_card_art(source_card, target_user_id, target_card, api_base_url=""):
+    """Copy saved editable artwork into the recipient's private art prefix."""
+    source_art_key = get_saved_art_key_from_url(source_card.get("artUrl"))
+    if not source_art_key:
+        return
+    if not source_art_key.startswith(f"{get_art_user_prefix(source_card.get('userId', ''))}/"):
+        return
+
+    target_art_key = get_shared_art_key(target_user_id, target_card, source_art_key)
+    S3.copy_object(
+        Bucket=ART_BUCKET_NAME,
+        Key=target_art_key,
+        CopySource={"Bucket": ART_BUCKET_NAME, "Key": source_art_key},
+        MetadataDirective="COPY",
+        ServerSideEncryption="AES256",
+    )
+    target_card["artUrl"] = get_shared_art_url(api_base_url, target_art_key)
+
+
+def delete_card_art(card):
+    """Delete saved editable artwork for a card when it belongs to that user."""
+    art_key = get_saved_art_key_from_url(card.get("artUrl"))
+    if not art_key:
+        return
+    if not art_key.startswith(f"{get_art_user_prefix(card.get('userId', ''))}/"):
+        return
+    S3.delete_object(Bucket=ART_BUCKET_NAME, Key=art_key)
+
+
 def copy_shared_card_image(source_card, target_user_id, target_card):
     """Copy a rendered card PNG into the recipient user's bucket when present."""
     source_bucket = source_card.get("imageBucket")
@@ -1201,7 +1279,7 @@ def copy_shared_card_image(source_card, target_user_id, target_card):
     target_card["imageKey"] = target_key
 
 
-def share_set_with_user(sender_user_id, sender_email, set_code, body):
+def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, body):
     """Copy a set and its cards into another user's pending shares."""
     recipient = get_cognito_user_by_email(body.get("recipientEmail"))
     if recipient["userId"] == sender_user_id:
@@ -1234,6 +1312,7 @@ def share_set_with_user(sender_user_id, sender_email, set_code, body):
     })
     SETS_TABLE.put_item(Item=target_set)
 
+    api_base_url = str(api_base_url or body.get("apiBaseUrl") or "").strip()
     copied_cards = 0
     for source_card in get_cards_for_set(sender_user_id, source_set_code):
         target_card = {
@@ -1253,6 +1332,7 @@ def share_set_with_user(sender_user_id, sender_email, set_code, body):
             "createdAt": now,
             "updatedAt": now,
         })
+        copy_shared_card_art(source_card, recipient["userId"], target_card, api_base_url)
         copy_shared_card_image(source_card, recipient["userId"], target_card)
         TABLE.put_item(Item=target_card)
         copied_cards += 1
@@ -1311,6 +1391,7 @@ def reject_set_share(user_id, share_id):
     deleted_cards = 0
     for card in get_cards_for_set(user_id, card_set["code"]):
         if card.get("shareId") == share_id:
+            delete_card_art(card)
             delete_card_image(card)
             TABLE.delete_item(Key={"userId": user_id, "cardId": card["cardId"]})
             deleted_cards += 1
