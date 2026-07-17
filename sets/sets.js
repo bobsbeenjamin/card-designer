@@ -37,6 +37,9 @@ const elements = {
   exportSetDialog: document.querySelector("#exportSetDialog"),
   exportSetForm: document.querySelector("#exportSetForm"),
   exportSetStatus: document.querySelector("#exportSetStatus"),
+  exportSetSubtitle: document.querySelector("#exportSetSubtitle"),
+  exportSetPublicInput: document.querySelector("#exportSetPublicInput"),
+  exportSetPublicLabel: document.querySelector("#exportSetPublicLabel"),
   exportSetTitle: document.querySelector("#exportSetTitle"),
   incomingShareDialog: document.querySelector("#incomingShareDialog"),
   incomingShareForm: document.querySelector("#incomingShareForm"),
@@ -283,39 +286,6 @@ function renderSetSymbolPreview(cardSet) {
   return symbol;
 }
 
-/** Creates the one-way public visibility checkbox for a set row. */
-function createSetPublicCheckbox(cardSet) {
-  const checkbox = document.createElement("input");
-  const setCode = cardSet.code || "DEFAULT";
-  checkbox.className = "set-public-checkbox";
-  checkbox.type = "checkbox";
-  checkbox.checked = Boolean(cardSet.isPublic);
-  checkbox.disabled = checkbox.checked;
-  checkbox.setAttribute("aria-label", `${cardSet.name || setCode} is public`);
-  checkbox.addEventListener("click", (event) => {
-    if (cardSet.isPublic) {
-      event.preventDefault();
-      checkbox.checked = true;
-    }
-  });
-  checkbox.addEventListener("change", async () => {
-    if (!checkbox.checked) {
-      checkbox.checked = true;
-      return;
-    }
-
-    checkbox.disabled = true;
-    try {
-      await makeSetPublic(setCode);
-    } catch (error) {
-      checkbox.disabled = false;
-      checkbox.checked = false;
-      setStatus(error.message);
-    }
-  });
-  return checkbox;
-}
-
 /** Makes a set public and refreshes the current view. */
 async function makeSetPublic(setCode) {
   const normalizedSetCode = setCode || "DEFAULT";
@@ -466,18 +436,49 @@ async function saveJsonFile(fileName, jsonText) {
 function openExportSetDialog(cardSet) {
   state.exportSetCode = cardSet.code || "DEFAULT";
   state.sharePreflightKey = "";
-  elements.exportSetTitle.textContent = `Export set ${cardSet.name || state.exportSetCode}`;
+  elements.exportSetTitle.textContent = "Share and Export";
+  elements.exportSetSubtitle.textContent = `${state.exportSetCode} - ${cardSet.name || "Untitled Set"}`;
   elements.exportSetStatus.textContent = "";
   elements.exportFormatInput.value = "tabletop-simulator";
   elements.shareRecipientEmailInput.value = "";
   syncExportFormatUi();
+  syncExportPublicUi();
   elements.exportSetDialog.showModal();
+}
+
+/** Updates the export dialog's one-way public visibility control. */
+function syncExportPublicUi() {
+  const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === state.exportSetCode);
+  const isPublic = Boolean(cardSet?.isPublic);
+  elements.exportSetPublicInput.checked = isPublic;
+  elements.exportSetPublicInput.disabled = isPublic;
+  elements.exportSetPublicLabel.textContent = isPublic
+    ? "This set is marked public"
+    : "Check this box to make the set public";
+}
+
+/** Makes the selected export set public when its checkbox is checked. */
+async function handleExportPublicChange() {
+  if (!elements.exportSetPublicInput.checked) {
+    syncExportPublicUi();
+    return;
+  }
+
+  elements.exportSetPublicInput.disabled = true;
+  try {
+    await makeSetPublic(state.exportSetCode);
+    syncExportPublicUi();
+  } catch (error) {
+    elements.exportSetStatus.textContent = error.message;
+    syncExportPublicUi();
+  }
 }
 
 /** Closes the export modal and clears transient export state. */
 function closeExportSetDialog() {
   state.exportSetCode = "";
   state.sharePreflightKey = "";
+  elements.exportSetSubtitle.textContent = "";
   elements.exportSetStatus.textContent = "";
   elements.shareRecipientEmailInput.value = "";
   syncExportFormatUi();
@@ -566,7 +567,7 @@ function createSetExportButton(cardSet) {
   const button = document.createElement("button");
   button.className = "set-export-button";
   button.type = "button";
-  button.title = "Export this set";
+  button.title = "Share and Export";
   button.setAttribute("aria-label", `Export ${cardSet.name || cardSet.code || "set"}`);
   button.innerHTML = `
     <svg aria-hidden="true" focusable="false" viewBox="0 0 100 100">
@@ -694,7 +695,7 @@ function renderSetLibraryList() {
     const nameCell = document.createElement("div");
     nameCell.className = "set-name-cell";
     nameCell.append(name, createSetRenameButton(cardSet));
-    row.append(createSetPublicCheckbox(cardSet), renderSetSymbolPreview(cardSet), codeLink, nameCell, createSetActionButtons(cardSet));
+    row.append(renderSetSymbolPreview(cardSet), codeLink, nameCell, createSetActionButtons(cardSet));
     list.append(row);
   }
 
@@ -892,6 +893,7 @@ function attachEvents() {
   elements.closeExportSetXButton.addEventListener("click", closeExportSetDialog);
   elements.confirmExportSetButton.addEventListener("click", exportSelectedSet);
   elements.exportFormatInput.addEventListener("change", syncExportFormatUi);
+  elements.exportSetPublicInput.addEventListener("change", handleExportPublicChange);
   elements.shareRecipientEmailInput.addEventListener("input", () => {
     state.sharePreflightKey = "";
   });

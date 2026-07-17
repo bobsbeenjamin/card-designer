@@ -35,8 +35,8 @@
             id="setDetailExportButton"
             class="set-export-button hidden"
             type="button"
-            title="Export this set"
-            aria-label="Export this set"
+            title="Share and Export"
+            aria-label="Share and Export"
           >
             <svg aria-hidden="true" focusable="false" viewBox="0 0 100 100">
               <path d="M14 20H52V32H26V74H74V58H86V86H14Z"></path>
@@ -73,7 +73,14 @@
     <dialog id="exportSetDialog" class="modal-dialog export-set-dialog" aria-labelledby="exportSetTitle">
       <form id="exportSetForm" class="modal-card export-set-card">
         <button id="closeExportSetXButton" class="modal-close-button" type="button" aria-label="Close export dialog">x</button>
-        <h2 id="exportSetTitle">Export set</h2>
+        <h2 id="exportSetTitle">Share and Export</h2>
+        <p id="exportSetSubtitle" class="export-set-subtitle"></p>
+        <label class="checkbox-label export-set-public-control">
+          <input id="exportSetPublicInput" type="checkbox" />
+          <span id="exportSetPublicLabel">Check this box to make the set public</span>
+        </label>
+        <hr class="export-set-divider" />
+        <h3 class="export-set-section-title">Export</h3>
         <label>
           <span>Format</span>
           <select id="exportFormatInput">

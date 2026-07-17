@@ -870,7 +870,7 @@ input[type="color"] {
   border-radius: 8px;
   display: grid;
   gap: 14px;
-  grid-template-columns: 24px 46px minmax(80px, 120px) minmax(0, 1fr) auto;
+  grid-template-columns: 46px minmax(80px, 120px) minmax(0, 1fr) auto;
   min-height: 64px;
   padding: 10px 12px;
 }
@@ -896,16 +896,6 @@ input[type="color"] {
   min-width: 0;
 }
 
-.set-public-checkbox {
-  cursor: pointer;
-  height: 18px;
-  justify-self: center;
-  width: 18px;
-}
-
-.set-public-checkbox:disabled {
-  cursor: default;
-}
 
 .set-row-actions {
   display: flex;
@@ -1120,6 +1110,37 @@ input[type="color"] {
 
 .export-set-card {
   position: relative;
+}
+
+.export-set-divider {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 0;
+  width: 100%;
+}
+
+.export-set-public-control {
+  cursor: pointer;
+  justify-content: start;
+}
+
+.export-set-public-control input {
+  height: 18px;
+  width: 18px;
+}
+
+.export-set-public-control input:disabled {
+  cursor: default;
+}
+
+.export-set-section-title {
+  color: var(--ink);
+  font-size: 1rem;
+  margin: 0;
+}
+
+.export-set-subtitle {
+  font-size: 0.95rem;
 }
 
 .modal-close-button {
