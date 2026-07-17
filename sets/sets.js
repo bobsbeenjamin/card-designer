@@ -7,6 +7,7 @@ const STANDARD_CARD_DIMENSIONS = {
 };
 const SOLID_BLACK_CARD_BACK_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR42mNkYGBgAAAABQABXvMqOgAAAABJRU5ErkJggg==";
 
+const generateArtCanceledMessage = "Art generation was canceled.";
 const imageProviderStorageKey = "cardDesignerImageProvider";
 const imageProviders = new Set([
   "openai",
@@ -36,6 +37,11 @@ const state = {
   renameSetCode: "",
   sharePreflightKey: "",
   cardRendererReadyPromise: null,
+  generateArtAbortController: null,
+  generateArtCanceled: false,
+  generateArtPaused: false,
+  generateArtResumeResolver: null,
+  generateArtRunning: false,
 };
 
 const elements = {
@@ -484,18 +490,101 @@ async function saveJsonFile(fileName, jsonText) {
   URL.revokeObjectURL(url);
 }
 
-/** Opens the Generate Art modal. */
-function openGenerateArtDialog() {
-  elements.generateArtStatus.textContent = "";
+/** Updates Generate Art modal buttons for the current batch state. */
+function syncGenerateArtControls() {
   elements.confirmGenerateArtButton.disabled = false;
   elements.cancelGenerateArtButton.disabled = false;
   elements.closeGenerateArtButton.disabled = false;
+  if (!state.generateArtRunning) {
+    elements.confirmGenerateArtButton.textContent = "Generate Art";
+    return;
+  }
+
+  elements.confirmGenerateArtButton.textContent = state.generateArtPaused ? "Resume" : "Pause";
+}
+
+/** Opens the Generate Art modal. */
+function openGenerateArtDialog() {
+  if (!state.generateArtRunning) {
+    elements.generateArtStatus.textContent = "";
+    state.generateArtCanceled = false;
+    state.generateArtPaused = false;
+  }
+  syncGenerateArtControls();
   elements.generateArtDialog.showModal();
 }
 
-/** Closes the Generate Art modal. */
+/** Closes the Generate Art modal without changing the current workflow. */
 function closeGenerateArtDialog() {
   elements.generateArtDialog.close();
+}
+
+/** Resolves a paused Generate Art workflow so it can continue or stop. */
+function resolveGenerateArtPause() {
+  if (!state.generateArtResumeResolver) return;
+  state.generateArtResumeResolver();
+  state.generateArtResumeResolver = null;
+}
+
+/** Returns true for intentional Generate Art cancellation errors. */
+function isGenerateArtCanceledError(error) {
+  return state.generateArtCanceled || error?.name === "AbortError" || error?.message === generateArtCanceledMessage;
+}
+
+/** Throws when the current Generate Art workflow has been canceled. */
+function throwIfGenerateArtCanceled() {
+  if (state.generateArtCanceled) throw new Error(generateArtCanceledMessage);
+}
+
+/** Waits while the Generate Art workflow is paused between cards. */
+async function waitForGenerateArtResume() {
+  throwIfGenerateArtCanceled();
+  if (!state.generateArtPaused) return;
+
+  elements.generateArtStatus.textContent = "Paused. Press Resume to continue.";
+  await new Promise((resolve) => {
+    state.generateArtResumeResolver = resolve;
+  });
+  throwIfGenerateArtCanceled();
+}
+
+/** Toggles the Generate Art workflow between paused and running. */
+function toggleGenerateArtPause() {
+  if (!state.generateArtRunning) {
+    generateMissingSetArt();
+    return;
+  }
+
+  state.generateArtPaused = !state.generateArtPaused;
+  if (state.generateArtPaused) {
+    elements.generateArtStatus.textContent = "Paused. The current card will finish before the next one starts.";
+  } else {
+    elements.generateArtStatus.textContent = "Resuming art generation...";
+    resolveGenerateArtPause();
+  }
+  syncGenerateArtControls();
+}
+
+/** Cancels the Generate Art workflow and closes the modal. */
+function cancelGenerateArtWorkflow() {
+  if (state.generateArtRunning) {
+    state.generateArtCanceled = true;
+    state.generateArtPaused = false;
+    state.generateArtAbortController?.abort();
+    resolveGenerateArtPause();
+  }
+  closeGenerateArtDialog();
+  syncGenerateArtControls();
+}
+
+/** Resets Generate Art workflow state after it finishes or stops. */
+function finishGenerateArtWorkflow() {
+  state.generateArtAbortController = null;
+  state.generateArtCanceled = false;
+  state.generateArtPaused = false;
+  state.generateArtResumeResolver = null;
+  state.generateArtRunning = false;
+  syncGenerateArtControls();
 }
 
 /** Returns the locally selected image provider when one has been chosen. */
@@ -512,13 +601,6 @@ function getSelectedImageProvider() {
 function getFullArtUrl(artUrl) {
   if (!artUrl) return "";
   return artUrl.startsWith("http") ? artUrl : `${backendConfig.apiUrl}${artUrl}`;
-}
-
-/** Sets the Generate Art modal busy state while batch work is running. */
-function setGenerateArtBusy(isBusy) {
-  elements.confirmGenerateArtButton.disabled = isBusy;
-  elements.cancelGenerateArtButton.disabled = isBusy;
-  elements.closeGenerateArtButton.disabled = isBusy;
 }
 
 /** Waits for the hidden designer iframe to expose its rendering API. */
@@ -559,14 +641,16 @@ async function renderUpdatedCardPng(card) {
 }
 
 /** Loads full card records for a set because summaries do not include art URLs. */
-async function getFullCardsInSet(setCode) {
+async function getFullCardsInSet(setCode, signal) {
   const cardSummaries = getCardsInSet(setCode);
-  const cardResponses = await Promise.all(cardSummaries.map((card) => apiFetch(`/cards/${encodeURIComponent(card.cardId)}`)));
+  const cardResponses = await Promise.all(
+    cardSummaries.map((card) => apiFetch(`/cards/${encodeURIComponent(card.cardId)}`, { signal })),
+  );
   return cardResponses.map((response) => response.card).filter(Boolean);
 }
 
 /** Generates and stores art for a single missing-art card. */
-async function generateAndSaveCardArt(card, provider) {
+async function generateAndSaveCardArt(card, provider, signal) {
   const generationBody = {
     cardName: card.name || "Untitled Card",
     flavorText: card.flavorText || "",
@@ -576,13 +660,17 @@ async function generateAndSaveCardArt(card, provider) {
 
   const generatedArt = await apiFetch("/art/generate", {
     method: "POST",
+    signal,
     body: JSON.stringify(generationBody),
   });
+  throwIfGenerateArtCanceled();
   const updatedCard = { ...card, artUrl: getFullArtUrl(generatedArt.artUrl) };
   updatedCard.cardImagePng = await renderUpdatedCardPng(updatedCard);
+  throwIfGenerateArtCanceled();
 
   const data = await apiFetch(`/cards/${encodeURIComponent(card.cardId)}`, {
     method: "PUT",
+    signal,
     body: JSON.stringify(updatedCard),
   });
   return data.card || updatedCard;
@@ -590,11 +678,19 @@ async function generateAndSaveCardArt(card, provider) {
 
 /** Fills in AI art for each card in the current set that has no Image URL. */
 async function generateMissingSetArt() {
+  if (state.generateArtRunning) return;
+
   const setCode = state.currentSetCode || "DEFAULT";
-  setGenerateArtBusy(true);
+  state.generateArtAbortController = new AbortController();
+  state.generateArtCanceled = false;
+  state.generateArtPaused = false;
+  state.generateArtRunning = true;
+  syncGenerateArtControls();
+
   try {
     elements.generateArtStatus.textContent = "Checking cards for missing art...";
-    const cardsMissingArt = (await getFullCardsInSet(setCode)).filter((card) => !String(card.artUrl || "").trim());
+    const cardsMissingArt = (await getFullCardsInSet(setCode, state.generateArtAbortController.signal)).filter((card) => !String(card.artUrl || "").trim());
+    throwIfGenerateArtCanceled();
     if (!cardsMissingArt.length) {
       elements.generateArtStatus.textContent = "Every card in this set already has art.";
       return;
@@ -602,21 +698,25 @@ async function generateMissingSetArt() {
 
     const provider = getSelectedImageProvider();
     for (const [index, card] of cardsMissingArt.entries()) {
+      await waitForGenerateArtResume();
       elements.generateArtStatus.textContent = `Generating ${index + 1} of ${cardsMissingArt.length}: ${card.name || "Untitled Card"}`;
-      const savedCard = await generateAndSaveCardArt(card, provider);
+      const savedCard = await generateAndSaveCardArt(card, provider, state.generateArtAbortController.signal);
       const currentCard = state.savedCards.find((saved) => saved.cardId === savedCard.cardId);
       if (currentCard) Object.assign(currentCard, savedCard);
     }
 
     await refreshSetsAndCards(false);
+    throwIfGenerateArtCanceled();
     renderSetCardGrid(setCode);
     closeGenerateArtDialog();
     showToast(`Generated art for ${cardsMissingArt.length} card${cardsMissingArt.length === 1 ? "" : "s"}.`, "info");
   } catch (error) {
-    elements.generateArtStatus.textContent = "Art generation stopped. See the error popup for details.";
-    showToast(error.message);
+    if (!isGenerateArtCanceledError(error)) {
+      elements.generateArtStatus.textContent = "Art generation stopped. See the error popup for details.";
+      showToast(error.message);
+    }
   } finally {
-    setGenerateArtBusy(false);
+    finishGenerateArtWorkflow();
   }
 }
 
@@ -1082,9 +1182,14 @@ function attachEvents() {
   elements.closeExportSetButton.addEventListener("click", closeExportSetDialog);
   elements.closeExportSetXButton.addEventListener("click", closeExportSetDialog);
   elements.generateArtButton.addEventListener("click", openGenerateArtDialog);
-  elements.closeGenerateArtButton.addEventListener("click", closeGenerateArtDialog);
-  elements.cancelGenerateArtButton.addEventListener("click", closeGenerateArtDialog);
-  elements.confirmGenerateArtButton.addEventListener("click", generateMissingSetArt);
+  elements.closeGenerateArtButton.addEventListener("click", cancelGenerateArtWorkflow);
+  elements.cancelGenerateArtButton.addEventListener("click", cancelGenerateArtWorkflow);
+  elements.confirmGenerateArtButton.addEventListener("click", toggleGenerateArtPause);
+  elements.generateArtDialog.addEventListener("cancel", (event) => {
+    if (!state.generateArtRunning) return;
+    event.preventDefault();
+    cancelGenerateArtWorkflow();
+  });
   elements.confirmExportSetButton.addEventListener("click", exportSelectedSet);
   elements.exportFormatInput.addEventListener("change", syncExportFormatUi);
   elements.exportSetPublicInput.addEventListener("change", handleExportPublicChange);
