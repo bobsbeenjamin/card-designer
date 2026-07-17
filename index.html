@@ -311,7 +311,12 @@
             </label>
             <label>
               <span>Image URL</span>
-              <input id="artUrlInput" type="url" inputmode="url" />
+              <span class="art-url-control">
+                <input id="artUrlInput" type="url" inputmode="url" />
+                <button id="deleteArtButton" class="set-delete-button" type="button" title="Delete card art" aria-label="Delete card art">
+                  <span class="trash-icon" aria-hidden="true"></span>
+                </button>
+              </span>
             </label>
             <label>
               <span>Art fit</span>

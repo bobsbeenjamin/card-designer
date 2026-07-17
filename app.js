@@ -132,6 +132,7 @@ const elements = {
   generateImageSpinner: document.querySelector("#generateImageSpinner"),
   artInput: document.querySelector("#artInput"),
   artUrlInput: document.querySelector("#artUrlInput"),
+  deleteArtButton: document.querySelector("#deleteArtButton"),
   fitInput: document.querySelector("#fitInput"),
   frameColor: document.querySelector("#frameColor"),
   accentColor: document.querySelector("#accentColor"),
@@ -742,7 +743,11 @@ function loadArt(event) {
 
 /** Builds the card payload sent to the backend. */
 function collectCardData() {
-  let artUrl = state.artUrl || elements.art.src || "";
+  const typedArtUrl = elements.artUrlInput.value.trim();
+  const hasDataUrlArt = String(state.artUrl || elements.art.src || "").startsWith("data:");
+  let artUrl = typedArtUrl || (
+    state.pendingArtUpload || hasDataUrlArt ? state.artUrl || elements.art.src || "" : ""
+  );
   if (artUrl.startsWith("data:") && artUrl.length > 300000) {
     artUrl = "";
     setSaveStatus("Design saved without art; uploaded image is too large for DynamoDB.");
@@ -1350,14 +1355,7 @@ function createSetDeleteButton(cardSet) {
   button.disabled = setCode === "DEFAULT";
   button.setAttribute("aria-label", `Delete ${cardSet.name || setCode} set`);
   button.title = "Delete this set permanently";
-  button.innerHTML = `
-    <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M3 6h18"></path>
-      <path d="M8 6V4h8v2"></path>
-      <path d="M19 6l-1 14H6L5 6"></path>
-      <path d="M10 11v5"></path>
-      <path d="M14 11v5"></path>
-    </svg>`;
+  button.innerHTML = `<span class="trash-icon" aria-hidden="true"></span>`;
   button.addEventListener("click", () => promptDeleteSet(cardSet));
   return button;
 }
@@ -1700,10 +1698,43 @@ async function savePendingArtForLater() {
   await setArtSource(artUrl, "Art saved for later");
 }
 
+/** Aligns the preview art with the Image URL field before saving. */
+async function syncArtInputBeforeSave() {
+  const typedArtUrl = elements.artUrlInput.value.trim();
+  const currentArtUrl = String(state.artUrl || "").trim();
+  if (typedArtUrl && typedArtUrl !== currentArtUrl) {
+    elements.artInput.value = "";
+    state.pendingArtUpload = null;
+    await setArtSource(typedArtUrl);
+    return;
+  }
+
+  if (!typedArtUrl && !state.pendingArtUpload && currentArtUrl && !currentArtUrl.startsWith("data:")) {
+    clearArt();
+  }
+}
+
+/** Clears editable art from the current card and saves the update. */
+async function deleteCurrentCardArt() {
+  const cardId = state.currentCardId || elements.savedCardsInput.value;
+  if (!cardId) {
+    setSaveStatus("Load a saved card before deleting art.");
+    return;
+  }
+
+  elements.artUrlInput.value = "";
+  elements.artInput.value = "";
+  state.pendingArtUpload = null;
+  clearArt();
+  syncCard();
+  await saveCard(cardId);
+}
+
 /** Saves or updates a card and uploads its rendered PNG. */
 async function saveCard(cardId = "") {
   try {
     await savePendingArtForLater();
+    await syncArtInputBeforeSave();
     const card = collectCardData();
     card.cardImagePng = await getCardPngDataUrl();
     const data = await apiFetch(cardId ? `/cards/${cardId}` : "/cards", {
@@ -1921,6 +1952,7 @@ function attachEvents() {
   elements.generateImageButton.addEventListener("click", generateImage);
   elements.artInput.addEventListener("change", loadArt);
   elements.artUrlInput.addEventListener("change", loadArtUrl);
+  elements.deleteArtButton.addEventListener("click", deleteCurrentCardArt);
   elements.cardSetsInput.addEventListener("change", () => {
     renderSavedCards();
     updateMakeSetPublicButton();

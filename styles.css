@@ -896,6 +896,16 @@ input[type="color"] {
   min-width: 0;
 }
 
+.art-url-control {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 38px;
+}
+
+.art-url-control .set-delete-button {
+  padding: 0;
+}
 
 .set-row-actions {
   display: flex;
@@ -945,7 +955,7 @@ input[type="color"] {
   opacity: 0.36;
 }
 
-.set-delete-button svg,
+.set-delete-button .trash-icon,
 .set-export-button svg {
   height: 20px;
   width: 20px;
@@ -957,8 +967,11 @@ input[type="color"] {
   width: 12px;
 }
 
-.set-delete-button svg {
-  stroke: currentColor;
+.set-delete-button .trash-icon {
+  background: currentColor;
+  display: block;
+  mask: url("assets/trash-icon.svg") center / contain no-repeat;
+  -webkit-mask: url("assets/trash-icon.svg") center / contain no-repeat;
 }
 
 .set-export-button svg {

@@ -943,14 +943,7 @@ function createSetDeleteButton(cardSet) {
   button.disabled = setCode === "DEFAULT";
   button.setAttribute("aria-label", `Delete ${cardSet.name || setCode} set`);
   button.title = "Delete this set permanently";
-  button.innerHTML = `
-    <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M3 6h18"></path>
-      <path d="M8 6V4h8v2"></path>
-      <path d="M19 6l-1 14H6L5 6"></path>
-      <path d="M10 11v5"></path>
-      <path d="M14 11v5"></path>
-    </svg>`;
+  button.innerHTML = `<span class="trash-icon" aria-hidden="true"></span>`;
   button.addEventListener("click", () => promptDeleteSet(cardSet));
   return button;
 }

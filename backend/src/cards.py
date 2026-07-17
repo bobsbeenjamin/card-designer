@@ -1310,7 +1310,7 @@ def get_pending_share_code(share_id):
 def get_saved_art_key_from_url(art_url):
     """Return the private art bucket key from a saved /art URL when present."""
     parsed = urlparse(str(art_url or ""))
-    if parsed.path != "/art":
+    if not parsed.path.rstrip("/").endswith("/art"):
         return ""
     query = parse_qs(parsed.query)
     return (query.get("key") or [""])[0].strip()
@@ -1390,6 +1390,14 @@ def delete_card_art(card):
     if not art_key.startswith(f"{get_art_user_prefix(card.get('userId', ''))}/"):
         return
     S3.delete_object(Bucket=ART_BUCKET_NAME, Key=art_key)
+
+
+def delete_replaced_card_art(existing_card, updated_card):
+    """Delete old saved artwork when a card no longer points at it."""
+    old_art_key = get_saved_art_key_from_url(existing_card.get("artUrl"))
+    new_art_key = get_saved_art_key_from_url(updated_card.get("artUrl"))
+    if old_art_key and old_art_key != new_art_key:
+        delete_card_art(existing_card)
 
 
 def copy_shared_card_image(source_card, target_user_id, target_card):
@@ -2146,6 +2154,9 @@ def save_card(user_id, body, card_id=None):
 
     TABLE.put_item(Item=item)
 
+    if existing_item:
+        delete_replaced_card_art(existing_item, item)
+
     if existing_item and image_bytes:
         old_key = existing_item.get("imageKey") or get_card_image_key(existing_item)
         if existing_item.get("imageBucket") == item.get("imageBucket") and old_key != item.get("imageKey"):
@@ -2159,6 +2170,7 @@ def delete_card(user_id, card_id):
     response = TABLE.get_item(Key={"userId": user_id, "cardId": card_id})
     item = response.get("Item")
     if item:
+        delete_card_art(item)
         delete_card_image(item)
     TABLE.delete_item(Key={"userId": user_id, "cardId": card_id})
 
