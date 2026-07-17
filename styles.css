@@ -286,6 +286,11 @@ h1 {
   z-index: 20;
 }
 
+.sets-page .toast-region {
+  left: 50%;
+  width: min(560px, calc(100vw - 32px));
+}
+
 .toast-message {
   align-items: start;
   background: #fff7f6;
@@ -302,6 +307,21 @@ h1 {
   padding: 14px 14px 14px 16px;
   pointer-events: auto;
   width: 100%;
+}
+
+.toast-message.toast-info {
+  background: #eef6f1;
+  border-color: #b7d5c4;
+  color: #24543d;
+}
+
+.toast-info .toast-close {
+  color: #24543d;
+}
+
+.toast-info .toast-close:hover,
+.toast-info .toast-close:focus-visible {
+  background: rgba(36, 84, 61, 0.1);
 }
 
 .toast-message p {

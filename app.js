@@ -256,13 +256,13 @@ function setSaveStatus(message) {
 }
 
 /** Shows a dismissible toast message for ten seconds. */
-function showToast(message) {
+function showToast(message, variant = "error") {
   const toast = document.createElement("div");
   const closeButton = document.createElement("button");
   const messageText = document.createElement("p");
   let timeoutId = 0;
 
-  toast.className = "toast-message";
+  toast.className = variant === "info" ? "toast-message toast-info" : "toast-message";
   messageText.textContent = message;
   closeButton.className = "toast-close";
   closeButton.type = "button";
@@ -279,6 +279,7 @@ function showToast(message) {
   elements.toastRegion.append(toast);
   timeoutId = window.setTimeout(closeToast, 10000);
 }
+
 function closeAccountMenu() {
   elements.accountMenu.classList.add("hidden");
   elements.accountMenuButton.setAttribute("aria-expanded", "false");
@@ -1004,6 +1005,7 @@ async function signIn() {
     setAuthStatus(`Signed in as ${email}`);
     setSaveStatus("Loading saved designs...");
     await Promise.all([refreshSavedCards(), refreshCardSets(), refreshImageGenerationSettings()]);
+    await checkSetShareResponses();
     await checkIncomingSetShares();
   } catch (error) {
     setAuthStatus(error.message);
@@ -1258,6 +1260,23 @@ async function checkIncomingSetShares() {
   }
 }
 
+/** Shows unviewed set-share decisions from recipients as informational toasts. */
+async function checkSetShareResponses() {
+  if (!state.idToken) return;
+
+  try {
+    const data = await apiFetch("/set-share-responses");
+    for (const response of data.responses || []) {
+      const recipientEmail = response.recipientEmail || "The recipient";
+      const decision = response.response === "accepted" ? "accepted" : "rejected";
+      const setLabel = (response.setCode || "DEFAULT") + " - " + (response.setName || "Untitled Set");
+      showToast(`${recipientEmail} has ${decision} the set you sent them (${setLabel})!`, "info");
+    }
+  } catch (error) {
+    setSaveStatus(error.message);
+  }
+}
+
 /** Accepts or rejects the incoming set copy currently shown in the modal. */
 async function respondToIncomingShare(accept) {
   const shareId = elements.incomingShareDialog.dataset.shareId;
@@ -1277,6 +1296,7 @@ async function respondToIncomingShare(accept) {
     await Promise.all([refreshSavedCards(), refreshCardSets()]);
     renderSavedCards();
     renderCardSets();
+    await checkSetShareResponses();
     await checkIncomingSetShares();
   } catch (error) {
     elements.incomingShareMessage.textContent = error.message;
@@ -1992,6 +2012,7 @@ async function initialize() {
   if (state.idToken) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
     await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets()]);
+    await checkSetShareResponses();
     await checkIncomingSetShares();
     await loadRequestedCardFromUrl();
   } else if (sessionStorage.getItem("cardDesignerIdToken")) {

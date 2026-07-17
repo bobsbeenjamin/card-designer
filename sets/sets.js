@@ -55,6 +55,7 @@ const elements = {
   setsBackButton: document.querySelector("#setsBackButton"),
   setsPageContent: document.querySelector("#setsPageContent"),
   setsStatus: document.querySelector("#setsStatus"),
+  toastRegion: document.querySelector("#toastRegion"),
   setsTitle: document.querySelector("#setsTitle"),
   signInButton: document.querySelector("#signInButton"),
   signInPanel: document.querySelector("#signInPanel"),
@@ -85,6 +86,31 @@ function isJwtExpired(token) {
 
 function setStatus(message) {
   elements.setsStatus.textContent = message;
+}
+
+/** Shows a dismissible toast message for ten seconds. */
+function showToast(message, variant = "error") {
+  const toast = document.createElement("div");
+  const closeButton = document.createElement("button");
+  const messageText = document.createElement("p");
+  let timeoutId = 0;
+
+  toast.className = variant === "info" ? "toast-message toast-info" : "toast-message";
+  messageText.textContent = message;
+  closeButton.className = "toast-close";
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "Close notification");
+  closeButton.textContent = "x";
+
+  const closeToast = () => {
+    window.clearTimeout(timeoutId);
+    toast.remove();
+  };
+
+  closeButton.addEventListener("click", closeToast);
+  toast.append(messageText, closeButton);
+  elements.toastRegion.append(toast);
+  timeoutId = window.setTimeout(closeToast, 10000);
 }
 
 function setAuthStatus(message) {
@@ -181,6 +207,7 @@ async function signIn() {
     renderAuthUi();
     setAuthStatus(`Signed in as ${email}`);
     await refreshSetsAndCards();
+    await checkSetShareResponses();
     await checkIncomingSetShares();
   } catch (error) {
     setAuthStatus(error.message);
@@ -193,6 +220,23 @@ function openIncomingShareDialog(share) {
   elements.incomingShareTitle.textContent = `Would you like to accept a copy of set ${share.setName || "Untitled Set"} from user ${share.senderEmail || "another user"}?`;
   elements.incomingShareMessage.textContent = "";
   if (!elements.incomingShareDialog.open) elements.incomingShareDialog.showModal();
+}
+
+/** Shows unviewed set-share decisions from recipients as informational toasts. */
+async function checkSetShareResponses() {
+  if (!state.idToken) return;
+
+  try {
+    const data = await apiFetch("/set-share-responses");
+    for (const response of data.responses || []) {
+      const recipientEmail = response.recipientEmail || "The recipient";
+      const decision = response.response === "accepted" ? "accepted" : "rejected";
+      const setLabel = (response.setCode || "DEFAULT") + " - " + (response.setName || "Untitled Set");
+      showToast(`${recipientEmail} has ${decision} the set you sent them (${setLabel})!`, "info");
+    }
+  } catch (error) {
+    setStatus(error.message);
+  }
 }
 
 /** Checks whether another user has sent this account a set copy. */
@@ -223,6 +267,7 @@ async function respondToIncomingShare(accept) {
     elements.incomingShareDialog.close();
     await refreshSetsAndCards();
     setStatus(accept ? "Shared set accepted" : "Shared set declined");
+    await checkSetShareResponses();
     await checkIncomingSetShares();
   } catch (error) {
     elements.incomingShareMessage.textContent = error.message;
@@ -908,6 +953,7 @@ async function initialize() {
   setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
   try {
     await refreshSetsAndCards();
+    await checkSetShareResponses();
     await checkIncomingSetShares();
   } catch (error) {
     setStatus(error.message);

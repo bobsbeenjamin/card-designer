@@ -320,6 +320,12 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /set-shares
             Method: GET
+        ListSetShareResponses:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /set-share-responses
+            Method: GET
         CreateSet:
           Type: HttpApi
           Properties:

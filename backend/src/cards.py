@@ -135,6 +135,9 @@ def handler(event, _context):
         if method == "GET" and route_key == "GET /set-shares":
             return ok(list_pending_set_shares(user_id))
 
+        if method == "GET" and route_key == "GET /set-share-responses":
+            return ok(list_set_share_responses(user_id))
+
         if method == "POST" and route_key == "POST /sets":
             return ok(save_set(user_id, read_body(event)), status=201)
 
@@ -156,11 +159,11 @@ def handler(event, _context):
 
         if method == "POST" and route_key == "POST /set-shares/{shareId}/accept":
             share_id = event["pathParameters"]["shareId"]
-            return ok(accept_set_share(user_id, share_id))
+            return ok(accept_set_share(user_id, share_id, user_email))
 
         if method == "DELETE" and route_key == "DELETE /set-shares/{shareId}":
             share_id = event["pathParameters"]["shareId"]
-            return ok(reject_set_share(user_id, share_id))
+            return ok(reject_set_share(user_id, share_id, user_email))
 
         if method == "POST" and route_key == "POST /sets/{setCode}/cards/reorder":
             set_code = event["pathParameters"]["setCode"]
@@ -1085,7 +1088,7 @@ def list_sets(user_id):
     """Return all accepted sets owned by the user."""
     ensure_default_set_if_missing(user_id)
     response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
-    sets = [item for item in response.get("Items", []) if not item.get("pendingShare")]
+    sets = [item for item in response.get("Items", []) if not item.get("pendingShare") and item.get("recordType") != "shareResponse"]
     sets.sort(key=lambda item: item.get("code", ""))
     return {"sets": sets}
 
@@ -1388,6 +1391,55 @@ def list_pending_set_shares(user_id):
     return {"shares": shares}
 
 
+def record_set_share_response(card_set, recipient_email, decision):
+    """Store a recipient's set-share decision for the sending user.
+
+    Args:
+        card_set: Pending recipient set containing the sender and share metadata.
+        recipient_email: Email address of the user who responded.
+        decision: Either accepted or rejected.
+    """
+    sender_user_id = str(card_set.get("senderUserId") or "").strip()
+    share_id = str(card_set.get("shareId") or "").strip()
+    if not sender_user_id or not share_id:
+        return
+
+    response_item = {
+        "userId": sender_user_id,
+        "code": f"__SHARE_RESPONSE__{share_id}",
+        "recordType": "shareResponse",
+        "shareId": share_id,
+        "setCode": card_set.get("originalSetCode") or card_set.get("code") or "DEFAULT",
+        "setName": card_set.get("name") or "Untitled Set",
+        "recipientEmail": recipient_email or card_set.get("recipientEmail") or "another user",
+        "response": decision,
+        "respondedAt": int(time.time()),
+    }
+    SETS_TABLE.put_item(Item=response_item)
+
+
+def list_set_share_responses(user_id):
+    """Return and consume unviewed set-share decisions for the signed-in user."""
+    response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
+    response_items = [
+        item for item in response.get("Items", []) if item.get("recordType") == "shareResponse"
+    ]
+    response_items.sort(key=lambda item: item.get("respondedAt", 0))
+    responses = [
+        {
+            "shareId": item.get("shareId", ""),
+            "setCode": item.get("setCode", "DEFAULT"),
+            "setName": item.get("setName", "Untitled Set"),
+            "recipientEmail": item.get("recipientEmail", "another user"),
+            "response": item.get("response", "rejected"),
+        }
+        for item in response_items
+    ]
+    for item in response_items:
+        SETS_TABLE.delete_item(Key={"userId": user_id, "code": item["code"]})
+    return {"responses": responses}
+
+
 def get_pending_share_set(user_id, share_id):
     """Return the pending set record for a share id."""
     response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
@@ -1397,8 +1449,14 @@ def get_pending_share_set(user_id, share_id):
     raise ValueError("Shared set was not found.")
 
 
-def accept_set_share(user_id, share_id):
-    """Accept a pending shared set and make it editable."""
+def accept_set_share(user_id, share_id, recipient_email):
+    """Accept a pending shared set and make it editable.
+
+    Args:
+        user_id: Authenticated recipient user id.
+        share_id: Pending set-share identifier.
+        recipient_email: Email address of the responding recipient.
+    """
     card_set = get_pending_share_set(user_id, share_id)
     SETS_TABLE.update_item(
         Key={"userId": user_id, "code": card_set["code"]},
@@ -1411,13 +1469,20 @@ def accept_set_share(user_id, share_id):
                 Key={"userId": user_id, "cardId": card["cardId"]},
                 UpdateExpression="REMOVE pendingShare, shareId, senderUserId, senderEmail, originalCardId",
             )
+    record_set_share_response(card_set, recipient_email, "accepted")
     card_set.pop("pendingShare", None)
     card_set.pop("shareId", None)
     return {"accepted": True, "set": card_set}
 
 
-def reject_set_share(user_id, share_id):
-    """Delete a pending shared set copy and its copied cards."""
+def reject_set_share(user_id, share_id, recipient_email):
+    """Delete a pending shared set copy and its copied cards.
+
+    Args:
+        user_id: Authenticated recipient user id.
+        share_id: Pending set-share identifier.
+        recipient_email: Email address of the responding recipient.
+    """
     card_set = get_pending_share_set(user_id, share_id)
     deleted_cards = 0
     for card in get_cards_for_set(user_id, card_set["code"]):
@@ -1427,6 +1492,7 @@ def reject_set_share(user_id, share_id):
             TABLE.delete_item(Key={"userId": user_id, "cardId": card["cardId"]})
             deleted_cards += 1
     SETS_TABLE.delete_item(Key={"userId": user_id, "code": card_set["code"]})
+    record_set_share_response(card_set, recipient_email, "rejected")
     return {"rejected": True, "shareId": share_id, "deletedCards": deleted_cards}
 
 
