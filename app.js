@@ -209,6 +209,20 @@ const elements = {
   rejectIncomingShareButton: document.querySelector("#rejectIncomingShareButton"),
 };
 
+const setSharing = createSetSharingController({
+  elements,
+  state,
+  apiFetch,
+  setStatus: setSaveStatus,
+  showToast,
+  onBackgroundError: setSaveStatus,
+  refreshAfterResponse: async () => {
+    await Promise.all([refreshSavedCards(), refreshCardSets()]);
+    renderSavedCards();
+    renderCardSets();
+  },
+});
+
 function getRarityColor(rarity) {
   return rarityColors[rarity] || rarityColors.common || "currentColor";
 }
@@ -1011,8 +1025,8 @@ async function signIn() {
     setAuthStatus(`Signed in as ${email}`);
     setSaveStatus("Loading saved designs...");
     await Promise.all([refreshSavedCards(), refreshCardSets(), refreshImageGenerationSettings()]);
-    await checkSetShareResponses();
-    await checkIncomingSetShares();
+    await setSharing.checkSetShareResponses();
+    await setSharing.checkIncomingSetShares();
   } catch (error) {
     setAuthStatus(error.message);
   }
@@ -1243,125 +1257,6 @@ async function makeSelectedSetPublic() {
   } catch (error) {
     setSaveStatus(error.message);
     updateMakeSetPublicButton();
-  }
-}
-
-/** Configures the recipient's available choices for copied set conflicts. */
-function configureIncomingShareChoices(share) {
-  const codeConflict = Boolean(share.conflicts?.code);
-  const nameConflict = Boolean(share.conflicts?.name);
-  const setCode = share.setCode || "DEFAULT";
-  const setName = share.setName || "Untitled Set";
-
-  elements.incomingShareDialog.dataset.requestedSetName = setName;
-  elements.incomingShareDialog.dataset.codeConflict = String(codeConflict);
-  elements.incomingShareDialog.dataset.nameConflict = String(nameConflict);
-  elements.incomingShareCodeChoice.classList.toggle("hidden", !codeConflict);
-  elements.incomingShareNameChoice.classList.toggle("hidden", !nameConflict);
-  elements.incomingShareCodeChoiceText.textContent = "A set with code " + setCode + " already exists.";
-  elements.incomingShareNameChoiceText.textContent = "A set named " + setName + " already exists.";
-  elements.incomingShareCodeResolution.value = "";
-  elements.incomingShareNameResolution.value = "";
-  syncIncomingShareNameChoice();
-}
-
-/** Updates name controls when the recipient chooses to overwrite a duplicate code. */
-function syncIncomingShareNameChoice() {
-  const codeOverwrite = elements.incomingShareCodeResolution.value === "overwrite";
-  const nameConflict = elements.incomingShareDialog.dataset.nameConflict === "true";
-  const nameLabel = elements.incomingShareNameChoice.querySelector("label");
-
-  if (!nameConflict) return;
-  nameLabel.classList.toggle("hidden", codeOverwrite);
-  elements.incomingShareNameChoiceText.textContent = codeOverwrite
-    ? "The set name will be overwritten"
-    : `A set named ${elements.incomingShareDialog.dataset.requestedSetName || "Untitled Set"} already exists.`;
-  if (codeOverwrite) elements.incomingShareNameResolution.value = "keep";
-  else elements.incomingShareNameResolution.value = "";
-}
-
-/** Returns the selected resolution choices for the incoming copied set. */
-function getIncomingShareChoices() {
-  const choices = {};
-  if (elements.incomingShareDialog.dataset.codeConflict === "true") {
-    choices.codeResolution = elements.incomingShareCodeResolution.value;
-  }
-  if (
-    elements.incomingShareDialog.dataset.nameConflict === "true" &&
-    elements.incomingShareCodeResolution.value !== "overwrite"
-  ) {
-    choices.nameResolution = elements.incomingShareNameResolution.value;
-  }
-  return choices;
-}
-
-/** Opens a modal for one incoming shared set copy. */
-function openIncomingShareDialog(share) {
-  elements.incomingShareDialog.dataset.shareId = share.shareId || "";
-  elements.incomingShareTitle.textContent = "Would you like to accept a copy of set " + (share.setName || "Untitled Set") + " from user " + (share.senderEmail || "another user") + "?";
-  elements.incomingShareMessage.textContent = "";
-  configureIncomingShareChoices(share);
-  if (!elements.incomingShareDialog.open) elements.incomingShareDialog.showModal();
-}
-
-/** Checks whether another user has sent this account a set copy. */
-async function checkIncomingSetShares() {
-  if (!state.idToken) return;
-  try {
-    const data = await apiFetch("/set-shares");
-    const share = (data.shares || [])[0];
-    if (share) openIncomingShareDialog(share);
-  } catch (error) {
-    setSaveStatus(error.message);
-  }
-}
-
-/** Shows unviewed set-share decisions from recipients as informational toasts. */
-async function checkSetShareResponses() {
-  if (!state.idToken) return;
-
-  try {
-    const data = await apiFetch("/set-share-responses");
-    for (const response of data.responses || []) {
-      const recipientEmail = response.recipientEmail || "The recipient";
-      const decision = response.response === "accepted" ? "accepted" : "rejected";
-      const setLabel = (response.setCode || "DEFAULT") + " - " + (response.setName || "Untitled Set");
-      showToast(`${recipientEmail} has ${decision} the set you sent them (${setLabel})!`, "info");
-    }
-  } catch (error) {
-    setSaveStatus(error.message);
-  }
-}
-
-/** Accepts or rejects the incoming set copy currently shown in the modal. */
-async function respondToIncomingShare(accept) {
-  const shareId = elements.incomingShareDialog.dataset.shareId;
-  if (!shareId) return;
-
-  try {
-    elements.acceptIncomingShareButton.disabled = true;
-    elements.rejectIncomingShareButton.disabled = true;
-    if (accept) {
-      await apiFetch(`/set-shares/${encodeURIComponent(shareId)}/accept`, {
-        method: "POST",
-        body: JSON.stringify(getIncomingShareChoices()),
-      });
-      setSaveStatus("Shared set accepted");
-    } else {
-      await apiFetch(`/set-shares/${encodeURIComponent(shareId)}`, { method: "DELETE" });
-      setSaveStatus("Shared set declined");
-    }
-    elements.incomingShareDialog.close();
-    await Promise.all([refreshSavedCards(), refreshCardSets()]);
-    renderSavedCards();
-    renderCardSets();
-    await checkSetShareResponses();
-    await checkIncomingSetShares();
-  } catch (error) {
-    elements.incomingShareMessage.textContent = error.message;
-  } finally {
-    elements.acceptIncomingShareButton.disabled = false;
-    elements.rejectIncomingShareButton.disabled = false;
   }
 }
 
@@ -2032,10 +1927,7 @@ function attachEvents() {
   elements.saveImageGenerationSettingsButton.addEventListener("click", saveImageGenerationSettings);
   elements.accountMenuButton.addEventListener("click", toggleAccountMenu);
   elements.signOutButton.addEventListener("click", signOut);
-  elements.acceptIncomingShareButton.addEventListener("click", () => respondToIncomingShare(true));
-  elements.rejectIncomingShareButton.addEventListener("click", () => respondToIncomingShare(false));
-  elements.incomingShareCodeResolution.addEventListener("change", syncIncomingShareNameChoice);
-  elements.incomingShareForm.addEventListener("submit", (event) => event.preventDefault());
+  setSharing.attachEvents();
   document.addEventListener("click", (event) => {
     if (!elements.signedInPanel.contains(event.target)) closeAccountMenu();
   });
@@ -2072,8 +1964,8 @@ async function initialize() {
   if (state.idToken) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
     await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets()]);
-    await checkSetShareResponses();
-    await checkIncomingSetShares();
+    await setSharing.checkSetShareResponses();
+    await setSharing.checkIncomingSetShares();
     await loadRequestedCardFromUrl();
   } else if (sessionStorage.getItem("cardDesignerIdToken")) {
     clearAuthSession();
