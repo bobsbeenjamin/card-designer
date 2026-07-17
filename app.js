@@ -5,6 +5,7 @@ let rarityColors = {};
 let rarityLabels = {};
 
 const imageProviderStorageKey = "cardDesignerImageProvider";
+const isRenderWorkspace = new URLSearchParams(window.location.search).get("render") === "card";
 
 const imageProviderLabels = {
   openai: "OpenAI",
@@ -1996,13 +1997,15 @@ async function initialize() {
   if (state.idToken && !isJwtExpired(state.idToken)) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
     await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets()]);
-    await setSharing.checkSetShareResponses();
-    await setSharing.checkIncomingSetShares();
-    await loadRequestedCardFromUrl();
+    if (!isRenderWorkspace) {
+      await setSharing.checkSetShareResponses();
+      await setSharing.checkIncomingSetShares();
+      await loadRequestedCardFromUrl();
+    }
   } else if (sessionStorage.getItem("cardDesignerIdToken") || sessionStorage.getItem("cardDesignerRefreshToken")) {
     clearAuthSession();
     setAuthStatus("Your session expired. Sign in again.");
   }
 }
 
-initialize();
+window.cardDesignerReady = initialize();

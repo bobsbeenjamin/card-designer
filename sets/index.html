@@ -30,7 +30,13 @@
           <p id="setsStatus" class="status-line">Sign in to view your sets.</p>
         </div>
         <div class="sets-header-actions">
-
+          <button
+            id="generateArtButton"
+            class="button subtle hidden"
+            type="button"
+            title="Generate card art using AI"
+            aria-label="Generate card art using AI"
+          >Generate Art</button>
           <button
             id="setDetailExportButton"
             class="set-export-button hidden"
@@ -70,6 +76,9 @@
 
     <div id="toastRegion" class="toast-region sets-toast-region" aria-live="polite" aria-atomic="true"></div>
 
+    <!-- Hidden iframe for rendering cards offscreen -->
+    <iframe id="cardRenderFrame" class="card-render-frame" title="Card render workspace"></iframe>
+
     <dialog id="exportSetDialog" class="modal-dialog export-set-dialog" aria-labelledby="exportSetTitle">
       <form id="exportSetForm" class="modal-card export-set-card">
         <button id="closeExportSetXButton" class="modal-close-button" type="button" aria-label="Close export dialog">x</button>
@@ -96,6 +105,19 @@
         <div class="modal-actions two-up">
           <button id="confirmExportSetButton" class="button primary" type="button">Export</button>
           <button id="closeExportSetButton" class="button subtle" type="button">Close</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="generateArtDialog" class="modal-dialog" aria-labelledby="generateArtTitle">
+      <form class="modal-card export-set-card">
+        <button id="closeGenerateArtButton" class="modal-close-button" type="button" aria-label="Close generate art dialog">x</button>
+        <h2 id="generateArtTitle">Generate card art using AI</h2>
+        <p>Use your selected AI generative image provider to fill in art for all cards in this set that are missing art</p>
+        <p id="generateArtStatus" class="status-line"></p>
+        <div class="modal-actions two-up">
+          <button id="confirmGenerateArtButton" class="button primary" type="button">Generate Art</button>
+          <button id="cancelGenerateArtButton" class="button subtle" type="button">Cancel</button>
         </div>
       </form>
     </dialog>

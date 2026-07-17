@@ -1006,6 +1006,17 @@ input[type="color"] {
   width: 16px;
 }
 
+.card-render-frame {
+  border: 0;
+  height: 1000px;
+  left: -1600px;
+  opacity: 0;
+  pointer-events: none;
+  position: fixed;
+  top: 0;
+  width: 1440px;
+}
+
 .card-library-grid {
   display: grid;
   gap: 18px;

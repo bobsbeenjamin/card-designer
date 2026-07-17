@@ -7,6 +7,22 @@ const STANDARD_CARD_DIMENSIONS = {
 };
 const SOLID_BLACK_CARD_BACK_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR42mNkYGBgAAAABQABXvMqOgAAAABJRU5ErkJggg==";
 
+const imageProviderStorageKey = "cardDesignerImageProvider";
+const imageProviders = new Set([
+  "openai",
+  "gemini",
+  "aws",
+  "midjourney",
+  "claude",
+  "morphic",
+  "leonardo",
+  "fal",
+  "ace",
+  "runware",
+  "firefly",
+  "stability",
+]);
+
 const state = {
   idToken: getStoredIdToken(),
   refreshToken: getStoredRefreshToken(),
@@ -19,6 +35,7 @@ const state = {
   exportSetCode: "",
   renameSetCode: "",
   sharePreflightKey: "",
+  cardRendererReadyPromise: null,
 };
 
 const elements = {
@@ -42,6 +59,13 @@ const elements = {
   exportSetPublicInput: document.querySelector("#exportSetPublicInput"),
   exportSetPublicLabel: document.querySelector("#exportSetPublicLabel"),
   exportSetTitle: document.querySelector("#exportSetTitle"),
+  generateArtButton: document.querySelector("#generateArtButton"),
+  generateArtDialog: document.querySelector("#generateArtDialog"),
+  closeGenerateArtButton: document.querySelector("#closeGenerateArtButton"),
+  confirmGenerateArtButton: document.querySelector("#confirmGenerateArtButton"),
+  cancelGenerateArtButton: document.querySelector("#cancelGenerateArtButton"),
+  generateArtStatus: document.querySelector("#generateArtStatus"),
+  cardRenderFrame: document.querySelector("#cardRenderFrame"),
   incomingShareDialog: document.querySelector("#incomingShareDialog"),
   incomingShareForm: document.querySelector("#incomingShareForm"),
   incomingShareMessage: document.querySelector("#incomingShareMessage"),
@@ -460,6 +484,142 @@ async function saveJsonFile(fileName, jsonText) {
   URL.revokeObjectURL(url);
 }
 
+/** Opens the Generate Art modal. */
+function openGenerateArtDialog() {
+  elements.generateArtStatus.textContent = "";
+  elements.confirmGenerateArtButton.disabled = false;
+  elements.cancelGenerateArtButton.disabled = false;
+  elements.closeGenerateArtButton.disabled = false;
+  elements.generateArtDialog.showModal();
+}
+
+/** Closes the Generate Art modal. */
+function closeGenerateArtDialog() {
+  elements.generateArtDialog.close();
+}
+
+/** Returns the locally selected image provider when one has been chosen. */
+function getSelectedImageProvider() {
+  try {
+    const provider = localStorage.getItem(imageProviderStorageKey) || "";
+    return imageProviders.has(provider) ? provider : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+/** Converts an app-relative art response into the URL saved on cards. */
+function getFullArtUrl(artUrl) {
+  if (!artUrl) return "";
+  return artUrl.startsWith("http") ? artUrl : `${backendConfig.apiUrl}${artUrl}`;
+}
+
+/** Sets the Generate Art modal busy state while batch work is running. */
+function setGenerateArtBusy(isBusy) {
+  elements.confirmGenerateArtButton.disabled = isBusy;
+  elements.cancelGenerateArtButton.disabled = isBusy;
+  elements.closeGenerateArtButton.disabled = isBusy;
+}
+
+/** Waits for the hidden designer iframe to expose its rendering API. */
+async function getCardRendererWindow() {
+  if (!state.cardRendererReadyPromise) {
+    state.cardRendererReadyPromise = new Promise((resolve, reject) => {
+      const frame = elements.cardRenderFrame;
+      const finishLoading = async () => {
+        try {
+          const renderer = frame.contentWindow;
+          if (!renderer) throw new Error("Card renderer is unavailable.");
+          if (renderer.cardDesignerReady) await renderer.cardDesignerReady;
+          if (!renderer.applyCardData || !renderer.setArtSource || !renderer.getCardPngDataUrl) {
+            throw new Error("Card renderer did not finish loading.");
+          }
+          resolve(renderer);
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      frame.addEventListener("load", finishLoading, { once: true });
+      frame.addEventListener("error", () => reject(new Error("Card renderer failed to load.")), { once: true });
+      if (!frame.getAttribute("src")) frame.src = "../?render=card";
+    });
+  }
+
+  return state.cardRendererReadyPromise;
+}
+
+/** Renders an updated card through the main designer preview. */
+async function renderUpdatedCardPng(card) {
+  const renderer = await getCardRendererWindow();
+  renderer.applyCardData(card);
+  if (card.artUrl) await renderer.setArtSource(card.artUrl);
+  renderer.syncCard();
+  return renderer.getCardPngDataUrl();
+}
+
+/** Loads full card records for a set because summaries do not include art URLs. */
+async function getFullCardsInSet(setCode) {
+  const cardSummaries = getCardsInSet(setCode);
+  const cardResponses = await Promise.all(cardSummaries.map((card) => apiFetch(`/cards/${encodeURIComponent(card.cardId)}`)));
+  return cardResponses.map((response) => response.card).filter(Boolean);
+}
+
+/** Generates and stores art for a single missing-art card. */
+async function generateAndSaveCardArt(card, provider) {
+  const generationBody = {
+    cardName: card.name || "Untitled Card",
+    flavorText: card.flavorText || "",
+    setCode: card.setCode || state.currentSetCode || "DEFAULT",
+  };
+  if (provider) generationBody.provider = provider;
+
+  const generatedArt = await apiFetch("/art/generate", {
+    method: "POST",
+    body: JSON.stringify(generationBody),
+  });
+  const updatedCard = { ...card, artUrl: getFullArtUrl(generatedArt.artUrl) };
+  updatedCard.cardImagePng = await renderUpdatedCardPng(updatedCard);
+
+  const data = await apiFetch(`/cards/${encodeURIComponent(card.cardId)}`, {
+    method: "PUT",
+    body: JSON.stringify(updatedCard),
+  });
+  return data.card || updatedCard;
+}
+
+/** Fills in AI art for each card in the current set that has no Image URL. */
+async function generateMissingSetArt() {
+  const setCode = state.currentSetCode || "DEFAULT";
+  setGenerateArtBusy(true);
+  try {
+    elements.generateArtStatus.textContent = "Checking cards for missing art...";
+    const cardsMissingArt = (await getFullCardsInSet(setCode)).filter((card) => !String(card.artUrl || "").trim());
+    if (!cardsMissingArt.length) {
+      elements.generateArtStatus.textContent = "Every card in this set already has art.";
+      return;
+    }
+
+    const provider = getSelectedImageProvider();
+    for (const [index, card] of cardsMissingArt.entries()) {
+      elements.generateArtStatus.textContent = `Generating ${index + 1} of ${cardsMissingArt.length}: ${card.name || "Untitled Card"}`;
+      const savedCard = await generateAndSaveCardArt(card, provider);
+      const currentCard = state.savedCards.find((saved) => saved.cardId === savedCard.cardId);
+      if (currentCard) Object.assign(currentCard, savedCard);
+    }
+
+    await refreshSetsAndCards(false);
+    renderSetCardGrid(setCode);
+    closeGenerateArtDialog();
+    showToast(`Generated art for ${cardsMissingArt.length} card${cardsMissingArt.length === 1 ? "" : "s"}.`, "info");
+  } catch (error) {
+    elements.generateArtStatus.textContent = "Art generation stopped. See the error popup for details.";
+    showToast(error.message);
+  } finally {
+    setGenerateArtBusy(false);
+  }
+}
+
 /** Opens the export modal for a selected set. */
 function openExportSetDialog(cardSet) {
   state.exportSetCode = cardSet.code || "DEFAULT";
@@ -700,6 +860,7 @@ function renderSetLibraryList() {
   state.currentSetCode = "";
   elements.setsTitle.textContent = "My Sets";
   elements.setsCloseButton.href = "../";
+  elements.generateArtButton.classList.add("hidden");
   elements.setDetailExportButton.classList.add("hidden");
   elements.setDetailRenameButton.classList.add("hidden");
   elements.setLibraryContent.innerHTML = "";
@@ -844,6 +1005,7 @@ function renderSetCardGrid(setCode) {
   const cards = getCardsInSet(setCode);
   elements.setsTitle.textContent = cardSet ? `${cardSet.code} - ${cardSet.name || "Untitled Set"}` : setCode;
   elements.setsCloseButton.href = "./";
+  elements.generateArtButton.classList.toggle("hidden", !cardSet);
   elements.setDetailExportButton.classList.toggle("hidden", !cardSet);
   elements.setDetailRenameButton.classList.toggle("hidden", !cardSet);
   elements.setLibraryContent.innerHTML = "";
@@ -919,6 +1081,10 @@ function attachEvents() {
   setSharing.attachEvents();
   elements.closeExportSetButton.addEventListener("click", closeExportSetDialog);
   elements.closeExportSetXButton.addEventListener("click", closeExportSetDialog);
+  elements.generateArtButton.addEventListener("click", openGenerateArtDialog);
+  elements.closeGenerateArtButton.addEventListener("click", closeGenerateArtDialog);
+  elements.cancelGenerateArtButton.addEventListener("click", closeGenerateArtDialog);
+  elements.confirmGenerateArtButton.addEventListener("click", generateMissingSetArt);
   elements.confirmExportSetButton.addEventListener("click", exportSelectedSet);
   elements.exportFormatInput.addEventListener("change", syncExportFormatUi);
   elements.exportSetPublicInput.addEventListener("change", handleExportPublicChange);
