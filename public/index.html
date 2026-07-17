@@ -38,6 +38,15 @@
         publicStatus.textContent = message;
       }
 
+      /** Formats a stored collector number with the public set total. */
+      function formatCollectorNumber(number, total) {
+        const rawValue = String(number || "").trim();
+        const cardNumber = rawValue.split("/", 1)[0].trim();
+        const parsedNumber = Number.parseInt(cardNumber, 10);
+        const normalizedNumber = Number.isFinite(parsedNumber) && parsedNumber > 0 ? parsedNumber : 1;
+        return `${normalizedNumber}/${Math.max(total, 1)}`;
+      }
+
       function replaceMissingImage(image, card) {
         const empty = document.createElement("div");
         empty.className = "library-card-empty";
@@ -62,7 +71,7 @@
         zoomDialog.showModal();
       }
 
-      function renderCard(card) {
+      function renderCard(card, total) {
         const tile = document.createElement("button");
         tile.className = "library-card-tile";
         tile.type = "button";
@@ -84,7 +93,7 @@
 
         const label = document.createElement("span");
         label.className = "library-card-name";
-        label.textContent = card.collectorNumber ? `${card.collectorNumber} ${card.name || "Untitled Card"}` : card.name || "Untitled Card";
+        label.textContent = `[${formatCollectorNumber(card.collectorNumber, total)}] ${card.name || "Untitled Card"}`;
         tile.append(label);
         return tile;
       }
@@ -107,7 +116,7 @@
         document.title = title;
         pageTitle.textContent = title;
         setMeta.textContent = cardSet.code ? `${cardSet.code} - ${cards.length} cards` : `${cards.length} cards`;
-        cardGrid.replaceChildren(...cards.map(renderCard));
+        cardGrid.replaceChildren(...cards.map((card) => renderCard(card, cards.length)));
         setStatus(cards.length ? "" : "No cards are available in this set.");
       }
 

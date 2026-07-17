@@ -777,7 +777,7 @@ function createLibraryCardTile(card, setCode) {
 
   const label = document.createElement("span");
   label.className = "library-card-name";
-  label.textContent = `${formatCollectorNumber(card.collectorNumber, setCode)} ${card.name || "Untitled Card"}`;
+  label.textContent = `[${formatCollectorNumber(card.collectorNumber, setCode)}] ${card.name || "Untitled Card"}`;
   tile.append(label);
   return tile;
 }
