@@ -1341,6 +1341,33 @@ input[type="color"] {
   min-width: 0;
 }
 
+.sets-close-button {
+  align-items: center;
+  background: #b42318;
+  border: 1px solid #8f1d16;
+  border-radius: 8px;
+  color: #ffffff;
+  display: grid;
+  flex: 0 0 38px;
+  font-size: 1.35rem;
+  font-weight: 900;
+  height: 38px;
+  justify-content: center;
+  line-height: 1;
+  min-height: 38px;
+  padding: 0;
+  text-decoration: none;
+  width: 38px;
+}
+
+.sets-close-button:hover,
+.sets-close-button:focus-visible {
+  background: #8f1d16;
+  color: #ffffff;
+  outline: 0;
+  text-decoration: none;
+}
+
 .sets-header-actions {
   align-items: center;
   display: flex;

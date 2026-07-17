@@ -63,7 +63,7 @@ const elements = {
   setDetailExportButton: document.querySelector("#setDetailExportButton"),
   setDetailRenameButton: document.querySelector("#setDetailRenameButton"),
   setLibraryContent: document.querySelector("#setLibraryContent"),
-  setsBackButton: document.querySelector("#setsBackButton"),
+  setsCloseButton: document.querySelector("#setsCloseButton"),
   setsPageContent: document.querySelector("#setsPageContent"),
   setsStatus: document.querySelector("#setsStatus"),
   toastRegion: document.querySelector("#toastRegion"),
@@ -168,7 +168,6 @@ function renderAuthUi() {
   elements.signInPanel.classList.toggle("hidden", signedIn);
   elements.setsPageContent.classList.toggle("hidden", !signedIn);
   if (!signedIn) {
-    elements.setsBackButton.classList.add("hidden");
     elements.setsTitle.textContent = "My Sets";
   }
 }
@@ -700,7 +699,7 @@ function createSetDeleteButton(cardSet) {
 function renderSetLibraryList() {
   state.currentSetCode = "";
   elements.setsTitle.textContent = "My Sets";
-  elements.setsBackButton.classList.add("hidden");
+  elements.setsCloseButton.href = "../";
   elements.setDetailExportButton.classList.add("hidden");
   elements.setDetailRenameButton.classList.add("hidden");
   elements.setLibraryContent.innerHTML = "";
@@ -844,7 +843,7 @@ function renderSetCardGrid(setCode) {
   const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === setCode);
   const cards = getCardsInSet(setCode);
   elements.setsTitle.textContent = cardSet ? `${cardSet.code} - ${cardSet.name || "Untitled Set"}` : setCode;
-  elements.setsBackButton.classList.remove("hidden");
+  elements.setsCloseButton.href = "./";
   elements.setDetailExportButton.classList.toggle("hidden", !cardSet);
   elements.setDetailRenameButton.classList.toggle("hidden", !cardSet);
   elements.setLibraryContent.innerHTML = "";
@@ -940,10 +939,7 @@ function attachEvents() {
     const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === state.currentSetCode);
     if (cardSet) openExportSetDialog(cardSet);
   });
-  elements.setsBackButton.addEventListener("click", () => {
-    renderSetLibraryList();
-    window.history.replaceState({}, "", new URL("./", window.location.href));
-  });
+
   elements.deleteSetDialog.addEventListener("close", () => {
     if (elements.deleteSetDialog.returnValue === "delete") {
       deleteSet(elements.confirmDeleteSetButton.dataset.setCode);
