@@ -69,12 +69,17 @@ function rememberImageProvider(provider) {
 }
 
 function getStoredIdToken() {
-  const token = sessionStorage.getItem("cardDesignerIdToken") || "";
-  return isJwtExpired(token) ? "" : token;
+  return sessionStorage.getItem("cardDesignerIdToken") || "";
+}
+
+/** Returns the refresh token saved for the current browser session. */
+function getStoredRefreshToken() {
+  return sessionStorage.getItem("cardDesignerRefreshToken") || "";
 }
 
 const state = {
   idToken: getStoredIdToken(),
+  refreshToken: getStoredRefreshToken(),
   email: sessionStorage.getItem("cardDesignerEmail") || "",
   currentCardId: "",
   savedCards: [],
@@ -1017,8 +1022,10 @@ async function signIn() {
     });
 
     state.idToken = data.AuthenticationResult.IdToken;
+    state.refreshToken = data.AuthenticationResult.RefreshToken || state.refreshToken;
     state.email = email;
     sessionStorage.setItem("cardDesignerIdToken", state.idToken);
+    sessionStorage.setItem("cardDesignerRefreshToken", state.refreshToken);
     sessionStorage.setItem("cardDesignerEmail", state.email);
     elements.passwordInput.value = "";
     updateAccountUi();
@@ -1050,9 +1057,30 @@ function isJwtExpired(token) {
   return !payload?.exp || payload.exp * 1000 <= Date.now();
 }
 
+/** Refreshes the short-lived ID token using the Cognito refresh token. */
+async function refreshAuthSession() {
+  if (!state.refreshToken) return false;
+
+  try {
+    const data = await cognitoRequest("InitiateAuth", {
+      ClientId: backendConfig.userPoolClientId,
+      AuthFlow: "REFRESH_TOKEN_AUTH",
+      AuthParameters: { REFRESH_TOKEN: state.refreshToken },
+    });
+    state.idToken = data.AuthenticationResult.IdToken;
+    state.refreshToken = data.AuthenticationResult.RefreshToken || state.refreshToken;
+    sessionStorage.setItem("cardDesignerIdToken", state.idToken);
+    sessionStorage.setItem("cardDesignerRefreshToken", state.refreshToken);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 /** Clears local auth/session state and saved library state. */
 function clearAuthSession() {
   state.idToken = "";
+  state.refreshToken = "";
   state.email = "";
   state.currentCardId = "";
   state.savedCards = [];
@@ -1060,6 +1088,7 @@ function clearAuthSession() {
   state.imageGenerationSettings = null;
   state.imageProviderCredentialsExpanded = false;
   sessionStorage.removeItem("cardDesignerIdToken");
+  sessionStorage.removeItem("cardDesignerRefreshToken");
   sessionStorage.removeItem("cardDesignerEmail");
   updateAccountUi();
   renderSavedCards();
@@ -1075,7 +1104,7 @@ function signOut() {
 
 /** Calls the authenticated backend API and normalizes errors. */
 async function apiFetch(path, options = {}) {
-  if (!state.idToken || isJwtExpired(state.idToken)) {
+  if (!state.idToken || (isJwtExpired(state.idToken) && !(await refreshAuthSession()))) {
     clearAuthSession();
     throw new Error("Your session expired. Sign in again to load saved designs.");
   }
@@ -1961,13 +1990,16 @@ async function initialize() {
   renderSavedCards();
   renderCardSets();
   updateAccountUi();
-  if (state.idToken) {
+  if (state.refreshToken && (!state.idToken || isJwtExpired(state.idToken))) {
+    await refreshAuthSession();
+  }
+  if (state.idToken && !isJwtExpired(state.idToken)) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
     await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets()]);
     await setSharing.checkSetShareResponses();
     await setSharing.checkIncomingSetShares();
     await loadRequestedCardFromUrl();
-  } else if (sessionStorage.getItem("cardDesignerIdToken")) {
+  } else if (sessionStorage.getItem("cardDesignerIdToken") || sessionStorage.getItem("cardDesignerRefreshToken")) {
     clearAuthSession();
     setAuthStatus("Your session expired. Sign in again.");
   }
