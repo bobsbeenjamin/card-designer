@@ -138,6 +138,10 @@ def handler(event, _context):
         if method == "POST" and route_key == "POST /sets":
             return ok(save_set(user_id, read_body(event)), status=201)
 
+        if method == "PUT" and route_key == "PUT /sets/{setCode}":
+            set_code = event["pathParameters"]["setCode"]
+            return ok(rename_set(user_id, set_code, read_body(event)))
+
         if method == "DELETE" and route_key == "DELETE /sets/{setCode}":
             set_code = event["pathParameters"]["setCode"]
             return ok(delete_set(user_id, set_code))
@@ -1153,6 +1157,33 @@ def save_set(user_id, body):
     if item.get("isPublic"):
         sync_user_bucket_public_policy(user_id)
     return {"set": item}
+
+
+def rename_set(user_id, set_code, body):
+    """Change a set's display name without changing its code.
+
+    Args:
+        user_id: Authenticated Cognito user id.
+        set_code: Stable code of the set to rename.
+        body: Request body containing the new name.
+    """
+    normalized_set_code = normalize_set_code(set_code)
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise ValueError("Set name is required.")
+
+    try:
+        response = SETS_TABLE.update_item(
+            Key={"userId": user_id, "code": normalized_set_code},
+            UpdateExpression="SET #name = :name",
+            ExpressionAttributeNames={"#name": "name"},
+            ExpressionAttributeValues={":name": name},
+            ConditionExpression="attribute_exists(userId) AND attribute_exists(code)",
+            ReturnValues="ALL_NEW",
+        )
+    except SETS_TABLE.meta.client.exceptions.ConditionalCheckFailedException:
+        raise ValueError("Card set does not exist.")
+    return {"set": response["Attributes"]}
 
 
 def get_cognito_user_by_email(email):

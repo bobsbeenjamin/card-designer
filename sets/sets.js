@@ -16,12 +16,15 @@ const state = {
   libraryDragMoved: false,
   currentSetCode: "",
   exportSetCode: "",
+  renameSetCode: "",
 };
 
 const elements = {
   acceptIncomingShareButton: document.querySelector("#acceptIncomingShareButton"),
   authStatus: document.querySelector("#authStatus"),
+  cancelRenameSetButton: document.querySelector("#cancelRenameSetButton"),
   confirmDeleteSetButton: document.querySelector("#confirmDeleteSetButton"),
+  confirmRenameSetButton: document.querySelector("#confirmRenameSetButton"),
   deleteSetDialog: document.querySelector("#deleteSetDialog"),
   deleteSetMessage: document.querySelector("#deleteSetMessage"),
   deleteSetTitle: document.querySelector("#deleteSetTitle"),
@@ -40,9 +43,14 @@ const elements = {
   incomingShareTitle: document.querySelector("#incomingShareTitle"),
   passwordInput: document.querySelector("#passwordInput"),
   rejectIncomingShareButton: document.querySelector("#rejectIncomingShareButton"),
+  renameSetDialog: document.querySelector("#renameSetDialog"),
+  renameSetForm: document.querySelector("#renameSetForm"),
+  renameSetNameInput: document.querySelector("#renameSetNameInput"),
+  renameSetStatus: document.querySelector("#renameSetStatus"),
   shareRecipientEmailInput: document.querySelector("#shareRecipientEmailInput"),
   shareRecipientEmailLabel: document.querySelector("#shareRecipientEmailLabel"),
   setDetailExportButton: document.querySelector("#setDetailExportButton"),
+  setDetailRenameButton: document.querySelector("#setDetailRenameButton"),
   setLibraryContent: document.querySelector("#setLibraryContent"),
   setsBackButton: document.querySelector("#setsBackButton"),
   setsPageContent: document.querySelector("#setsPageContent"),
@@ -551,6 +559,66 @@ function createSetActionButtons(cardSet) {
   return actions;
 }
 
+/** Creates a pencil button that opens the set rename dialog. */
+function createSetRenameButton(cardSet) {
+  const button = document.createElement("button");
+  button.className = "set-rename-button";
+  button.type = "button";
+  button.title = "Rename this set";
+  button.setAttribute("aria-label", "Rename " + (cardSet.name || cardSet.code || "set"));
+  button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>';
+  button.addEventListener("click", () => openRenameSetDialog(cardSet));
+  return button;
+}
+
+/** Opens the rename modal with the selected set's current name. */
+function openRenameSetDialog(cardSet) {
+  state.renameSetCode = cardSet.code || "DEFAULT";
+  elements.renameSetNameInput.value = cardSet.name || "";
+  elements.renameSetStatus.textContent = "";
+  elements.renameSetDialog.showModal();
+  elements.renameSetNameInput.focus();
+  elements.renameSetNameInput.select();
+}
+
+/** Closes and clears the set rename modal. */
+function closeRenameSetDialog() {
+  state.renameSetCode = "";
+  elements.renameSetNameInput.value = "";
+  elements.renameSetStatus.textContent = "";
+  elements.renameSetDialog.close();
+}
+
+/** Saves a changed set name and refreshes the active sets view. */
+async function renameSelectedSet() {
+  const setCode = state.renameSetCode;
+  const name = elements.renameSetNameInput.value.trim();
+  if (!setCode || !name) {
+    elements.renameSetStatus.textContent = "Enter a new set name.";
+    return;
+  }
+
+  elements.confirmRenameSetButton.disabled = true;
+  try {
+    await apiFetch("/sets/" + encodeURIComponent(setCode), {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    });
+    await refreshSetsAndCards(false);
+    closeRenameSetDialog();
+    if (state.currentSetCode === setCode) {
+      renderSetCardGrid(setCode);
+    } else {
+      renderSetLibraryList();
+    }
+    setStatus("Renamed " + setCode + " set");
+  } catch (error) {
+    elements.renameSetStatus.textContent = error.message;
+  } finally {
+    elements.confirmRenameSetButton.disabled = false;
+  }
+}
+
 /** Creates the red trash button used to delete a set row. */
 function createSetDeleteButton(cardSet) {
   const button = document.createElement("button");
@@ -578,6 +646,7 @@ function renderSetLibraryList() {
   elements.setsTitle.textContent = "My Sets";
   elements.setsBackButton.classList.add("hidden");
   elements.setDetailExportButton.classList.add("hidden");
+  elements.setDetailRenameButton.classList.add("hidden");
   elements.setLibraryContent.innerHTML = "";
   const list = document.createElement("div");
   list.className = "set-list";
@@ -596,7 +665,10 @@ function renderSetLibraryList() {
     });
     const name = document.createElement("strong");
     name.textContent = cardSet.name || "Untitled Set";
-    row.append(createSetPublicCheckbox(cardSet), renderSetSymbolPreview(cardSet), codeLink, name, createSetActionButtons(cardSet));
+    const nameCell = document.createElement("div");
+    nameCell.className = "set-name-cell";
+    nameCell.append(name, createSetRenameButton(cardSet));
+    row.append(createSetPublicCheckbox(cardSet), renderSetSymbolPreview(cardSet), codeLink, nameCell, createSetActionButtons(cardSet));
     list.append(row);
   }
 
@@ -718,6 +790,7 @@ function renderSetCardGrid(setCode) {
   elements.setsTitle.textContent = cardSet ? `${cardSet.code} - ${cardSet.name || "Untitled Set"}` : setCode;
   elements.setsBackButton.classList.remove("hidden");
   elements.setDetailExportButton.classList.toggle("hidden", !cardSet);
+  elements.setDetailRenameButton.classList.toggle("hidden", !cardSet);
   elements.setLibraryContent.innerHTML = "";
 
   const grid = document.createElement("div");
@@ -796,6 +869,15 @@ function attachEvents() {
   elements.confirmExportSetButton.addEventListener("click", exportSelectedSet);
   elements.exportFormatInput.addEventListener("change", syncExportFormatUi);
   elements.exportSetForm.addEventListener("submit", (event) => event.preventDefault());
+  elements.cancelRenameSetButton.addEventListener("click", closeRenameSetDialog);
+  elements.renameSetForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    renameSelectedSet();
+  });
+  elements.setDetailRenameButton.addEventListener("click", () => {
+    const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === state.currentSetCode);
+    if (cardSet) openRenameSetDialog(cardSet);
+  });
   elements.setDetailExportButton.addEventListener("click", () => {
     const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === state.currentSetCode);
     if (cardSet) openExportSetDialog(cardSet);

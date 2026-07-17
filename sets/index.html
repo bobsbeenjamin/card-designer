@@ -12,7 +12,21 @@
       <header class="sets-page-header">
         <div>
           <p class="eyebrow">Card Designer</p>
-          <h1 id="setsTitle">My Sets</h1>
+          <div class="sets-title-row">
+            <h1 id="setsTitle">My Sets</h1>
+            <button
+              id="setDetailRenameButton"
+              class="set-rename-button hidden"
+              type="button"
+              title="Rename this set"
+              aria-label="Rename this set"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path>
+              </svg>
+            </button>
+          </div>
           <p id="setsStatus" class="status-line">Sign in to view your sets.</p>
         </div>
         <div class="sets-header-actions">
@@ -84,6 +98,21 @@
         <div class="modal-actions delete-set-actions">
           <button id="confirmDeleteSetButton" class="button danger no-wrap" value="delete" type="submit">Yes, delete forever</button>
           <button class="button subtle no-wrap" value="cancel" type="submit">Cancel (back to safety)</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="renameSetDialog" class="modal-dialog" aria-labelledby="renameSetTitle">
+      <form id="renameSetForm" class="modal-card">
+        <h2 id="renameSetTitle">Change this set's name</h2>
+        <label>
+          <span>New name</span>
+          <input id="renameSetNameInput" type="text" required />
+        </label>
+        <p id="renameSetStatus" class="status-line"></p>
+        <div class="modal-actions two-up">
+          <button id="confirmRenameSetButton" class="button primary" type="submit">Change</button>
+          <button id="cancelRenameSetButton" class="button subtle" type="button">Cancel</button>
         </div>
       </form>
     </dialog>

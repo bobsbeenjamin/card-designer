@@ -863,9 +863,17 @@ input[type="color"] {
 }
 
 .set-row strong {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.set-name-cell {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
 }
 
 .set-public-checkbox {
@@ -895,6 +903,21 @@ input[type="color"] {
   width: 38px;
 }
 
+.set-rename-button {
+  background: #f5f8f4;
+  border: 1px solid #c6d1c7;
+  border-radius: 5px;
+  color: #1d2b24;
+  cursor: pointer;
+  align-self: flex-end;
+  display: grid;
+  flex: 0 0 auto;
+  height: 19px;
+  padding: 0;
+  place-items: center;
+  width: 19px;
+}
+
 .set-delete-button {
   background: #fff5f4;
   border: 1px solid #e0b5b0;
@@ -918,6 +941,12 @@ input[type="color"] {
   width: 20px;
 }
 
+.set-rename-button svg {
+  height: 12px;
+  stroke: currentColor;
+  width: 12px;
+}
+
 .set-delete-button svg {
   stroke: currentColor;
 }
@@ -934,7 +963,9 @@ input[type="color"] {
 }
 
 .set-export-button:hover,
-.set-export-button:focus-visible {
+.set-export-button:focus-visible,
+.set-rename-button:hover,
+.set-rename-button:focus-visible {
   background: #e7eee6;
   border-color: #7f9282;
   outline: 0;
@@ -1249,7 +1280,15 @@ input[type="color"] {
 }
 
 .sets-page-header h1 {
+  margin: 0;
+}
+
+.sets-title-row {
+  align-items: flex-end;
+  display: flex;
+  gap: 8px;
   margin-bottom: 4px;
+  min-width: 0;
 }
 
 .sets-header-actions {

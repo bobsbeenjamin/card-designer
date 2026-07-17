@@ -326,6 +326,12 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /sets
             Method: POST
+        RenameSet:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /sets/{setCode}
+            Method: PUT
         DeleteSet:
           Type: HttpApi
           Properties:
