@@ -159,7 +159,7 @@ def handler(event, _context):
 
         if method == "POST" and route_key == "POST /set-shares/{shareId}/accept":
             share_id = event["pathParameters"]["shareId"]
-            return ok(accept_set_share(user_id, share_id, user_email))
+            return ok(accept_set_share(user_id, share_id, read_body(event), user_email, api_base_url))
 
         if method == "DELETE" and route_key == "DELETE /set-shares/{shareId}":
             share_id = event["pathParameters"]["shareId"]
@@ -1127,6 +1127,17 @@ def get_cards_for_set(user_id, set_code):
     ]
 
 
+def clear_set_cards_and_assets(user_id, set_code):
+    """Delete every card and saved asset that belongs to a set."""
+    deleted_cards = 0
+    for card in get_cards_for_set(user_id, set_code):
+        delete_card_art(card)
+        delete_card_image(card)
+        TABLE.delete_item(Key={"userId": user_id, "cardId": card["cardId"]})
+        deleted_cards += 1
+    return deleted_cards
+
+
 def delete_set(user_id, set_code):
     """Delete a non-default set and every card/image in that set."""
     normalized_set_code = normalize_set_code(set_code)
@@ -1135,11 +1146,7 @@ def delete_set(user_id, set_code):
     if not get_set(user_id, normalized_set_code):
         raise ValueError("Card set does not exist.")
 
-    deleted_cards = 0
-    for card in get_cards_for_set(user_id, normalized_set_code):
-        delete_card_image(card)
-        TABLE.delete_item(Key={"userId": user_id, "cardId": card["cardId"]})
-        deleted_cards += 1
+    deleted_cards = clear_set_cards_and_assets(user_id, normalized_set_code)
 
     SETS_TABLE.delete_item(Key={"userId": user_id, "code": normalized_set_code})
     sync_user_bucket_public_policy(user_id)
@@ -1214,26 +1221,90 @@ def get_cognito_user_by_email(email):
     return {"userId": recipient_user_id, "email": attributes.get("email", wanted_email)}
 
 
-def get_unique_shared_set_code(user_id, requested_code):
-    """Return a recipient set code that does not collide with existing sets."""
-    base_code = normalize_set_code(requested_code)
-    if base_code == DEFAULT_SET["code"]:
-        base_code = "SHARED"
+def get_shared_suffix(value, separator):
+    """Return a base value and the next numeric suffix for a duplicate."""
+    base_value, marker, suffix = str(value or "").rpartition(separator)
+    if marker and base_value and suffix.isdigit():
+        return base_value, int(suffix) + 1
+    return str(value or ""), 2
 
+
+def get_unique_shared_set_code(user_id, requested_code):
+    """Return an unused recipient set code with an underscore-number suffix."""
+    base_code = normalize_set_code(requested_code)
     response = SETS_TABLE.query(
         KeyConditionExpression=Key("userId").eq(user_id),
-        ProjectionExpression="#code",
+        ProjectionExpression="#code, pendingShare, recordType",
         ExpressionAttributeNames={"#code": "code"},
     )
-    existing_codes = {normalize_set_code(item.get("code")) for item in response.get("Items", [])}
+    existing_codes = {
+        normalize_set_code(item.get("code"))
+        for item in response.get("Items", [])
+        if not item.get("pendingShare") and item.get("recordType") != "shareResponse"
+    }
     if base_code not in existing_codes:
         return base_code
 
-    for index in range(2, 1000):
-        candidate = f"{base_code}{index}"
+    code_stem, start_index = get_shared_suffix(base_code, "_")
+    for index in range(start_index, 1000):
+        candidate = normalize_set_code(f"{code_stem}_{index}")
         if candidate not in existing_codes:
             return candidate
-    raise ValueError("The recipient has too many copies of this set.")
+    raise ValueError("The recipient has too many sets with this code.")
+
+
+def get_unique_shared_set_name(user_id, requested_name):
+    """Return an unused recipient set name with a hyphen-number suffix."""
+    base_name = str(requested_name or "Untitled Set").strip() or "Untitled Set"
+    response = SETS_TABLE.query(
+        KeyConditionExpression=Key("userId").eq(user_id),
+        ProjectionExpression="#name, pendingShare, recordType",
+        ExpressionAttributeNames={"#name": "name"},
+    )
+    existing_names = {
+        str(item.get("name") or "").strip().casefold()
+        for item in response.get("Items", [])
+        if not item.get("pendingShare") and item.get("recordType") != "shareResponse"
+    }
+    if base_name.casefold() not in existing_names:
+        return base_name
+
+    name_stem, start_index = get_shared_suffix(base_name, "-")
+    for index in range(start_index, 1000):
+        candidate = f"{name_stem}-{index}"
+        if candidate.casefold() not in existing_names:
+            return candidate
+    raise ValueError("The recipient has too many sets with this name.")
+
+
+def get_set_share_conflicts(user_id, set_code, set_name):
+    """Identify accepted recipient sets that collide with a shared set.
+
+    Args:
+        user_id: Recipient account to inspect.
+        set_code: Requested source set code.
+        set_name: Requested source set name.
+    """
+    response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
+    accepted_sets = [
+        item
+        for item in response.get("Items", [])
+        if not item.get("pendingShare") and item.get("recordType") != "shareResponse"
+    ]
+    requested_code = normalize_set_code(set_code)
+    requested_name = str(set_name or "").strip().casefold()
+    return {
+        "code": any(normalize_set_code(item.get("code")) == requested_code for item in accepted_sets),
+        "name": bool(requested_name) and any(
+            str(item.get("name") or "").strip().casefold() == requested_name
+            for item in accepted_sets
+        ),
+    }
+
+
+def get_pending_share_code(share_id):
+    """Return the temporary set code used while a copied set awaits a decision."""
+    return f"__PENDING_SHARE__{str(share_id).upper()}"
 
 
 def get_saved_art_key_from_url(art_url):
@@ -1283,6 +1354,34 @@ def copy_shared_card_art(source_card, target_user_id, target_card, api_base_url=
     target_card["artUrl"] = get_shared_art_url(api_base_url, target_art_key)
 
 
+def relocate_shared_card_art(user_id, card, final_set_code, api_base_url):
+    """Move pending shared artwork into the accepted set's final art path.
+
+    Args:
+        user_id: Recipient account that owns the copied artwork.
+        card: Pending copied card whose artwork may need relocation.
+        final_set_code: Final selected code for the accepted set.
+        api_base_url: Public API base used to build the recipient art URL.
+    """
+    source_art_key = get_saved_art_key_from_url(card.get("artUrl"))
+    if not source_art_key or not source_art_key.startswith(f"{get_art_user_prefix(user_id)}/"):
+        return
+
+    target_card = {**card, "setCode": final_set_code}
+    target_art_key = get_shared_art_key(user_id, target_card, source_art_key)
+    if source_art_key == target_art_key:
+        return
+    S3.copy_object(
+        Bucket=ART_BUCKET_NAME,
+        Key=target_art_key,
+        CopySource={"Bucket": ART_BUCKET_NAME, "Key": source_art_key},
+        MetadataDirective="COPY",
+        ServerSideEncryption="AES256",
+    )
+    S3.delete_object(Bucket=ART_BUCKET_NAME, Key=source_art_key)
+    card["artUrl"] = get_shared_art_url(api_base_url, target_art_key)
+
+
 def delete_card_art(card):
     """Delete saved editable artwork for a card when it belongs to that user."""
     art_key = get_saved_art_key_from_url(card.get("artUrl"))
@@ -1313,8 +1412,88 @@ def copy_shared_card_image(source_card, target_user_id, target_card):
     target_card["imageKey"] = target_key
 
 
+def relocate_shared_card_image(card, final_set_code):
+    """Move a pending copied card PNG into its accepted set image path."""
+    source_bucket = card.get("imageBucket")
+    source_key = card.get("imageKey")
+    if not source_bucket or not source_key:
+        return
+
+    target_card = {**card, "setCode": final_set_code}
+    target_key = get_card_image_key(target_card)
+    if source_key == target_key:
+        return
+    S3.copy_object(
+        Bucket=source_bucket,
+        Key=target_key,
+        CopySource={"Bucket": source_bucket, "Key": source_key},
+        MetadataDirective="COPY",
+        ServerSideEncryption="AES256",
+    )
+    S3.delete_object(Bucket=source_bucket, Key=source_key)
+    card["imageKey"] = target_key
+
+
+def finalize_pending_share_card(user_id, card, final_set_code, api_base_url):
+    """Promote one pending copied card into the accepted recipient set.
+
+    Args:
+        user_id: Recipient account that owns the accepted card.
+        card: Pending copied card to finalize.
+        final_set_code: Final selected code for the accepted set.
+        api_base_url: Public API base used to rebuild saved art URLs.
+    """
+    relocate_shared_card_art(user_id, card, final_set_code, api_base_url)
+    relocate_shared_card_image(card, final_set_code)
+    card["setCode"] = final_set_code
+    for field in {"pendingShare", "shareId", "senderUserId", "senderEmail", "originalCardId"}:
+        card.pop(field, None)
+    TABLE.put_item(Item=card)
+
+
+def build_accepted_set(card_set, user_id, final_set_code, final_set_name):
+    """Build the accepted recipient set record from a pending copied set.
+
+    Args:
+        card_set: Pending copied set containing source properties and share metadata.
+        user_id: Recipient account that will own the accepted set.
+        final_set_code: Chosen final code for the accepted set.
+        final_set_name: Chosen final name for the accepted set.
+    """
+    share_fields = {
+        "userId",
+        "code",
+        "isPublic",
+        "pendingShare",
+        "shareId",
+        "senderUserId",
+        "senderEmail",
+        "recipientEmail",
+        "originalSetCode",
+        "requestedSetCode",
+        "requestedSetName",
+        "sharedAt",
+    }
+    accepted_set = {key: value for key, value in card_set.items() if key not in share_fields}
+    accepted_set.update({
+        "userId": user_id,
+        "code": final_set_code,
+        "name": final_set_name,
+        "isPublic": False,
+    })
+    return accepted_set
+
+
 def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, body):
-    """Copy a set and its cards into another user's pending shares."""
+    """Preview or copy a set into another user's pending shares.
+
+    Args:
+        sender_user_id: Authenticated owner of the source set.
+        sender_email: Email address shown to the receiving user.
+        api_base_url: API base used for copied private art URLs.
+        set_code: Source set code requested for copying.
+        body: Recipient email and optional preview flag.
+    """
     recipient = get_cognito_user_by_email(body.get("recipientEmail"))
     if recipient["userId"] == sender_user_id:
         raise ValueError("Choose another user to share this set with.")
@@ -1324,8 +1503,13 @@ def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, bo
     if not source_set or source_set.get("pendingShare"):
         raise ValueError("Card set does not exist.")
 
+    requested_set_name = str(source_set.get("name") or "Untitled Set").strip() or "Untitled Set"
+    conflicts = get_set_share_conflicts(recipient["userId"], source_set_code, requested_set_name)
+    if body.get("preview"):
+        return {"recipientEmail": recipient["email"], "conflicts": conflicts}
+
     share_id = str(uuid.uuid4())
-    target_set_code = get_unique_shared_set_code(recipient["userId"], source_set_code)
+    pending_set_code = get_pending_share_code(share_id)
     now = int(time.time())
     target_set = {
         key: value
@@ -1334,7 +1518,7 @@ def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, bo
     }
     target_set.update({
         "userId": recipient["userId"],
-        "code": target_set_code,
+        "code": pending_set_code,
         "isPublic": False,
         "pendingShare": True,
         "shareId": share_id,
@@ -1342,6 +1526,8 @@ def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, bo
         "senderEmail": sender_email or sender_user_id,
         "recipientEmail": recipient["email"],
         "originalSetCode": source_set_code,
+        "requestedSetCode": source_set_code,
+        "requestedSetName": requested_set_name,
         "sharedAt": now,
     })
     SETS_TABLE.put_item(Item=target_set)
@@ -1357,7 +1543,7 @@ def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, bo
         target_card.update({
             "userId": recipient["userId"],
             "cardId": str(uuid.uuid4()),
-            "setCode": target_set_code,
+            "setCode": pending_set_code,
             "pendingShare": True,
             "shareId": share_id,
             "senderUserId": sender_user_id,
@@ -1371,18 +1557,23 @@ def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, bo
         TABLE.put_item(Item=target_card)
         copied_cards += 1
 
-    return {"shareId": share_id, "set": target_set, "cardsCopied": copied_cards}
+    return {"shareId": share_id, "set": target_set, "cardsCopied": copied_cards, "conflicts": conflicts}
 
 
 def list_pending_set_shares(user_id):
-    """Return incoming pending set copies for the signed-in user."""
+    """Return incoming pending set copies with their current conflict state."""
     response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
     shares = [
         {
             "shareId": item.get("shareId", ""),
-            "setCode": item.get("code", ""),
-            "setName": item.get("name", "Untitled Set"),
+            "setCode": item.get("requestedSetCode") or item.get("originalSetCode") or item.get("code", ""),
+            "setName": item.get("requestedSetName") or item.get("name", "Untitled Set"),
             "senderEmail": item.get("senderEmail", "another user"),
+            "conflicts": get_set_share_conflicts(
+                user_id,
+                item.get("requestedSetCode") or item.get("originalSetCode") or item.get("code", ""),
+                item.get("requestedSetName") or item.get("name", "Untitled Set"),
+            ),
         }
         for item in response.get("Items", [])
         if item.get("pendingShare") and item.get("shareId")
@@ -1410,7 +1601,7 @@ def record_set_share_response(card_set, recipient_email, decision):
         "recordType": "shareResponse",
         "shareId": share_id,
         "setCode": card_set.get("originalSetCode") or card_set.get("code") or "DEFAULT",
-        "setName": card_set.get("name") or "Untitled Set",
+        "setName": card_set.get("requestedSetName") or card_set.get("name") or "Untitled Set",
         "recipientEmail": recipient_email or card_set.get("recipientEmail") or "another user",
         "response": decision,
         "respondedAt": int(time.time()),
@@ -1449,30 +1640,76 @@ def get_pending_share_set(user_id, share_id):
     raise ValueError("Shared set was not found.")
 
 
-def accept_set_share(user_id, share_id, recipient_email):
-    """Accept a pending shared set and make it editable.
+def accept_set_share(user_id, share_id, body, recipient_email, api_base_url):
+    """Accept a pending copied set using the recipient's conflict choices.
 
     Args:
         user_id: Authenticated recipient user id.
         share_id: Pending set-share identifier.
+        body: Recipient code and name conflict choices.
         recipient_email: Email address of the responding recipient.
+        api_base_url: Public API base used to rebuild saved art URLs.
     """
     card_set = get_pending_share_set(user_id, share_id)
-    SETS_TABLE.update_item(
-        Key={"userId": user_id, "code": card_set["code"]},
-        UpdateExpression="REMOVE pendingShare, shareId, senderUserId, senderEmail, recipientEmail, originalSetCode, sharedAt",
+    requested_set_code = normalize_set_code(
+        card_set.get("requestedSetCode") or card_set.get("originalSetCode") or card_set.get("code")
     )
+    requested_set_name = str(
+        card_set.get("requestedSetName") or card_set.get("name") or "Untitled Set"
+    ).strip() or "Untitled Set"
+    conflicts = get_set_share_conflicts(user_id, requested_set_code, requested_set_name)
 
-    for card in get_cards_for_set(user_id, card_set["code"]):
-        if card.get("shareId") == share_id:
-            TABLE.update_item(
-                Key={"userId": user_id, "cardId": card["cardId"]},
-                UpdateExpression="REMOVE pendingShare, shareId, senderUserId, senderEmail, originalCardId",
+    code_resolution = str(body.get("codeResolution") or "").strip().lower()
+    if conflicts["code"]:
+        if code_resolution == "overwrite":
+            final_set_code = requested_set_code
+        elif code_resolution == "new":
+            final_set_code = get_unique_shared_set_code(user_id, requested_set_code)
+        else:
+            raise ValueError("Choose whether to overwrite or create a new set code.")
+    else:
+        final_set_code = requested_set_code
+
+    if conflicts["code"] and code_resolution == "overwrite":
+        final_set_name = requested_set_name
+    else:
+        name_resolution = str(body.get("nameResolution") or "").strip().lower()
+        if conflicts["name"]:
+            if name_resolution == "keep":
+                final_set_name = requested_set_name
+            elif name_resolution == "new":
+                final_set_name = get_unique_shared_set_name(user_id, requested_set_name)
+            else:
+                raise ValueError("Choose whether to keep or create a new set name.")
+        else:
+            final_set_name = requested_set_name
+
+    if conflicts["code"] and code_resolution == "overwrite":
+        clear_set_cards_and_assets(user_id, final_set_code)
+
+    pending_cards = [
+        card for card in get_cards_for_set(user_id, card_set["code"])
+        if card.get("shareId") == share_id
+    ]
+    for card in pending_cards:
+        finalize_pending_share_card(user_id, card, final_set_code, api_base_url)
+
+    accepted_set = build_accepted_set(card_set, user_id, final_set_code, final_set_name)
+    if conflicts["code"] and code_resolution == "overwrite":
+        SETS_TABLE.put_item(Item=accepted_set)
+    else:
+        try:
+            SETS_TABLE.put_item(
+                Item=accepted_set,
+                ConditionExpression="attribute_not_exists(userId) AND attribute_not_exists(code)",
             )
+        except SETS_TABLE.meta.client.exceptions.ConditionalCheckFailedException:
+            raise ValueError("That set code was claimed while this copy was being accepted.")
+
+    SETS_TABLE.delete_item(Key={"userId": user_id, "code": card_set["code"]})
+    sync_user_bucket_public_policy(user_id)
     record_set_share_response(card_set, recipient_email, "accepted")
-    card_set.pop("pendingShare", None)
-    card_set.pop("shareId", None)
-    return {"accepted": True, "set": card_set}
+    return {"accepted": True, "set": accepted_set}
 
 
 def reject_set_share(user_id, share_id, recipient_email):
@@ -1484,13 +1721,7 @@ def reject_set_share(user_id, share_id, recipient_email):
         recipient_email: Email address of the responding recipient.
     """
     card_set = get_pending_share_set(user_id, share_id)
-    deleted_cards = 0
-    for card in get_cards_for_set(user_id, card_set["code"]):
-        if card.get("shareId") == share_id:
-            delete_card_art(card)
-            delete_card_image(card)
-            TABLE.delete_item(Key={"userId": user_id, "cardId": card["cardId"]})
-            deleted_cards += 1
+    deleted_cards = clear_set_cards_and_assets(user_id, card_set["code"])
     SETS_TABLE.delete_item(Key={"userId": user_id, "code": card_set["code"]})
     record_set_share_response(card_set, recipient_email, "rejected")
     return {"rejected": True, "shareId": share_id, "deletedCards": deleted_cards}

@@ -1162,6 +1162,15 @@ input[type="color"] {
   overflow-wrap: anywhere;
 }
 
+.share-conflict-choice {
+  display: grid;
+  gap: 10px;
+}
+
+.share-conflict-choice p {
+  margin: 0;
+}
+
 .modal-actions {
   display: grid;
   gap: 10px;

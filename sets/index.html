@@ -123,9 +123,31 @@
       <form id="incomingShareForm" class="modal-card">
         <h2 id="incomingShareTitle">Shared set copy</h2>
         <p id="incomingShareMessage">A user sent you a set.</p>
+        <div id="incomingShareCodeChoice" class="share-conflict-choice hidden">
+          <p id="incomingShareCodeChoiceText" class="status-line"></p>
+          <label>
+            <span>Duplicate set code</span>
+            <select id="incomingShareCodeResolution">
+              <option value="" selected disabled>Choose an option</option>
+              <option value="overwrite">Overwrite the existing set</option>
+              <option value="new">Create a new set code</option>
+            </select>
+          </label>
+        </div>
+        <div id="incomingShareNameChoice" class="share-conflict-choice hidden">
+          <p id="incomingShareNameChoiceText" class="status-line"></p>
+          <label>
+            <span>Duplicate set name</span>
+            <select id="incomingShareNameResolution">
+              <option value="" selected disabled>Choose an option</option>
+              <option value="keep">Keep this set name</option>
+              <option value="new">Create a new set name</option>
+            </select>
+          </label>
+        </div>
         <div class="modal-actions two-up">
-          <button id="acceptIncomingShareButton" class="button primary" type="button">Yes</button>
-          <button id="rejectIncomingShareButton" class="button subtle" type="button">No</button>
+          <button id="acceptIncomingShareButton" class="button primary" type="button">Accept copy</button>
+          <button id="rejectIncomingShareButton" class="button subtle" type="button">Reject copy</button>
         </div>
       </form>
     </dialog>
