@@ -682,13 +682,15 @@ async function renderUpdatedCardPng(card) {
   return renderer.getCardPngDataUrl();
 }
 
-/** Loads full card records for a set because summaries do not include art URLs. */
+/** Loads full card records for a set without overwhelming the hosted API. */
 async function getFullCardsInSet(setCode, signal) {
   const cardSummaries = getCardsInSet(setCode);
-  const cardResponses = await Promise.all(
-    cardSummaries.map((card) => apiFetch(`/cards/${encodeURIComponent(card.cardId)}`, { signal })),
-  );
-  return cardResponses.map((response) => response.card).filter(Boolean);
+  const cards = [];
+  for (const card of cardSummaries) {
+    const response = await apiFetch(`/cards/${encodeURIComponent(card.cardId)}`, { signal });
+    if (response.card) cards.push(response.card);
+  }
+  return cards;
 }
 
 /** Generates and stores art for a single missing-art card. */
