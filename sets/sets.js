@@ -676,7 +676,7 @@ async function getCardRendererWindow() {
 /** Renders an updated card through the main designer preview. */
 async function renderUpdatedCardPng(card) {
   const renderer = await getCardRendererWindow();
-  renderer.applyCardData(card);
+  renderer.applyCardData({ ...card, artUrl: "" });
   if (card.artUrl) await renderer.setArtSource(card.artUrl);
   renderer.syncCard();
   return renderer.getCardPngDataUrl();

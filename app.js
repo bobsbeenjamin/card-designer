@@ -6,6 +6,7 @@ let rarityLabels = {};
 
 const imageProviderStorageKey = "cardDesignerImageProvider";
 const isRenderWorkspace = new URLSearchParams(window.location.search).get("render") === "card";
+const cardRenderProfileStorageKey = "cardDesignerRenderProfile";
 
 const imageProviderLabels = {
   openai: "OpenAI",
@@ -280,6 +281,39 @@ function setAuthStatus(message) {
 
 function setSaveStatus(message) {
   elements.saveStatus.textContent = message;
+}
+
+/** Stores the visible card dimensions used as the offscreen render reference. */
+function rememberCardRenderProfile() {
+  if (isRenderWorkspace) return;
+
+  try {
+    const cardBounds = elements.card.getBoundingClientRect();
+    const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+    localStorage.setItem(cardRenderProfileStorageKey, JSON.stringify({
+      rootFontSize,
+      width: cardBounds.width,
+    }));
+  } catch (error) {
+    // Rendering still works when local storage is unavailable.
+  }
+}
+
+/** Applies the visible card dimensions to the hidden renderer workspace. */
+function applyCardRenderProfile() {
+  if (!isRenderWorkspace) return;
+
+  try {
+    const profile = JSON.parse(localStorage.getItem(cardRenderProfileStorageKey) || "null");
+    if (Number.isFinite(profile?.width) && profile.width > 0) {
+      elements.card.style.width = `${profile.width}px`;
+    }
+    if (Number.isFinite(profile?.rootFontSize) && profile.rootFontSize > 0) {
+      document.documentElement.style.fontSize = `${profile.rootFontSize}px`;
+    }
+  } catch (error) {
+    // The renderer keeps its normal CSS sizing when the profile is unavailable.
+  }
 }
 
 /** Shows a dismissible toast message for ten seconds. */
@@ -616,6 +650,32 @@ async function getProxiedImageSource(artUrl) {
   return URL.createObjectURL(blob);
 }
 
+/** Loads an image element and resolves after its pixels are available. */
+function loadArtElement(src) {
+  return new Promise((resolve, reject) => {
+    const handleLoad = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error("Image URL did not load as an image."));
+    };
+    const cleanup = () => {
+      elements.art.removeEventListener("load", handleLoad);
+      elements.art.removeEventListener("error", handleError);
+    };
+
+    elements.art.addEventListener("load", handleLoad);
+    elements.art.addEventListener("error", handleError);
+    elements.art.src = src;
+    if (elements.art.complete) {
+      if (elements.art.naturalWidth > 0) handleLoad();
+      else handleError();
+    }
+  });
+}
+
 /** Loads artwork from a file, data URL, proxied URL, or direct URL fallback. */
 async function setArtSource(src, statusMessage = "") {
   const artUrl = String(src || "").trim();
@@ -644,16 +704,20 @@ async function setArtSource(src, statusMessage = "") {
 
   elements.art.removeAttribute("crossorigin");
   if (artUrl.startsWith("data:")) {
-    elements.art.src = artUrl;
+    await loadArtElement(artUrl).catch(() => {});
     return;
   }
 
   try {
     const objectUrl = await getProxiedImageSource(artUrl);
     state.artObjectUrl = objectUrl;
-    elements.art.src = objectUrl;
+    await loadArtElement(objectUrl);
   } catch (error) {
-    elements.art.src = artUrl;
+    try {
+      await loadArtElement(artUrl);
+    } catch (loadError) {
+      setSaveStatus(loadError.message);
+    }
     setSaveStatus(`${error.message} Preview may work, but PNG export may fail.`);
   }
 }
@@ -2007,6 +2071,7 @@ function attachEvents() {
   window.addEventListener("resize", () => {
     fitCardName();
     fitRulesText();
+    rememberCardRenderProfile();
   });
 }
 
@@ -2019,7 +2084,9 @@ async function initialize() {
   }
 
   attachEvents();
+  applyCardRenderProfile();
   syncCard();
+  if (!isRenderWorkspace) rememberCardRenderProfile();
   renderSavedCards();
   renderCardSets();
   updateAccountUi();
