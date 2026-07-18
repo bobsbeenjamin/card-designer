@@ -115,6 +115,21 @@
         <h2 id="generateArtTitle">Generate card art using AI</h2>
         <p>Use your selected AI generative image provider to fill in art for all cards in this set that are missing art</p>
         <p id="generateArtStatus" class="status-line"></p>
+        <progress id="generateArtProgress" class="generate-art-progress hidden" value="0" max="1"></progress>
+        <section id="generateArtErrorSection" class="generate-art-errors hidden" aria-labelledby="generateArtErrorTitle">
+          <h3 id="generateArtErrorTitle">Art generation errors</h3>
+          <div class="generate-art-error-grid-wrapper">
+            <table class="generate-art-error-grid">
+              <thead>
+                <tr>
+                  <th scope="col">Card name</th>
+                  <th scope="col">AI art error</th>
+                </tr>
+              </thead>
+              <tbody id="generateArtErrorRows"></tbody>
+            </table>
+          </div>
+        </section>
         <div class="modal-actions two-up">
           <button id="confirmGenerateArtButton" class="button primary" type="button">Generate Art</button>
           <button id="cancelGenerateArtButton" class="button subtle" type="button">Cancel</button>

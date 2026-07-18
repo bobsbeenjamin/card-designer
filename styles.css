@@ -1106,6 +1106,10 @@ input[type="color"] {
   white-space: nowrap;
 }
 
+#generateArtDialog {
+  width: min(720px, calc(100vw - 36px));
+}
+
 .modal-dialog {
   background: transparent;
   border: 0;
@@ -1192,6 +1196,57 @@ input[type="color"] {
   background: #eef2ed;
   color: var(--ink);
   outline: 0;
+}
+
+.generate-art-progress {
+  accent-color: #1d2b24;
+  height: 12px;
+  width: 100%;
+}
+
+.generate-art-control-symbol {
+  font-size: 0.9em;
+  margin-left: 8px;
+}
+
+.generate-art-errors {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.generate-art-errors h3 {
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.generate-art-error-grid-wrapper {
+  max-height: min(34vh, 320px);
+  overflow: auto;
+}
+
+.generate-art-error-grid {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.generate-art-error-grid th,
+.generate-art-error-grid td {
+  border: 1px solid var(--line);
+  overflow-wrap: anywhere;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.generate-art-error-grid th:first-child,
+.generate-art-error-grid td:first-child {
+  width: 30%;
+}
+
+.generate-art-error-message {
+  white-space: pre-wrap;
 }
 
 .modal-card p {

@@ -42,6 +42,7 @@ const state = {
   generateArtPaused: false,
   generateArtResumeResolver: null,
   generateArtRunning: false,
+  generateArtErrors: [],
 };
 
 const elements = {
@@ -71,6 +72,9 @@ const elements = {
   confirmGenerateArtButton: document.querySelector("#confirmGenerateArtButton"),
   cancelGenerateArtButton: document.querySelector("#cancelGenerateArtButton"),
   generateArtStatus: document.querySelector("#generateArtStatus"),
+  generateArtProgress: document.querySelector("#generateArtProgress"),
+  generateArtErrorSection: document.querySelector("#generateArtErrorSection"),
+  generateArtErrorRows: document.querySelector("#generateArtErrorRows"),
   cardRenderFrame: document.querySelector("#cardRenderFrame"),
   incomingShareDialog: document.querySelector("#incomingShareDialog"),
   incomingShareForm: document.querySelector("#incomingShareForm"),
@@ -490,6 +494,41 @@ async function saveJsonFile(fileName, jsonText) {
   URL.revokeObjectURL(url);
 }
 
+/** Resets and hides the Generate Art progress bar. */
+function resetGenerateArtProgress() {
+  elements.generateArtProgress.classList.add("hidden");
+  elements.generateArtProgress.value = 0;
+  elements.generateArtProgress.max = 1;
+}
+
+/** Updates Generate Art progress as cards are processed. */
+function updateGenerateArtProgress(current, total) {
+  elements.generateArtProgress.max = Math.max(total, 1);
+  elements.generateArtProgress.value = Math.min(Math.max(current, 0), elements.generateArtProgress.max);
+  elements.generateArtProgress.classList.remove("hidden");
+}
+
+/** Returns a readable error message for a failed card-art attempt. */
+function getGenerateArtErrorMessage(error) {
+  return error?.message || String(error) || "Unknown image generation error.";
+}
+
+/** Renders the failed card-art attempts in the persistent results grid. */
+function renderGenerateArtErrors() {
+  elements.generateArtErrorRows.replaceChildren();
+  for (const failedCard of state.generateArtErrors) {
+    const row = document.createElement("tr");
+    const cardName = document.createElement("td");
+    const errorMessage = document.createElement("td");
+    cardName.textContent = failedCard.cardName;
+    errorMessage.className = "generate-art-error-message";
+    errorMessage.textContent = failedCard.error;
+    row.append(cardName, errorMessage);
+    elements.generateArtErrorRows.append(row);
+  }
+  elements.generateArtErrorSection.classList.toggle("hidden", state.generateArtErrors.length === 0);
+}
+
 /** Updates Generate Art modal buttons for the current batch state. */
 function syncGenerateArtControls() {
   elements.confirmGenerateArtButton.disabled = false;
@@ -500,13 +539,16 @@ function syncGenerateArtControls() {
     return;
   }
 
-  elements.confirmGenerateArtButton.textContent = state.generateArtPaused ? "Resume" : "Pause";
+  elements.confirmGenerateArtButton.innerHTML = state.generateArtPaused
+    ? `Resume <span class="generate-art-control-symbol" aria-hidden="true">&#9654;</span>`
+    : `Pause <span class="generate-art-control-symbol" aria-hidden="true">&#9208;</span>`;
 }
 
 /** Opens the Generate Art modal. */
 function openGenerateArtDialog() {
   if (!state.generateArtRunning) {
     elements.generateArtStatus.textContent = "";
+    resetGenerateArtProgress();
     state.generateArtCanceled = false;
     state.generateArtPaused = false;
   }
@@ -685,38 +727,70 @@ async function generateMissingSetArt() {
   state.generateArtCanceled = false;
   state.generateArtPaused = false;
   state.generateArtRunning = true;
+  state.generateArtErrors = [];
+  renderGenerateArtErrors(); // This clears previous errors and hides the error section
   syncGenerateArtControls();
 
+  let activeCardName = "Generate Art workflow";
   try {
     elements.generateArtStatus.textContent = "Checking cards for missing art...";
     const cardsMissingArt = (await getFullCardsInSet(setCode, state.generateArtAbortController.signal)).filter((card) => !String(card.artUrl || "").trim());
     throwIfGenerateArtCanceled();
     if (!cardsMissingArt.length) {
       elements.generateArtStatus.textContent = "Every card in this set already has art.";
+      resetGenerateArtProgress();
       return;
     }
 
+    updateGenerateArtProgress(0, cardsMissingArt.length);
     const provider = getSelectedImageProvider();
+    let generatedCardCount = 0;
     for (const [index, card] of cardsMissingArt.entries()) {
       await waitForGenerateArtResume();
-      elements.generateArtStatus.textContent = `Generating ${index + 1} of ${cardsMissingArt.length}: ${card.name || "Untitled Card"}`;
-      const savedCard = await generateAndSaveCardArt(card, provider, state.generateArtAbortController.signal);
-      const currentCard = state.savedCards.find((saved) => saved.cardId === savedCard.cardId);
-      if (currentCard) Object.assign(currentCard, savedCard);
+      activeCardName = card.name || "Untitled Card";
+      elements.generateArtStatus.textContent = `Generating ${index + 1} of ${cardsMissingArt.length}: ${activeCardName}`;
+      updateGenerateArtProgress(index + 1, cardsMissingArt.length);
+      try {
+        const savedCard = await generateAndSaveCardArt(card, provider, state.generateArtAbortController.signal);
+        const currentCard = state.savedCards.find((saved) => saved.cardId === savedCard.cardId);
+        if (currentCard) Object.assign(currentCard, savedCard);
+        generatedCardCount += 1;
+      } catch (error) {
+        if (isGenerateArtCanceledError(error)) throw error;
+        state.generateArtErrors.push({
+          cardName: card.name || "Untitled Card",
+          error: getGenerateArtErrorMessage(error),
+        });
+      }
     }
 
     await refreshSetsAndCards(false);
     throwIfGenerateArtCanceled();
     renderSetCardGrid(setCode);
+    updateGenerateArtProgress(cardsMissingArt.length, cardsMissingArt.length);
+    renderGenerateArtErrors();
+    if (state.generateArtErrors.length) {
+      elements.generateArtStatus.textContent =
+        `Generated art for ${generatedCardCount} of ${cardsMissingArt.length} card${cardsMissingArt.length === 1 ? "" : "s"}. Some cards could not be completed.`;
+      return;
+    }
     closeGenerateArtDialog();
     showToast(`Generated art for ${cardsMissingArt.length} card${cardsMissingArt.length === 1 ? "" : "s"}.`, "info");
   } catch (error) {
     if (!isGenerateArtCanceledError(error)) {
-      elements.generateArtStatus.textContent = "Art generation stopped. See the error popup for details.";
-      showToast(error.message);
+      state.generateArtErrors.push({
+        cardName: activeCardName,
+        error: getGenerateArtErrorMessage(error),
+      });
+      renderGenerateArtErrors();
+      elements.generateArtStatus.textContent = "Art generation finished with errors. See the grid below.";
     }
   } finally {
+    const shouldShowErrors = state.generateArtErrors.length > 0 && !state.generateArtCanceled;
     finishGenerateArtWorkflow();
+    if (shouldShowErrors && !elements.generateArtDialog.open) {
+      elements.generateArtDialog.showModal();
+    }
   }
 }
 
