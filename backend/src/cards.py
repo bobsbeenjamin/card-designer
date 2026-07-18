@@ -35,6 +35,9 @@ COGNITO = boto3.client("cognito-idp")
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_CARD_IMAGE_BYTES = 7 * 1024 * 1024
 MAX_ART_IMAGE_BYTES = 7 * 1024 * 1024
+SET_SHARE_EXPIRATION_SECONDS = 90 * 24 * 60 * 60
+SHARE_REQUEST_RECORD = "shareRequest"
+SHARE_EXPIRATION_NOTICE_RECORD = "shareExpirationNotice"
 DEFAULT_SET = {
     "code": "DEFAULT",
     "name": "Default",
@@ -1088,7 +1091,7 @@ def list_sets(user_id):
     """Return all accepted sets owned by the user."""
     ensure_default_set_if_missing(user_id)
     response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
-    sets = [item for item in response.get("Items", []) if not item.get("pendingShare") and item.get("recordType") != "shareResponse"]
+    sets = [item for item in response.get("Items", []) if not item.get("pendingShare") and item.get("recordType") not in {"shareResponse", SHARE_REQUEST_RECORD, SHARE_EXPIRATION_NOTICE_RECORD}]
     sets.sort(key=lambda item: item.get("code", ""))
     return {"sets": sets}
 
@@ -1240,7 +1243,7 @@ def get_unique_shared_set_code(user_id, requested_code):
     existing_codes = {
         normalize_set_code(item.get("code"))
         for item in response.get("Items", [])
-        if not item.get("pendingShare") and item.get("recordType") != "shareResponse"
+        if not item.get("pendingShare") and item.get("recordType") not in {"shareResponse", SHARE_REQUEST_RECORD, SHARE_EXPIRATION_NOTICE_RECORD}
     }
     if base_code not in existing_codes:
         return base_code
@@ -1264,7 +1267,7 @@ def get_unique_shared_set_name(user_id, requested_name):
     existing_names = {
         str(item.get("name") or "").strip().casefold()
         for item in response.get("Items", [])
-        if not item.get("pendingShare") and item.get("recordType") != "shareResponse"
+        if not item.get("pendingShare") and item.get("recordType") not in {"shareResponse", SHARE_REQUEST_RECORD, SHARE_EXPIRATION_NOTICE_RECORD}
     }
     if base_name.casefold() not in existing_names:
         return base_name
@@ -1289,7 +1292,7 @@ def get_set_share_conflicts(user_id, set_code, set_name):
     accepted_sets = [
         item
         for item in response.get("Items", [])
-        if not item.get("pendingShare") and item.get("recordType") != "shareResponse"
+        if not item.get("pendingShare") and item.get("recordType") not in {"shareResponse", SHARE_REQUEST_RECORD, SHARE_EXPIRATION_NOTICE_RECORD}
     ]
     requested_code = normalize_set_code(set_code)
     requested_name = str(set_name or "").strip().casefold()
@@ -1305,6 +1308,16 @@ def get_set_share_conflicts(user_id, set_code, set_name):
 def get_pending_share_code(share_id):
     """Return the temporary set code used while a copied set awaits a decision."""
     return f"__PENDING_SHARE__{str(share_id).upper()}"
+
+
+def get_share_request_code(share_id):
+    """Return the sender-side key for an outgoing share request."""
+    return f"__SHARE_REQUEST__{str(share_id).upper()}"
+
+
+def get_share_expiration_notice_code(share_id):
+    """Return the receiver-side key for an expiration notice."""
+    return f"__SHARE_EXPIRATION__{str(share_id).upper()}"
 
 
 def get_saved_art_key_from_url(art_url):
@@ -1454,7 +1467,7 @@ def finalize_pending_share_card(user_id, card, final_set_code, api_base_url):
     relocate_shared_card_art(user_id, card, final_set_code, api_base_url)
     relocate_shared_card_image(card, final_set_code)
     card["setCode"] = final_set_code
-    for field in {"pendingShare", "shareId", "senderUserId", "senderEmail", "originalCardId"}:
+    for field in {"pendingShare", "shareId", "senderUserId", "senderEmail", "originalCardId", "expiresAt"}:
         card.pop(field, None)
     TABLE.put_item(Item=card)
 
@@ -1481,6 +1494,7 @@ def build_accepted_set(card_set, user_id, final_set_code, final_set_name):
         "requestedSetCode",
         "requestedSetName",
         "sharedAt",
+        "expiresAt",
     }
     accepted_set = {key: value for key, value in card_set.items() if key not in share_fields}
     accepted_set.update({
@@ -1537,6 +1551,7 @@ def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, bo
         "requestedSetCode": source_set_code,
         "requestedSetName": requested_set_name,
         "sharedAt": now,
+        "expiresAt": now + SET_SHARE_EXPIRATION_SECONDS,
     })
     SETS_TABLE.put_item(Item=target_set)
 
@@ -1559,49 +1574,176 @@ def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, bo
             "originalCardId": source_card.get("cardId", ""),
             "createdAt": now,
             "updatedAt": now,
+            "expiresAt": now + SET_SHARE_EXPIRATION_SECONDS,
         })
         copy_shared_card_art(source_card, recipient["userId"], target_card, api_base_url)
         copy_shared_card_image(source_card, recipient["userId"], target_card)
         TABLE.put_item(Item=target_card)
         copied_cards += 1
 
+    expiration = now + SET_SHARE_EXPIRATION_SECONDS
+    SETS_TABLE.put_item(Item={
+        "userId": sender_user_id,
+        "code": get_share_request_code(share_id),
+        "recordType": SHARE_REQUEST_RECORD,
+        "shareId": share_id,
+        "senderUserId": sender_user_id,
+        "recipientUserId": recipient["userId"],
+        "recipientEmail": recipient["email"],
+        "originalSetCode": source_set_code,
+        "requestedSetName": requested_set_name,
+        "sharedAt": now,
+        "shareExpiresAt": expiration,
+    })
+    SETS_TABLE.put_item(Item={
+        "userId": recipient["userId"],
+        "code": get_share_expiration_notice_code(share_id),
+        "recordType": SHARE_EXPIRATION_NOTICE_RECORD,
+        "shareId": share_id,
+        "senderUserId": sender_user_id,
+        "senderEmail": sender_email or sender_user_id,
+        "recipientEmail": recipient["email"],
+        "originalSetCode": source_set_code,
+        "requestedSetName": requested_set_name,
+        "shareExpiresAt": expiration,
+    })
+
     return {"shareId": share_id, "set": target_set, "cardsCopied": copied_cards, "conflicts": conflicts}
 
 
+def get_set_share_expiration(item):
+    """Return the expiration timestamp, including a fallback for older shares."""
+    try:
+        expires_at = int(item.get("expiresAt") or 0)
+        if expires_at:
+            return expires_at
+        return int(item.get("sharedAt") or 0) + SET_SHARE_EXPIRATION_SECONDS
+    except (TypeError, ValueError):
+        return 0
+
+
+def is_expired_set_share(item, now=None):
+    """Return true when a pending set copy is no longer actionable."""
+    current_time = int(now if now is not None else time.time())
+    expiration = get_set_share_expiration(item)
+    return bool(expiration and expiration <= current_time)
+
+
+def is_expired_share_notice(item, now=None):
+    """Return whether a receiver-side expiration notice is ready to show."""
+    current_time = int(now if now is not None else time.time())
+    try:
+        expiration = int(item.get("shareExpiresAt") or 0)
+        return bool(expiration and expiration <= current_time)
+    except (TypeError, ValueError):
+        return False
+
+
+def delete_expired_set_share(user_id, card_set):
+    """Delete an expired pending set, its copied cards, and saved assets."""
+    record_set_share_response(
+        card_set,
+        card_set.get("recipientEmail"),
+        "expired",
+        require_tracking=bool(card_set.get("expiresAt")),
+    )
+    clear_set_cards_and_assets(user_id, card_set["code"])
+    SETS_TABLE.delete_item(Key={"userId": user_id, "code": card_set["code"]})
+
+
 def list_pending_set_shares(user_id):
-    """Return incoming pending set copies with their current conflict state."""
+    """Return incoming pending set copies and expiration notices."""
     response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
-    shares = [
-        {
+    items = response.get("Items", [])
+    shares = []
+    expired_shares = []
+    expired_share_ids = set()
+
+    # Handle outgoing expiration notices
+    for item in items:
+        if not item.get("pendingShare") or not item.get("shareId"):
+            continue
+        requested_set_code = item.get("requestedSetCode") or item.get("originalSetCode") or item.get("code", "")
+        requested_set_name = item.get("requestedSetName") or item.get("name", "Untitled Set")
+        if is_expired_set_share(item):
+            expired_share_ids.add(item["shareId"])
+            expired_shares.append({
+                "shareId": item["shareId"],
+                "setCode": requested_set_code,
+                "setName": requested_set_name,
+                "senderEmail": item.get("senderEmail", "another user"),
+            })
+            delete_expired_set_share(user_id, item)
+            continue
+
+        shares.append({
             "shareId": item.get("shareId", ""),
-            "setCode": item.get("requestedSetCode") or item.get("originalSetCode") or item.get("code", ""),
-            "setName": item.get("requestedSetName") or item.get("name", "Untitled Set"),
+            "setCode": requested_set_code,
+            "setName": requested_set_name,
             "senderEmail": item.get("senderEmail", "another user"),
-            "conflicts": get_set_share_conflicts(
-                user_id,
-                item.get("requestedSetCode") or item.get("originalSetCode") or item.get("code", ""),
-                item.get("requestedSetName") or item.get("name", "Untitled Set"),
-            ),
-        }
-        for item in response.get("Items", [])
-        if item.get("pendingShare") and item.get("shareId")
-    ]
+            "conflicts": get_set_share_conflicts(user_id, requested_set_code, requested_set_name),
+        })
+
+    # Loop again, this time handling incoming expiration notices
+    for item in items:
+        if item.get("recordType") != SHARE_EXPIRATION_NOTICE_RECORD or not item.get("shareId"):
+            continue
+        if item["shareId"] in expired_share_ids or not is_expired_share_notice(item):
+            continue
+        expired_share_ids.add(item["shareId"])
+        expired_shares.append({
+            "shareId": item["shareId"],
+            "setCode": item.get("originalSetCode", "DEFAULT"),
+            "setName": item.get("requestedSetName", "Untitled Set"),
+            "senderEmail": item.get("senderEmail", "another user"),
+        })
+        record_set_share_response(item, item.get("recipientEmail"), "expired", require_tracking=True)
+        SETS_TABLE.delete_item(Key={"userId": user_id, "code": item["code"]})
+
     shares.sort(key=lambda item: (item.get("setName", ""), item.get("senderEmail", "")))
-    return {"shares": shares}
+    return {"shares": shares, "expiredShares": expired_shares}
 
 
-def record_set_share_response(card_set, recipient_email, decision):
+def record_set_share_response(
+    card_set,
+    recipient_email,
+    decision,
+    remove_recipient_notice=True,
+    require_tracking=False,
+):
     """Store a recipient's set-share decision for the sending user.
 
     Args:
-        card_set: Pending recipient set containing the sender and share metadata.
+        card_set: Share record containing sender and recipient metadata.
         recipient_email: Email address of the user who responded.
-        decision: Either accepted or rejected.
+        decision: Either accepted, rejected, or expired.
+        remove_recipient_notice: Whether to clear the receiver's expiration notice.
+        require_tracking: Whether an active sender tracking record is required.
     """
     sender_user_id = str(card_set.get("senderUserId") or "").strip()
     share_id = str(card_set.get("shareId") or "").strip()
     if not sender_user_id or not share_id:
         return
+
+    recipient_user_id = str(
+        card_set.get("recipientUserId") or card_set.get("userId") or ""
+    ).strip()
+    if require_tracking:
+        tracking = SETS_TABLE.get_item(
+            Key={"userId": sender_user_id, "code": get_share_request_code(share_id)}
+        ).get("Item")
+        if not tracking:
+            if remove_recipient_notice and recipient_user_id:
+                SETS_TABLE.delete_item(
+                    Key={"userId": recipient_user_id, "code": get_share_expiration_notice_code(share_id)}
+                )
+            return
+
+    SETS_TABLE.delete_item(Key={"userId": sender_user_id, "code": get_share_request_code(share_id)})
+    if remove_recipient_notice and recipient_user_id:
+        SETS_TABLE.delete_item(
+            Key={"userId": recipient_user_id, "code": get_share_expiration_notice_code(share_id)}
+        )
 
     response_item = {
         "userId": sender_user_id,
@@ -1619,6 +1761,16 @@ def record_set_share_response(card_set, recipient_email, decision):
 
 def list_set_share_responses(user_id):
     """Return and consume unviewed set-share decisions for the signed-in user."""
+    response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
+    for item in response.get("Items", []):
+        if item.get("recordType") == SHARE_REQUEST_RECORD and is_expired_share_notice(item):
+            record_set_share_response(
+                item,
+                item.get("recipientEmail"),
+                "expired",
+                remove_recipient_notice=False,
+            )
+
     response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
     response_items = [
         item for item in response.get("Items", []) if item.get("recordType") == "shareResponse"
@@ -1644,6 +1796,9 @@ def get_pending_share_set(user_id, share_id):
     response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
     for item in response.get("Items", []):
         if item.get("pendingShare") and item.get("shareId") == share_id:
+            if is_expired_set_share(item):
+                delete_expired_set_share(user_id, item)
+                raise ValueError("This set copy request has expired.")
             return item
     raise ValueError("Shared set was not found.")
 

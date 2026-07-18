@@ -51,6 +51,9 @@ Resources:
           KeyType: HASH
         - AttributeName: cardId
           KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
 
   CardSetsTable:
     Type: AWS::DynamoDB::Table
@@ -69,6 +72,9 @@ Resources:
           KeyType: HASH
         - AttributeName: code
           KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
 
   UserSettingsKey:
     Type: AWS::KMS::Key

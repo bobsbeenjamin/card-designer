@@ -77,8 +77,12 @@ window.createSetSharingController = function createSetSharingController(dependen
       const data = await apiFetch("/set-share-responses");
       for (const response of data.responses || []) {
         const recipientEmail = response.recipientEmail || "The recipient";
-        const decision = response.response === "accepted" ? "accepted" : "rejected";
         const setLabel = `${response.setCode || "DEFAULT"} - ${response.setName || "Untitled Set"}`;
+        if (response.response === "expired") {
+          showToast(`The set you sent to ${recipientEmail} expired (${setLabel}).`, "info");
+          continue;
+        }
+        const decision = response.response === "accepted" ? "accepted" : "rejected";
         showToast(`${recipientEmail} has ${decision} the set you sent them (${setLabel})!`, "info");
       }
     } catch (error) {
@@ -91,6 +95,11 @@ window.createSetSharingController = function createSetSharingController(dependen
     if (!state.idToken || (skipIfDialogOpen && elements.incomingShareDialog.open)) return;
     try {
       const data = await apiFetch("/set-shares");
+      for (const expiredShare of data.expiredShares || []) {
+        const senderEmail = expiredShare.senderEmail || "Another user";
+        const setLabel = `${expiredShare.setCode || "DEFAULT"} - ${expiredShare.setName || "Untitled Set"}`;
+        showToast(`The set copy sent by ${senderEmail} expired (${setLabel}).`, "info");
+      }
       const share = (data.shares || [])[0];
       if (share) openIncomingShareDialog(share);
     } catch (error) {
@@ -120,6 +129,12 @@ window.createSetSharingController = function createSetSharingController(dependen
       await checkSetShareResponses();
       await checkIncomingSetShares();
     } catch (error) {
+      if (error.message === "This set copy request has expired.") {
+        elements.incomingShareDialog.close();
+        setStatus("That set copy request has expired.");
+        await checkIncomingSetShares();
+        return;
+      }
       elements.incomingShareMessage.textContent = error.message;
     } finally {
       elements.acceptIncomingShareButton.disabled = false;
