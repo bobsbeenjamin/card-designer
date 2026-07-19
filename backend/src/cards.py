@@ -1124,6 +1124,8 @@ def build_card_history_item(user_id, existing_card, updated_card, change_type, c
     """
     recorded_at_ns = time.time_ns()
     changed_fields, description = summarize_card_change(existing_card, updated_card, change_type)
+    old_values = {field: existing_card.get(field) for field in changed_fields}
+    new_values = {field: updated_card.get(field) for field in changed_fields}
     return {
         "cardKey": f"{user_id}#{existing_card['cardId']}",
         "versionId": f"{recorded_at_ns:020d}#{uuid.uuid4()}",
@@ -1134,6 +1136,8 @@ def build_card_history_item(user_id, existing_card, updated_card, change_type, c
         "changeType": change_type,
         "changedFields": changed_fields,
         "description": description,
+        "oldValues": old_values,
+        "newValues": new_values,
         "snapshot": existing_card,
     }
 
@@ -2184,6 +2188,39 @@ def get_card(user_id, card_id):
     return {"card": item}
 
 
+def get_history_transition(history_item, newer_card):
+    """Return changed fields and old/new values for one history entry.
+
+    Args:
+        history_item: Stored history record containing the prior card snapshot.
+        newer_card: Card state immediately after this history entry.
+    """
+    old_snapshot = history_item.get("snapshot") or {}
+    changed_fields = history_item.get("changedFields") or []
+    if not changed_fields:
+        changed_fields, _ = summarize_card_change(
+            old_snapshot,
+            newer_card,
+            history_item.get("changeType", "update"),
+        )
+    old_values = history_item.get("oldValues") or {
+        field: old_snapshot.get(field)
+        for field in changed_fields
+    }
+    new_values = history_item.get("newValues") or {
+        field: newer_card.get(field)
+        for field in changed_fields
+    }
+    description = history_item.get("description")
+    if not description:
+        _, description = summarize_card_change(
+            old_snapshot,
+            newer_card,
+            history_item.get("changeType", "update"),
+        )
+    return changed_fields, old_values, new_values, description
+
+
 def list_card_history(user_id, card_id, limit=None):
     """Return stored card changes from newest to oldest.
 
@@ -2209,18 +2246,22 @@ def list_card_history(user_id, card_id, limit=None):
             break
         query_options["ExclusiveStartKey"] = response["LastEvaluatedKey"]
 
-    return {
-        "history": [
-            {
-                "versionId": item.get("versionId", ""),
-                "recordedAt": item.get("recordedAt", 0),
-                "changedBy": item.get("changedBy") or item.get("userId") or "Unknown user",
-                "description": item.get("description") or "Updated card.",
-                "changeType": item.get("changeType", "update"),
-            }
-            for item in history_items
-        ],
-    }
+    current_card = TABLE.get_item(Key={"userId": user_id, "cardId": card_id}).get("Item") or {}
+    history = []
+    for index, item in enumerate(history_items):
+        newer_card = current_card if index == 0 else history_items[index - 1].get("snapshot") or {}
+        changed_fields, old_values, new_values, description = get_history_transition(item, newer_card)
+        history.append({
+            "versionId": item.get("versionId", ""),
+            "recordedAt": item.get("recordedAt", 0),
+            "changedBy": item.get("changedBy") or item.get("userId") or "Unknown user",
+            "description": description,
+            "changeType": item.get("changeType", "update"),
+            "changedFields": changed_fields,
+            "oldValues": old_values,
+            "newValues": new_values,
+        })
+    return {"history": history}
 
 
 def reorder_set_cards(user_id, set_code, body, changed_by):

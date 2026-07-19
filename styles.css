@@ -1135,6 +1135,10 @@ input[type="color"] {
   text-align: center;
 }
 
+.card-history-value {
+  white-space: pre-wrap;
+}
+
 .card-history-modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -1192,6 +1196,28 @@ input[type="color"] {
 .card-history-table th:nth-child(2),
 .card-history-table td:nth-child(2) {
   width: 30%;
+}
+
+.card-history-modal-table-wrapper .card-history-table th:first-child,
+.card-history-modal-table-wrapper .card-history-table td:first-child {
+  width: 16%;
+}
+
+.card-history-modal-table-wrapper .card-history-table th:nth-child(2),
+.card-history-modal-table-wrapper .card-history-table td:nth-child(2) {
+  width: 20%;
+}
+
+.card-history-modal-table-wrapper .card-history-table th:nth-child(3),
+.card-history-modal-table-wrapper .card-history-table td:nth-child(3) {
+  width: 26%;
+}
+
+.card-history-modal-table-wrapper .card-history-table th:nth-child(4),
+.card-history-modal-table-wrapper .card-history-table td:nth-child(4),
+.card-history-modal-table-wrapper .card-history-table th:nth-child(5),
+.card-history-modal-table-wrapper .card-history-table td:nth-child(5) {
+  width: 19%;
 }
 
 .card-history-table-wrapper {

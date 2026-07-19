@@ -8,6 +8,25 @@ const imageProviderStorageKey = "cardDesignerImageProvider";
 const isRenderWorkspace = new URLSearchParams(window.location.search).get("render") === "card";
 const cardRenderProfileStorageKey = "cardDesignerRenderProfile";
 
+const cardHistoryFieldLabels = {
+  name: "Name",
+  artUrl: "Art",
+  cost: "Cost",
+  type: "Type",
+  sub_type: "Subtype",
+  statMode: "Stat mode",
+  attack: "Attack",
+  health: "Health",
+  loyalty: "Loyalty",
+  abilities: "Rules",
+  flavorText: "Flavor text",
+  artistName: "Artist",
+  collectorNumber: "Collector number",
+  rarity: "Rarity",
+  colors: "Colors",
+  setCode: "Set",
+};
+
 const imageProviderLabels = {
   openai: "OpenAI",
   gemini: "Google Gemini",
@@ -903,7 +922,54 @@ function formatCardHistoryDate(recordedAt) {
   }).format(new Date(timestamp));
 }
 
-/** Renders card history entries into one of the history table bodies. */
+/** Formats one history value for display in the old/new value columns. */
+function formatCardHistoryValue(value) {
+  if (value === null || value === undefined || value === "") return "blank";
+  if (Array.isArray(value)) return value.join(", ");
+  if (typeof value === "object") {
+    return Object.entries(value)
+      .map(([key, nestedValue]) => `${cardHistoryFieldLabels[key] || key}: ${formatCardHistoryValue(nestedValue)}`)
+      .join("; ");
+  }
+  return String(value);
+}
+
+/** Formats changed fields as aligned old/new value cell text. */
+function formatCardHistoryValues(values) {
+  const entries = Object.entries(values || {});
+  if (!entries.length) return "Unavailable";
+  return entries
+    .map(([field, value]) => `${cardHistoryFieldLabels[field] || field}: ${formatCardHistoryValue(value)}`)
+    .join("\n");
+}
+
+/** Appends one history row with optional old and new value columns.
+ * @param {*} tableBody Table body receiving the row.
+ * @param {*} entry History entry to render.
+ * @param {*} includeValues Whether to include old and new value cells.
+ */
+function appendCardHistoryRow(tableBody, entry, includeValues) {
+  const row = document.createElement("tr");
+  const dateCell = document.createElement("td");
+  const userCell = document.createElement("td");
+  const descriptionCell = document.createElement("td");
+  dateCell.textContent = formatCardHistoryDate(entry.recordedAt);
+  userCell.textContent = entry.changedBy || "Unknown user";
+  descriptionCell.textContent = entry.description || "Updated card.";
+  row.append(dateCell, userCell, descriptionCell);
+  if (includeValues) {
+    const oldValueCell = document.createElement("td");
+    const newValueCell = document.createElement("td");
+    oldValueCell.className = "card-history-value";
+    newValueCell.className = "card-history-value";
+    oldValueCell.textContent = formatCardHistoryValues(entry.oldValues);
+    newValueCell.textContent = formatCardHistoryValues(entry.newValues);
+    row.append(oldValueCell, newValueCell);
+  }
+  tableBody.append(row);
+}
+
+/** Renders recent history entries into the compact table. */
 function renderCardHistoryTable(tableBody, history) {
   tableBody.replaceChildren();
   if (!history.length) {
@@ -917,23 +983,30 @@ function renderCardHistoryTable(tableBody, history) {
     return;
   }
 
-  for (const entry of history) {
+  history.forEach((entry) => appendCardHistoryRow(tableBody, entry, false));
+}
+
+/** Renders all history entries with old and new values in the modal. */
+function renderFullCardHistoryTable(tableBody, history) {
+  tableBody.replaceChildren();
+  if (!history.length) {
     const row = document.createElement("tr");
-    const dateCell = document.createElement("td");
-    const userCell = document.createElement("td");
-    const descriptionCell = document.createElement("td");
-    dateCell.textContent = formatCardHistoryDate(entry.recordedAt);
-    userCell.textContent = entry.changedBy || "Unknown user";
-    descriptionCell.textContent = entry.description || "Updated card.";
-    row.append(dateCell, userCell, descriptionCell);
+    const cell = document.createElement("td");
+    cell.className = "card-history-empty";
+    cell.colSpan = 5;
+    cell.textContent = state.cardHistoryStatus || "No changes recorded for this card.";
+    row.append(cell);
     tableBody.append(row);
+    return;
   }
+
+  history.forEach((entry) => appendCardHistoryRow(tableBody, entry, true));
 }
 
 /** Refreshes the compact and full card-history tables from current state. */
 function renderCardHistory() {
   renderCardHistoryTable(elements.recentCardHistoryRows, state.cardHistory.slice(0, 3));
-  renderCardHistoryTable(elements.allCardHistoryRows, state.cardHistory);
+  renderFullCardHistoryTable(elements.allCardHistoryRows, state.cardHistory);
   elements.viewAllCardHistoryButton.disabled = !state.currentCardId || state.cardHistoryLoading;
 }
 

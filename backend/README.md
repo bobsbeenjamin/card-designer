@@ -99,7 +99,8 @@ history record because there is no prior state.
 History records use `cardKey` (`<userId>#<cardId>`) as the partition key and a
 chronological `versionId` as the sort key. Each record also contains `userId`,
 `cardId`, `recordedAt`, `changedBy`, `changeType`, `changedFields`,
-`description`, and `snapshot`. The authenticated history route returns the
+`description`, `oldValues`, `newValues`, and `snapshot`. The authenticated
+history route returns the
 newest entries first. History starts after the updated backend stack is
 deployed; existing cards are not backfilled.
 
