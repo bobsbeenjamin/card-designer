@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Card Maker logo</title>
+  <desc id="desc">A rounded square containing three cards fanned out behind a designer pen nib and selection handles.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="72" y1="48" x2="440" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#404040"/>
+      <stop offset="1" stop-color="#0A0A0A"/>
+    </linearGradient>
+    <linearGradient id="card" x1="168" y1="130" x2="344" y2="386" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#D6D6D6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- High-contrast app tile -->
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#bg)"/>
+
+  <!-- Three distinct cards fanned out -->
+  <rect x="110" y="130" width="220" height="282" rx="30" fill="#A3A3A3" stroke="#F5F5F5" stroke-width="8" transform="rotate(-16 220 271)"/>
+  <rect x="182" y="130" width="220" height="282" rx="30" fill="#737373" stroke="#E5E5E5" stroke-width="8" transform="rotate(16 292 271)"/>
+  <rect x="146" y="111" width="220" height="290" rx="32" fill="url(#card)" stroke="#FFFFFF" stroke-width="8"/>
+
+  <!-- Simple card layout lines, readable at small sizes -->
+  <rect x="182" y="155" width="102" height="22" rx="11" fill="#555555"/>
+  <rect x="182" y="194" width="148" height="14" rx="7" fill="#A3A3A3"/>
+
+  <!-- Designer selection frame -->
+  <path d="M181 251V231H201M331 251V231H311M181 331V351H201M331 331V351H311" fill="none" stroke="#737373" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Pen nib: design tool + central card mark -->
+  <path d="M256 234L315 292L261 346L203 288L256 234Z" fill="#282828"/>
+  <path d="M256 234L265 285L315 292M256 234L247 284L203 288" fill="none" stroke="#A3A3A3" stroke-width="11" stroke-linejoin="round"/>
+  <circle cx="256" cy="291" r="15" fill="#FFFFFF"/>
+  <path d="M256 306V335" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round"/>
+
+  <!-- Selection handles -->
+  <circle cx="181" cy="231" r="10" fill="#FFFFFF" stroke="#282828" stroke-width="6"/>
+  <circle cx="331" cy="231" r="10" fill="#FFFFFF" stroke="#282828" stroke-width="6"/>
+  <circle cx="181" cy="351" r="10" fill="#FFFFFF" stroke="#282828" stroke-width="6"/>
+  <circle cx="331" cy="351" r="10" fill="#FFFFFF" stroke="#282828" stroke-width="6"/>
+</svg>

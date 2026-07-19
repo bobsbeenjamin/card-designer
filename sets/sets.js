@@ -205,6 +205,7 @@ function renderAuthUi() {
   elements.setsPageContent.classList.toggle("hidden", !signedIn);
   if (!signedIn) {
     elements.setsTitle.textContent = "My Sets";
+    document.title = "My Sets - Card Designer";
   }
 }
 
@@ -1036,6 +1037,7 @@ function createSetDeleteButton(cardSet) {
 /** Shows the set list view on the page. */
 function renderSetLibraryList() {
   state.currentSetCode = "";
+  document.title = "My Sets - Card Designer";
   elements.setsTitle.textContent = "My Sets";
   elements.setsCloseButton.href = "../";
   elements.generateArtButton.classList.add("hidden");
@@ -1181,6 +1183,9 @@ function renderSetCardGrid(setCode) {
   state.currentSetCode = setCode;
   const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === setCode);
   const cards = getCardsInSet(setCode);
+  document.title = cardSet
+    ? `[${cardSet.code || setCode}] ${cardSet.name || "Untitled Set"} - Card Designer`
+    : "My Sets - Card Designer";
   elements.setsTitle.textContent = cardSet ? `${cardSet.code} - ${cardSet.name || "Untitled Set"}` : setCode;
   elements.setsCloseButton.href = "./";
   elements.generateArtButton.classList.toggle("hidden", !cardSet);

@@ -88,7 +88,10 @@ async function loadPublicSet() {
   const cardSet = data.set || {};
   const cards = data.cards || [];
   const title = `Custom Set: ${cardSet.name || setName}`;
-  document.title = title;
+  document.title =
+    cardSet.code
+    ? `[${cardSet.code}] ${cardSet.name || setName} - public link - Card Designer`
+    : `${cardSet.name || setName} - public link - Card Designer`;
   pageTitle.textContent = title;
   setMeta.textContent = cardSet.code ? `${cardSet.code} - ${cards.length} cards` : `${cards.length} cards`;
   cardGrid.replaceChildren(...cards.map((card) => renderCard(card, cards.length)));
