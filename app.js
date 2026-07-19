@@ -703,6 +703,13 @@ function loadArtElement(src) {
   });
 }
 
+/** Marks the preview ready after artwork pixels have loaded. */
+function markArtLoaded(statusMessage = "") {
+  setArtWindowImage(elements.art.currentSrc || elements.art.src);
+  elements.artWindow.classList.add("has-image");
+  if (statusMessage) setSaveStatus(statusMessage);
+}
+
 /** Loads artwork from a file, data URL, proxied URL, or direct URL fallback. */
 async function setArtSource(src, statusMessage = "") {
   const artUrl = String(src || "").trim();
@@ -719,11 +726,7 @@ async function setArtSource(src, statusMessage = "") {
     return;
   }
 
-  elements.art.onload = () => {
-    setArtWindowImage(elements.art.currentSrc || elements.art.src);
-    elements.artWindow.classList.add("has-image");
-    if (statusMessage) setSaveStatus(statusMessage);
-  };
+  elements.art.onload = () => markArtLoaded(statusMessage);
   elements.art.onerror = () => {
     clearArt();
     if (statusMessage) setSaveStatus("Image URL did not load as an image.");
@@ -731,7 +734,12 @@ async function setArtSource(src, statusMessage = "") {
 
   elements.art.removeAttribute("crossorigin");
   if (artUrl.startsWith("data:")) {
-    await loadArtElement(artUrl).catch(() => {});
+    try {
+      await loadArtElement(artUrl);
+      markArtLoaded(statusMessage);
+    } catch (error) {
+      return;
+    }
     return;
   }
 
@@ -739,9 +747,11 @@ async function setArtSource(src, statusMessage = "") {
     const objectUrl = await getProxiedImageSource(artUrl);
     state.artObjectUrl = objectUrl;
     await loadArtElement(objectUrl);
+    markArtLoaded(statusMessage);
   } catch (error) {
     try {
       await loadArtElement(artUrl);
+      markArtLoaded(statusMessage);
     } catch (loadError) {
       setSaveStatus(loadError.message);
     }
