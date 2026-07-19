@@ -45,11 +45,13 @@ The GitHub Pages app URL is `https://bobsbeenjamin.github.io/card-designer`, but
 the CORS origin is only `https://bobsbeenjamin.github.io`.
 
 Dev and prod should be deployed as separate CloudFormation stacks. Each stack
-creates its own DynamoDB table:
+creates separate DynamoDB tables for current cards and card history:
 
 ```text
-Dev table:  card-designer-dev-card-designs
-Prod table: card-designer-prod-card-designs
+Dev cards:    card-designer-dev-card-designs
+Dev history:  card-designer-dev-card-history
+Prod cards:   card-designer-prod-card-designs
+Prod history: card-designer-prod-card-history
 ```
 
 ## Current Stack Outputs
@@ -81,8 +83,25 @@ All routes require `Authorization: Bearer <cognito-jwt>`.
 - `GET /cards`
 - `POST /cards`
 - `GET /cards/{cardId}`
+- `GET /cards/{cardId}/history`
 - `PUT /cards/{cardId}`
 - `DELETE /cards/{cardId}`
+
+## Card History
+
+Every update to an existing card stores its complete prior DynamoDB item in the
+card history table. The snapshot and replacement card are written in one
+DynamoDB transaction, so the current record remains the source of truth without
+losing the previous state. Drag-and-drop reordering also records snapshots for
+cards whose collector number changes. Creating a new card does not create a
+history record because there is no prior state.
+
+History records use `cardKey` (`<userId>#<cardId>`) as the partition key and a
+chronological `versionId` as the sort key. Each record also contains `userId`,
+`cardId`, `recordedAt`, `changedBy`, `changeType`, `changedFields`,
+`description`, and `snapshot`. The authenticated history route returns the
+newest entries first. History starts after the updated backend stack is
+deployed; existing cards are not backfilled.
 
 Card JSON accepts:
 
@@ -122,4 +141,4 @@ Card JSON accepts:
 - Store uploaded art in S3 later using short-lived presigned upload URLs from
   Lambda, not direct public write access.
 - Review the generated Lambda role before production. It should only need
-  access to this one DynamoDB table and CloudWatch Logs.
+  access to the stack-managed DynamoDB tables and CloudWatch Logs.

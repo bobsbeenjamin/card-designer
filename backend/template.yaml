@@ -27,6 +27,7 @@ Globals:
     Environment:
       Variables:
         TABLE_NAME: !Ref CardDesignsTable
+        CARD_HISTORY_TABLE_NAME: !Ref CardHistoryTable
         SETS_TABLE_NAME: !Ref CardSetsTable
         USER_SETTINGS_TABLE_NAME: !Ref UserSettingsTable
         USER_SETTINGS_KEY_ID: !Ref UserSettingsKey
@@ -54,6 +55,24 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: expiresAt
         Enabled: true
+
+  CardHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "card-designer-${AppEnvironment}-card-history"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: cardKey
+          AttributeType: S
+        - AttributeName: versionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: cardKey
+          KeyType: HASH
+        - AttributeName: versionId
+          KeyType: RANGE
 
   CardSetsTable:
     Type: AWS::DynamoDB::Table
@@ -225,10 +244,18 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref CardDesignsTable
         - DynamoDBCrudPolicy:
+            TableName: !Ref CardHistoryTable
+        - DynamoDBCrudPolicy:
             TableName: !Ref CardSetsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref UserSettingsTable
         - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:TransactWriteItems
+              Resource:
+                - !GetAtt CardDesignsTable.Arn
+                - !GetAtt CardHistoryTable.Arn
             - Effect: Allow
               Action:
                 - kms:Encrypt
@@ -398,6 +425,12 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /cards/{cardId}
             Method: GET
+        GetCardHistory:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /cards/{cardId}/history
+            Method: GET
         UpdateCard:
           Type: HttpApi
           Properties:
@@ -430,6 +463,9 @@ Outputs:
   TableName:
     Description: DynamoDB card designs table name.
     Value: !Ref CardDesignsTable
+  CardHistoryTableName:
+    Description: DynamoDB card history table name.
+    Value: !Ref CardHistoryTable
   SetsTableName:
     Description: DynamoDB card sets table name.
     Value: !Ref CardSetsTable

@@ -14,10 +14,12 @@ import uuid
 
 import boto3
 from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.types import TypeSerializer
 from botocore.exceptions import ClientError
 
 
 TABLE_NAME = os.environ["TABLE_NAME"]
+CARD_HISTORY_TABLE_NAME = os.environ["CARD_HISTORY_TABLE_NAME"]
 SETS_TABLE_NAME = os.environ["SETS_TABLE_NAME"]
 USER_SETTINGS_TABLE_NAME = os.environ["USER_SETTINGS_TABLE_NAME"]
 USER_BUCKET_PREFIX = os.environ["USER_BUCKET_PREFIX"]
@@ -25,7 +27,10 @@ ART_BUCKET_NAME = os.environ["ART_BUCKET_NAME"]
 USER_SETTINGS_KEY_ID = os.environ["USER_SETTINGS_KEY_ID"]
 USER_POOL_ID = os.environ["USER_POOL_ID"]
 DYNAMODB = boto3.resource("dynamodb")
+DYNAMODB_CLIENT = boto3.client("dynamodb")
+DYNAMODB_SERIALIZER = TypeSerializer()
 TABLE = DYNAMODB.Table(TABLE_NAME)
+CARD_HISTORY_TABLE = DYNAMODB.Table(CARD_HISTORY_TABLE_NAME)
 SETS_TABLE = DYNAMODB.Table(SETS_TABLE_NAME)
 USER_SETTINGS_TABLE = DYNAMODB.Table(USER_SETTINGS_TABLE_NAME)
 S3 = boto3.client("s3")
@@ -62,6 +67,24 @@ ALLOWED_FIELDS = {
     "rarity",
     "colors",
     "setCode",
+}
+CARD_HISTORY_FIELD_LABELS = {
+    "name": "name",
+    "artUrl": "art",
+    "cost": "cost",
+    "type": "type",
+    "sub_type": "subtype",
+    "statMode": "stat mode",
+    "attack": "attack",
+    "health": "health",
+    "loyalty": "loyalty",
+    "abilities": "rules",
+    "flavorText": "flavor text",
+    "artistName": "artist",
+    "collectorNumber": "collector number",
+    "rarity": "rarity",
+    "colors": "colors",
+    "setCode": "set",
 }
 CARD_IMAGE_FIELD = "cardImagePng"
 ART_IMAGE_FIELD = "artImage"
@@ -170,10 +193,15 @@ def handler(event, _context):
 
         if method == "POST" and route_key == "POST /sets/{setCode}/cards/reorder":
             set_code = event["pathParameters"]["setCode"]
-            return ok(reorder_set_cards(user_id, set_code, read_body(event)))
+            return ok(reorder_set_cards(user_id, set_code, read_body(event), user_email))
 
         if method == "GET" and route_key == "GET /cards":
             return ok(list_cards(user_id))
+
+        if method == "GET" and route_key == "GET /cards/{cardId}/history":
+            query = event.get("queryStringParameters") or {}
+            limit = int(query["limit"]) if query.get("limit") else None
+            return ok(list_card_history(user_id, event["pathParameters"]["cardId"], limit))
 
         if method == "GET" and route_key == "GET /cards/{cardId}":
             return ok(get_card(user_id, event["pathParameters"]["cardId"]))
@@ -182,7 +210,7 @@ def handler(event, _context):
             return ok(save_card(user_id, read_body(event)), status=201)
 
         if method == "PUT" and route_key == "PUT /cards/{cardId}":
-            return ok(save_card(user_id, read_body(event), event["pathParameters"]["cardId"]))
+            return ok(save_card(user_id, read_body(event), event["pathParameters"]["cardId"], user_email))
 
         if method == "DELETE" and route_key == "DELETE /cards/{cardId}":
             delete_card(user_id, event["pathParameters"]["cardId"])
@@ -1044,6 +1072,103 @@ def clean_card(body):
     card["setCode"] = normalize_set_code(card.get("setCode"))
     card["collectorNumber"] = normalize_collector_number(card.get("collectorNumber"))
     return card
+
+
+def serialize_dynamodb_item(item):
+    """Convert a Python mapping to DynamoDB's low-level item format."""
+    return {key: DYNAMODB_SERIALIZER.serialize(value) for key, value in item.items()}
+
+
+def format_change_labels(labels):
+    """Join card field labels into a readable sentence fragment."""
+    if len(labels) == 1:
+        return labels[0]
+    if len(labels) == 2:
+        return f"{labels[0]} and {labels[1]}"
+    return f"{', '.join(labels[:-1])}, and {labels[-1]}"
+
+
+def summarize_card_change(existing_card, updated_card, change_type):
+    """Return changed field names and a human-readable update description.
+
+    Args:
+        existing_card: Card state immediately before the update.
+        updated_card: New source-of-truth card state.
+        change_type: Kind of update being recorded.
+    """
+    changed_fields = [
+        field
+        for field in CARD_HISTORY_FIELD_LABELS
+        if existing_card.get(field) != updated_card.get(field)
+    ]
+    if change_type == "reorder":
+        old_number = normalize_collector_number(existing_card.get("collectorNumber"))
+        new_number = normalize_collector_number(updated_card.get("collectorNumber"))
+        return changed_fields, f"Moved from collector number {old_number} to {new_number}."
+    if not changed_fields:
+        return changed_fields, "Saved card without field changes."
+
+    labels = [CARD_HISTORY_FIELD_LABELS[field] for field in changed_fields]
+    return changed_fields, f"Changed {format_change_labels(labels)}."
+
+
+def build_card_history_item(user_id, existing_card, updated_card, change_type, changed_by):
+    """Build a chronological snapshot record for a card update.
+
+    Args:
+        user_id: Authenticated owner of the card.
+        existing_card: Card state immediately before the update.
+        updated_card: New source-of-truth card state.
+        change_type: Kind of update that produced the history record.
+        changed_by: Email or identifier for the user making the change.
+    """
+    recorded_at_ns = time.time_ns()
+    changed_fields, description = summarize_card_change(existing_card, updated_card, change_type)
+    return {
+        "cardKey": f"{user_id}#{existing_card['cardId']}",
+        "versionId": f"{recorded_at_ns:020d}#{uuid.uuid4()}",
+        "userId": user_id,
+        "cardId": existing_card["cardId"],
+        "recordedAt": recorded_at_ns // 1_000_000,
+        "changedBy": str(changed_by or user_id),
+        "changeType": change_type,
+        "changedFields": changed_fields,
+        "description": description,
+        "snapshot": existing_card,
+    }
+
+
+def put_card_update_with_history(user_id, existing_card, updated_card, change_type, changed_by):
+    """Atomically save a card update and its previous state.
+
+    Args:
+        user_id: Authenticated owner of the card.
+        existing_card: Card state immediately before the update.
+        updated_card: New source-of-truth card state.
+        change_type: Kind of update being recorded.
+        changed_by: Email or identifier for the user making the change.
+    """
+    history_item = build_card_history_item(
+        user_id,
+        existing_card,
+        updated_card,
+        change_type,
+        changed_by,
+    )
+    DYNAMODB_CLIENT.transact_write_items(TransactItems=[
+        {
+            "Put": {
+                "TableName": CARD_HISTORY_TABLE_NAME,
+                "Item": serialize_dynamodb_item(history_item),
+            },
+        },
+        {
+            "Put": {
+                "TableName": TABLE_NAME,
+                "Item": serialize_dynamodb_item(updated_card),
+            },
+        },
+    ])
 
 
 def normalize_set_code(value):
@@ -2059,13 +2184,53 @@ def get_card(user_id, card_id):
     return {"card": item}
 
 
-def reorder_set_cards(user_id, set_code, body):
+def list_card_history(user_id, card_id, limit=None):
+    """Return stored card changes from newest to oldest.
+
+    Args:
+        user_id: Authenticated owner of the card.
+        card_id: Card whose history should be returned.
+        limit: Optional maximum number of newest records to return.
+    """
+    query_options = {
+        "KeyConditionExpression": Key("cardKey").eq(f"{user_id}#{card_id}"),
+        "ScanIndexForward": False,
+    }
+    if limit is not None:
+        if limit <= 0:
+            raise ValueError("History limit must be positive.")
+        query_options["Limit"] = limit
+
+    history_items = []
+    while True:
+        response = CARD_HISTORY_TABLE.query(**query_options)
+        history_items.extend(response.get("Items", []))
+        if limit is not None or not response.get("LastEvaluatedKey"):
+            break
+        query_options["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+    return {
+        "history": [
+            {
+                "versionId": item.get("versionId", ""),
+                "recordedAt": item.get("recordedAt", 0),
+                "changedBy": item.get("changedBy") or item.get("userId") or "Unknown user",
+                "description": item.get("description") or "Updated card.",
+                "changeType": item.get("changeType", "update"),
+            }
+            for item in history_items
+        ],
+    }
+
+
+def reorder_set_cards(user_id, set_code, body, changed_by):
     """Persist drag/drop ordering and collector numbers for every card in a set.
 
     Args:
         user_id: Authenticated Cognito user id.
         set_code: Set whose cards are being reordered.
         body: Request body containing the complete ordered card id list.
+        changed_by: Email or identifier for the user making the change.
     """
     normalized_set_code = normalize_set_code(set_code)
     validate_card_set(user_id, normalized_set_code)
@@ -2086,13 +2251,12 @@ def reorder_set_cards(user_id, set_code, body):
 
     now = int(time.time())
     for index, card_id in enumerate(card_ids, start=1):
-        TABLE.update_item(
-            Key={"userId": user_id, "cardId": card_id},
-            UpdateExpression="SET collectorNumber = :collectorNumber, updatedAt = :updatedAt",
-            ExpressionAttributeValues={":collectorNumber": index, ":updatedAt": now},
-        )
-        cards_in_set[card_id]["collectorNumber"] = index
-        cards_in_set[card_id]["updatedAt"] = now
+        existing_card = cards_in_set[card_id]
+        if normalize_collector_number(existing_card.get("collectorNumber")) == index:
+            continue
+        updated_card = {**existing_card, "collectorNumber": index, "updatedAt": now}
+        put_card_update_with_history(user_id, existing_card, updated_card, "reorder", changed_by)
+        cards_in_set[card_id] = updated_card
 
     reordered_cards = [cards_in_set[card_id] for card_id in card_ids]
     return {"cards": add_card_image_urls(reordered_cards, get_public_set_codes(user_id))}
@@ -2272,13 +2436,14 @@ def delete_card_image(card):
     S3.delete_object(Bucket=bucket_name, Key=image_key)
 
 
-def save_card(user_id, body, card_id=None):
+def save_card(user_id, body, card_id=None, changed_by=""):
     """Create or update a card record and its rendered PNG.
 
     Args:
         user_id: Authenticated Cognito user id.
         body: Card request payload.
         card_id: Existing card id when updating.
+        changed_by: Email or identifier for the user making the change.
     """
     now = int(time.time())
     card = clean_card(body)
@@ -2307,7 +2472,10 @@ def save_card(user_id, body, card_id=None):
         item["imageBucket"] = existing_item.get("imageBucket", "")
         item["imageKey"] = existing_item.get("imageKey", "")
 
-    TABLE.put_item(Item=item)
+    if existing_item:
+        put_card_update_with_history(user_id, existing_item, item, "update", changed_by)
+    else:
+        TABLE.put_item(Item=item)
 
     if existing_item:
         delete_replaced_card_art(existing_item, item)

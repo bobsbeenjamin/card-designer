@@ -372,6 +372,27 @@
               </label>
             </div>
           </fieldset>
+
+          <fieldset id="cardHistoryPanel">
+            <legend>History</legend>
+            <div class="card-history-table-wrapper">
+              <table class="card-history-table" aria-label="Recent card history">
+                <thead>
+                  <tr>
+                    <th scope="col">Date</th>
+                    <th scope="col">User</th>
+                    <th scope="col">Description</th>
+                  </tr>
+                </thead>
+                <tbody id="recentCardHistoryRows">
+                  <tr>
+                    <td class="card-history-empty" colspan="3">Load a saved card to view history.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <button id="viewAllCardHistoryButton" class="button subtle" type="button" disabled>View All Card History</button>
+          </fieldset>
         </form>
       </aside>
     </main>
@@ -448,6 +469,29 @@
           <button id="duplicateSaveNewButton" class="button subtle" value="save-new" type="submit">Save New</button>
           <button id="duplicateUpdateButton" class="button primary" value="update" type="submit">Update Existing</button>
           <button class="button subtle" value="cancel" type="submit">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="cardHistoryDialog" class="modal-dialog card-history-dialog" aria-labelledby="cardHistoryTitle">
+      <form method="dialog" class="modal-card export-set-card">
+        <button class="modal-close-button" value="close" type="submit" aria-label="Close card history">&times;</button>
+        <h2 id="cardHistoryTitle">Card History</h2>
+        <p id="cardHistorySubtitle" class="card-history-subtitle"></p>
+        <div class="card-history-modal-table-wrapper">
+          <table class="card-history-table" aria-label="All card history">
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">User</th>
+                <th scope="col">Description</th>
+              </tr>
+            </thead>
+            <tbody id="allCardHistoryRows"></tbody>
+          </table>
+        </div>
+        <div class="card-history-modal-actions">
+          <button class="button subtle" value="close" type="submit">Close</button>
         </div>
       </form>
     </dialog>

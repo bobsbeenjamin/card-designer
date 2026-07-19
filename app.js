@@ -84,6 +84,9 @@ const state = {
   refreshToken: getStoredRefreshToken(),
   email: sessionStorage.getItem("cardDesignerEmail") || "",
   currentCardId: "",
+  cardHistory: [],
+  cardHistoryLoading: false,
+  cardHistoryStatus: "Load a saved card to view history.",
   savedCards: [],
   savedSets: [],
   artObjectUrl: "",
@@ -139,6 +142,11 @@ const elements = {
   accentColor: document.querySelector("#accentColor"),
   textColor: document.querySelector("#textColor"),
   panelColor: document.querySelector("#panelColor"),
+  recentCardHistoryRows: document.querySelector("#recentCardHistoryRows"),
+  allCardHistoryRows: document.querySelector("#allCardHistoryRows"),
+  viewAllCardHistoryButton: document.querySelector("#viewAllCardHistoryButton"),
+  cardHistoryDialog: document.querySelector("#cardHistoryDialog"),
+  cardHistorySubtitle: document.querySelector("#cardHistorySubtitle"),
   emailInput: document.querySelector("#emailInput"),
   passwordInput: document.querySelector("#passwordInput"),
   signInPanel: document.querySelector("#signInPanel"),
@@ -761,6 +769,7 @@ async function generateImage() {
 /** Restores the editor to default card values. */
 function resetCard() {
   state.currentCardId = "";
+  clearCardHistory();
   elements.nameInput.value = defaults.name;
   setTypeControl(defaults.type);
   elements.setInput.value = "DEFAULT";
@@ -881,6 +890,96 @@ function applyCardData(card) {
   }
 
   syncCard();
+}
+
+/** Formats a stored history timestamp in the user's local date and time. */
+function formatCardHistoryDate(recordedAt) {
+  const numericTimestamp = Number(recordedAt);
+  if (!Number.isFinite(numericTimestamp) || numericTimestamp <= 0) return "Unknown date";
+  const timestamp = numericTimestamp < 1_000_000_000_000 ? numericTimestamp * 1000 : numericTimestamp;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(timestamp));
+}
+
+/** Renders card history entries into one of the history table bodies. */
+function renderCardHistoryTable(tableBody, history) {
+  tableBody.replaceChildren();
+  if (!history.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.className = "card-history-empty";
+    cell.colSpan = 3;
+    cell.textContent = state.cardHistoryStatus || "No changes recorded for this card.";
+    row.append(cell);
+    tableBody.append(row);
+    return;
+  }
+
+  for (const entry of history) {
+    const row = document.createElement("tr");
+    const dateCell = document.createElement("td");
+    const userCell = document.createElement("td");
+    const descriptionCell = document.createElement("td");
+    dateCell.textContent = formatCardHistoryDate(entry.recordedAt);
+    userCell.textContent = entry.changedBy || "Unknown user";
+    descriptionCell.textContent = entry.description || "Updated card.";
+    row.append(dateCell, userCell, descriptionCell);
+    tableBody.append(row);
+  }
+}
+
+/** Refreshes the compact and full card-history tables from current state. */
+function renderCardHistory() {
+  renderCardHistoryTable(elements.recentCardHistoryRows, state.cardHistory.slice(0, 3));
+  renderCardHistoryTable(elements.allCardHistoryRows, state.cardHistory);
+  elements.viewAllCardHistoryButton.disabled = !state.currentCardId || state.cardHistoryLoading;
+}
+
+/** Clears history when no saved card is active. */
+function clearCardHistory(message = "Load a saved card to view history.") {
+  state.cardHistory = [];
+  state.cardHistoryLoading = false;
+  state.cardHistoryStatus = message;
+  renderCardHistory();
+}
+
+/** Loads all history entries for the active saved card. */
+async function refreshCardHistory(cardId = state.currentCardId, limit = 3) {
+  if (!cardId || !state.idToken) {
+    clearCardHistory();
+    return;
+  }
+
+  state.cardHistoryLoading = true;
+  state.cardHistory = [];
+  state.cardHistoryStatus = "Loading card history...";
+  renderCardHistory();
+  try {
+    const query = limit ? `?limit=${encodeURIComponent(limit)}` : "";
+    const data = await apiFetch(`/cards/${encodeURIComponent(cardId)}/history${query}`);
+    if (state.currentCardId !== cardId) return;
+    state.cardHistory = data.history || [];
+    state.cardHistoryStatus = state.cardHistory.length ? "" : "No changes recorded for this card.";
+  } catch (error) {
+    if (state.currentCardId !== cardId) return;
+    state.cardHistory = [];
+    state.cardHistoryStatus = "Card history could not be loaded.";
+  } finally {
+    if (state.currentCardId === cardId) {
+      state.cardHistoryLoading = false;
+      renderCardHistory();
+    }
+  }
+}
+
+/** Opens the full history modal for the active card. */
+async function openCardHistoryDialog() {
+  if (!state.currentCardId || state.cardHistoryLoading) return;
+  elements.cardHistorySubtitle.textContent = elements.nameInput.value.trim() || "Untitled Card";
+  elements.cardHistoryDialog.showModal();
+  await refreshCardHistory(state.currentCardId, null);
 }
 
 /** Calls the Cognito API used by browser auth flows. */
@@ -1154,6 +1253,7 @@ function clearAuthSession() {
   state.email = "";
   state.currentCardId = "";
   state.savedCards = [];
+  clearCardHistory();
   state.savedSets = [];
   state.imageGenerationSettings = null;
   state.imageProviderCredentialsExpanded = false;
@@ -1632,6 +1732,7 @@ async function loadCardFromLibrary(cardId) {
     closeSetLibrary();
     const data = await apiFetch(`/cards/${cardId}`);
     applyCardData(data.card);
+    await refreshCardHistory(data.card.cardId, 3);
     setSaveStatus("Loaded design");
   } catch (error) {
     setSaveStatus(error.message);
@@ -1647,6 +1748,7 @@ async function loadRequestedCardFromUrl() {
   try {
     const data = await apiFetch(`/cards/${encodeURIComponent(cardId)}`);
     applyCardData(data.card);
+    await refreshCardHistory(data.card.cardId, 3);
     setSaveStatus("Loaded design");
     url.searchParams.delete("card");
     window.history.replaceState({}, "", url);
@@ -1811,6 +1913,7 @@ async function saveCard(cardId = "") {
     setSaveStatus(cardId ? `Saved changes${imageStatus}` : `Saved new design${imageStatus}`);
     await Promise.all([refreshSavedCards(), refreshCardSets()]);
     elements.savedCardsInput.value = state.currentCardId;
+    await refreshCardHistory(state.currentCardId, 3);
   } catch (error) {
     setSaveStatus(error.message);
   }
@@ -1840,6 +1943,7 @@ async function loadSelectedCard() {
 
     const data = await apiFetch(`/cards/${cardId}`);
     applyCardData(data.card);
+    await refreshCardHistory(data.card.cardId, 3);
     setSaveStatus("Loaded design");
   } catch (error) {
     setSaveStatus(error.message);
@@ -1854,7 +1958,10 @@ async function deleteSelectedCard() {
     if (!window.confirm("Delete this saved design?")) return;
 
     await apiFetch(`/cards/${cardId}`, { method: "DELETE" });
-    if (state.currentCardId === cardId) state.currentCardId = "";
+    if (state.currentCardId === cardId) {
+      state.currentCardId = "";
+      clearCardHistory();
+    }
     setSaveStatus("Deleted design");
     await Promise.all([refreshSavedCards(), refreshCardSets()]);
   } catch (error) {
@@ -2017,6 +2124,7 @@ function attachEvents() {
   elements.artInput.addEventListener("change", loadArt);
   elements.artUrlInput.addEventListener("change", loadArtUrl);
   elements.deleteArtButton.addEventListener("click", deleteCurrentCardArt);
+  elements.viewAllCardHistoryButton.addEventListener("click", openCardHistoryDialog);
   elements.cardSetsInput.addEventListener("change", () => {
     renderSavedCards();
     updateMakeSetPublicButton();
@@ -2089,6 +2197,7 @@ async function initialize() {
   if (!isRenderWorkspace) rememberCardRenderProfile();
   renderSavedCards();
   renderCardSets();
+  renderCardHistory();
   updateAccountUi();
   if (state.refreshToken && (!state.idToken || isJwtExpired(state.idToken))) {
     await refreshAuthSession();

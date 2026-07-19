@@ -1121,6 +1121,84 @@ input[type="color"] {
   background: rgba(22, 28, 24, 0.42);
 }
 
+.modal-dialog.card-history-dialog {
+  width: min(760px, calc(100vw - 36px));
+}
+
+.card-history-dialog .modal-card {
+  max-height: min(82vh, 720px);
+}
+
+.card-history-empty {
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
+}
+
+.card-history-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.card-history-modal-actions .button {
+  min-width: 120px;
+}
+
+.card-history-modal-table-wrapper {
+  max-height: min(56vh, 500px);
+  overflow: auto;
+}
+
+.card-history-modal-table-wrapper th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.card-history-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-history-table {
+  border-collapse: collapse;
+  font-size: 0.76rem;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.card-history-table th,
+.card-history-table td {
+  border: 1px solid var(--line);
+  overflow-wrap: anywhere;
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.card-history-table th {
+  background: #eef2ed;
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.card-history-table th:first-child,
+.card-history-table td:first-child {
+  width: 25%;
+}
+
+.card-history-table th:nth-child(2),
+.card-history-table td:nth-child(2) {
+  width: 30%;
+}
+
+.card-history-table-wrapper {
+  min-width: 0;
+  overflow-x: auto;
+}
+
 .modal-card {
   background: var(--surface);
   border: 1px solid var(--line);
