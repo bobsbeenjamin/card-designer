@@ -249,6 +249,12 @@ def get_art_key(user_id, set_code, card_name, content_type):
     return f"{user_prefix}/{set_part}/{name_part}.{extension}"
 
 
+def get_saved_art_url(art_key):
+    """Build a versioned app URL for saved artwork."""
+    encoded_key = quote(art_key, safe="")
+    return f"/art?key={encoded_key}&version={uuid.uuid4()}"
+
+
 def decode_art_image(body):
     """Decode the uploaded artwork data URL."""
     art_image = str(body.get(ART_IMAGE_FIELD) or "")
@@ -280,7 +286,7 @@ def save_art(user_id, body):
         ContentType=content_type,
         ServerSideEncryption="AES256",
     )
-    return {"artKey": art_key, "artUrl": f"/art?key={quote(art_key, safe='')}"}
+    return {"artKey": art_key, "artUrl": get_saved_art_url(art_key)}
 
 
 def get_openai_key_item(user_id):
@@ -933,7 +939,7 @@ def generate_art(user_id, body):
         ContentType="image/png",
         ServerSideEncryption="AES256",
     )
-    return {"artKey": art_key, "artUrl": f"/art?key={quote(art_key, safe='')}", "prompt": prompt, "provider": provider}
+    return {"artKey": art_key, "artUrl": get_saved_art_url(art_key), "prompt": prompt, "provider": provider}
 
 
 def get_saved_art(user_id, event):

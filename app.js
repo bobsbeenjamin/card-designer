@@ -111,6 +111,7 @@ const state = {
   artObjectUrl: "",
   artUrl: "",
   pendingArtUpload: null,
+  pendingArtLoad: null,
   libraryDraggedCardId: "",
   libraryDragMoved: false,
   imageGenerationSettings: null,
@@ -832,14 +833,28 @@ function loadArt(event) {
 
   elements.artUrlInput.value = "";
   const reader = new FileReader();
-  reader.addEventListener("load", () => {
-    state.pendingArtUpload = {
-      dataUrl: reader.result,
-      fileName: file.name,
-      type: file.type,
-    };
-    setArtSource(reader.result);
+  const pendingLoad = new Promise((resolve, reject) => {
+    reader.addEventListener("load", async () => {
+      state.pendingArtUpload = {
+        dataUrl: reader.result,
+        fileName: file.name,
+        type: file.type,
+      };
+      try {
+        await setArtSource(reader.result);
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+    reader.addEventListener("error", () => reject(new Error("The artwork file could not be read.")));
   });
+  state.pendingArtLoad = pendingLoad;
+  pendingLoad
+    .catch((error) => setSaveStatus(error.message))
+    .finally(() => {
+      if (state.pendingArtLoad === pendingLoad) state.pendingArtLoad = null;
+    });
   reader.readAsDataURL(file);
 }
 
@@ -847,8 +862,8 @@ function loadArt(event) {
 function collectCardData() {
   const typedArtUrl = elements.artUrlInput.value.trim();
   const hasDataUrlArt = String(state.artUrl || elements.art.src || "").startsWith("data:");
-  let artUrl = typedArtUrl || (
-    state.pendingArtUpload || hasDataUrlArt ? state.artUrl || elements.art.src || "" : ""
+  let artUrl = typedArtUrl || state.pendingArtUpload?.dataUrl || (
+    hasDataUrlArt ? state.artUrl || elements.art.src || "" : ""
   );
   if (artUrl.startsWith("data:") && artUrl.length > 300000) {
     artUrl = "";
@@ -1982,6 +1997,7 @@ async function deleteCurrentCardArt() {
 /** Saves or updates a card and uploads its rendered PNG. */
 async function saveCard(cardId = "") {
   try {
+    if (state.pendingArtLoad) await state.pendingArtLoad;
     await savePendingArtForLater();
     await syncArtInputBeforeSave();
     const card = collectCardData();
