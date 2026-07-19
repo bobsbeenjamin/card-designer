@@ -94,6 +94,8 @@ const elements = {
   renameSetStatus: document.querySelector("#renameSetStatus"),
   shareRecipientEmailInput: document.querySelector("#shareRecipientEmailInput"),
   shareRecipientEmailLabel: document.querySelector("#shareRecipientEmailLabel"),
+  shareCardHistoryInput: document.querySelector("#shareCardHistoryInput"),
+  shareCardHistoryLabel: document.querySelector("#shareCardHistoryLabel"),
   setDetailExportButton: document.querySelector("#setDetailExportButton"),
   setDetailRenameButton: document.querySelector("#setDetailRenameButton"),
   setLibraryContent: document.querySelector("#setLibraryContent"),
@@ -805,6 +807,7 @@ function openExportSetDialog(cardSet) {
   elements.exportSetStatus.textContent = "";
   elements.exportFormatInput.value = "tabletop-simulator";
   elements.shareRecipientEmailInput.value = "";
+  elements.shareCardHistoryInput.checked = true;
   syncExportFormatUi();
   syncExportPublicUi();
   elements.exportSetDialog.showModal();
@@ -845,6 +848,7 @@ function closeExportSetDialog() {
   elements.exportSetSubtitle.textContent = "";
   elements.exportSetStatus.textContent = "";
   elements.shareRecipientEmailInput.value = "";
+  elements.shareCardHistoryInput.checked = true;
   syncExportFormatUi();
   elements.exportSetDialog.close();
 }
@@ -852,6 +856,7 @@ function closeExportSetDialog() {
 function syncExportFormatUi() {
   const isShareExport = elements.exportFormatInput.value === "share-edit-copy";
   elements.shareRecipientEmailLabel.classList.toggle("hidden", !isShareExport);
+  elements.shareCardHistoryLabel.classList.toggle("hidden", !isShareExport);
 }
 
 /** Checks whether the recipient already has a matching code or name. */
@@ -871,7 +876,11 @@ async function shareSelectedSet(cardSet) {
 
   const data = await apiFetch(`/sets/${encodeURIComponent(cardSet.code || "DEFAULT")}/share`, {
     method: "POST",
-    body: JSON.stringify({ recipientEmail, apiBaseUrl: backendConfig.apiUrl }),
+    body: JSON.stringify({
+      recipientEmail,
+      apiBaseUrl: backendConfig.apiUrl,
+      includeCardHistory: elements.shareCardHistoryInput.checked,
+    }),
   });
   const cardsCopied = data.cardsCopied ?? 0;
   elements.exportSetStatus.textContent = `Sent ${cardSet.name || cardSet.code || "set"} to ${recipientEmail} (${cardsCopied} cards).`;

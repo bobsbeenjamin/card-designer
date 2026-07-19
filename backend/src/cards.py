@@ -1548,6 +1548,37 @@ def delete_replaced_card_art(existing_card, updated_card):
         delete_card_art(existing_card)
 
 
+def copy_card_histories(source_user_id, source_card, target_user_id, target_card):
+    """Copy a card's history into the recipient while preserving its authors.
+
+    Args:
+        source_user_id: Owner of the original card history.
+        source_card: Original card whose history is being copied.
+        target_user_id: Recipient account receiving the copied card.
+        target_card: Newly created recipient card record.
+    """
+    history_items = get_card_history_items(source_user_id, source_card["cardId"])
+    target_card_key = f"{target_user_id}#{target_card['cardId']}"
+    copied_count = 0
+    for history_item in history_items:
+        copied_item = {**history_item}
+        copied_item["cardKey"] = target_card_key
+        copied_item["userId"] = target_user_id
+        copied_item["cardId"] = target_card["cardId"]
+        copied_item["changedBy"] = history_item.get("changedBy") or history_item.get("userId") or source_user_id
+        snapshot = history_item.get("snapshot")
+        if isinstance(snapshot, dict):
+            copied_item["snapshot"] = {
+                **snapshot,
+                "userId": target_user_id,
+                "cardId": target_card["cardId"],
+                "setCode": target_card.get("setCode"),
+            }
+        CARD_HISTORY_TABLE.put_item(Item=copied_item)
+        copied_count += 1
+    return copied_count
+
+
 def copy_shared_card_image(source_card, target_user_id, target_card):
     """Copy a rendered card PNG into the recipient user's bucket when present."""
     source_bucket = source_card.get("imageBucket")
@@ -1691,7 +1722,9 @@ def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, bo
     SETS_TABLE.put_item(Item=target_set)
 
     api_base_url = str(api_base_url or body.get("apiBaseUrl") or "").strip()
+    include_card_history = bool(body.get("includeCardHistory", True))
     copied_cards = 0
+    history_records_copied = 0
     for source_card in get_cards_for_set(sender_user_id, source_set_code):
         target_card = {
             key: value
@@ -1714,6 +1747,13 @@ def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, bo
         copy_shared_card_art(source_card, recipient["userId"], target_card, api_base_url)
         copy_shared_card_image(source_card, recipient["userId"], target_card)
         TABLE.put_item(Item=target_card)
+        if include_card_history:
+            history_records_copied += copy_card_histories(
+                sender_user_id,
+                source_card,
+                recipient["userId"],
+                target_card,
+            )
         copied_cards += 1
 
     expiration = now + SET_SHARE_EXPIRATION_SECONDS
@@ -1743,7 +1783,14 @@ def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, bo
         "shareExpiresAt": expiration,
     })
 
-    return {"shareId": share_id, "set": target_set, "cardsCopied": copied_cards, "conflicts": conflicts}
+    return {
+        "shareId": share_id,
+        "set": target_set,
+        "cardsCopied": copied_cards,
+        "historyRecordsCopied": history_records_copied,
+        "includeCardHistory": include_card_history,
+        "conflicts": conflicts,
+    }
 
 
 def get_set_share_expiration(item):
@@ -2227,11 +2274,11 @@ def get_history_transition(history_item, newer_card):
     return changed_fields, old_values, new_values, description
 
 
-def list_card_history(user_id, card_id, limit=None):
-    """Return stored card changes from newest to oldest.
+def get_card_history_items(user_id, card_id, limit=None):
+    """Return stored history items for one card, newest first.
 
     Args:
-        user_id: Authenticated owner of the card.
+        user_id: Owner partition for the card history.
         card_id: Card whose history should be returned.
         limit: Optional maximum number of newest records to return.
     """
@@ -2251,7 +2298,18 @@ def list_card_history(user_id, card_id, limit=None):
         if limit is not None or not response.get("LastEvaluatedKey"):
             break
         query_options["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+    return history_items
 
+
+def list_card_history(user_id, card_id, limit=None):
+    """Return stored card changes from newest to oldest.
+
+    Args:
+        user_id: Authenticated owner of the card.
+        card_id: Card whose history should be returned.
+        limit: Optional maximum number of newest records to return.
+    """
+    history_items = get_card_history_items(user_id, card_id, limit)
     current_card = TABLE.get_item(Key={"userId": user_id, "cardId": card_id}).get("Item") or {}
     history = []
     for index, item in enumerate(history_items):
