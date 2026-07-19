@@ -164,10 +164,10 @@
             <div class="card-inner">
               <header class="card-top">
                 <div class="card-title-lines">
-                  <h2 id="cardName">Spanky and Our Gang</h2>
-                  <p id="cardType" class="card-type">Pop Culture - Rock Band</p>
+                  <h2 id="cardName"></h2>
+                  <p id="cardType" class="card-type"></p>
                 </div>
-                <div id="cardCost" class="cost-badge">$4</div>
+                <div id="cardCost" class="cost-badge"></div>
               </header>
 
               <section class="art-window" aria-label="Card artwork">
@@ -178,13 +178,8 @@
               </section>
 
               <section class="rules-panel">
-                <p id="cardAbility" class="ability-text">
-                  When this enters play or attacks, create a treasure token for
-                  each Rock Band you control.
-                </p>
-                <p id="cardFlavor" class="flavor-text">
-                  "Lazy day! Just right for lovin' away!"
-                </p>
+                <p id="cardAbility" class="ability-text"></p>
+                <p id="cardFlavor" class="flavor-text"></p>
               </section>
 
               <footer class="card-footer">
@@ -192,25 +187,25 @@
                   <div id="combatStats" class="stat-pair">
                     <div>
                       <span class="stat-label">ATK</span>
-                      <strong id="cardAttack">1</strong>
+                      <strong id="cardAttack"></strong>
                     </div>
                     <div>
                       <span class="stat-label">HP</span>
-                      <strong id="cardHealth">6</strong>
+                      <strong id="cardHealth"></strong>
                     </div>
                   </div>
                   <div id="loyaltyStat" class="loyalty-stat">
                     <span class="stat-label">LOYALTY</span>
-                    <strong id="cardLoyalty">5</strong>
+                    <strong id="cardLoyalty"></strong>
                   </div>
                 </div>
               </footer>
             </div>
             <div class="card-meta">
               <span id="setSymbol" class="set-symbol" aria-label="Rarity symbol"></span>
-              <span id="cardCollector">012/180</span>
-              <span id="cardRarity">Uncommon</span>
-              <span id="cardArtist">Art: Ed Sullivan Show</span>
+              <span id="cardCollector"></span>
+              <span id="cardRarity"></span>
+              <span id="cardArtist"></span>
             </div>
           </article>
         </div>
@@ -232,14 +227,14 @@
             </label>
             <label>
               <span>Name</span>
-              <input id="nameInput" type="text" value="Spanky and Our Gang" maxlength="36" />
+              <input id="nameInput" type="text" maxlength="36" />
             </label>
             <label>
               <span>Type</span>
               <select id="typeInput">
                 <option value="Event">Event</option>
                 <option value="Item">Item</option>
-                <option value="Person" selected>Person</option>
+                <option value="Person">Person</option>
                 <option value="Organization">Organization</option>
                 <option value="__custom">Custom</option>
               </select>
@@ -250,7 +245,7 @@
             </label>
             <label>
               <span>Subtype</span>
-              <input id="subtypeInput" type="text" value="Rock Band" maxlength="28" />
+              <input id="subtypeInput" type="text" maxlength="28" />
             </label>
           </fieldset>
 
@@ -259,12 +254,12 @@
             <div class="number-grid">
               <label>
                 <span>Cost</span>
-                <input id="costInput" type="number" value="4" min="0" max="99" />
+                <input id="costInput" type="number" min="0" max="99" />
               </label>
               <label>
                 <span>Stat mode</span>
                 <select id="statModeInput">
-                  <option value="combat" selected>Attack / Health</option>
+                  <option value="combat">Attack / Health</option>
                   <option value="loyalty">Loyalty</option>
                 </select>
               </label>
@@ -272,17 +267,17 @@
             <div id="combatInputs" class="number-grid">
               <label>
                 <span>Attack</span>
-                <input id="attackInput" type="number" value="1" min="0" max="99" />
+                <input id="attackInput" type="number" min="0" max="99" />
               </label>
               <label>
                 <span>Health</span>
-                <input id="healthInput" type="number" value="6" min="0" max="99" />
+                <input id="healthInput" type="number" min="0" max="99" />
               </label>
             </div>
             <div id="loyaltyInputs" class="number-grid hidden">
               <label>
                 <span>Loyalty</span>
-                <input id="loyaltyInput" type="number" value="5" min="0" max="99" />
+                <input id="loyaltyInput" type="number" min="0" max="99" />
               </label>
             </div>
           </fieldset>
@@ -291,11 +286,11 @@
             <legend>Text</legend>
             <label>
               <span>Rules</span>
-              <textarea id="abilityInput" rows="5">When this enters play or attacks, create a treasure token for each Rock Band you control.</textarea>
+              <textarea id="abilityInput" rows="5"></textarea>
             </label>
             <label>
               <span>Flavor</span>
-              <textarea id="flavorInput" rows="3">"Lazy day! Just right for lovin' away!"</textarea>
+              <textarea id="flavorInput" rows="3"></textarea>
             </label>
           </fieldset>
 
@@ -321,7 +316,7 @@
             <label>
               <span>Art fit</span>
               <select id="fitInput">
-                <option value="cover" selected>Cover (preserve ratio)</option>
+                <option value="cover">Cover (preserve ratio)</option>
                 <option value="contain">Contain (unaltered)</option>
                 <option value="fill">Fill (stretch)</option>
               </select>
@@ -332,18 +327,18 @@
             <legend>Printing</legend>
             <label>
               <span>Artist name</span>
-              <input id="artistInput" type="text" value="Ed Sullivan Show" maxlength="40" />
+              <input id="artistInput" type="text" maxlength="40" />
             </label>
             <div class="number-grid">
               <label>
                 <span>Collector number</span>
-                <input id="collectorInput" type="text" value="1" maxlength="16" readonly />
+                <input id="collectorInput" type="text" maxlength="16" readonly />
               </label>
               <label>
                 <span>Rarity</span>
                 <select id="rarityInput">
                   <option value="common">Common</option>
-                  <option value="uncommon" selected>Uncommon</option>
+                  <option value="uncommon">Uncommon</option>
                   <option value="rare">Rare</option>
                   <option value="mythic">Mythic</option>
                 </select>
@@ -356,19 +351,19 @@
             <div class="color-grid">
               <label>
                 <span>Frame</span>
-                <input id="frameColor" type="color" value="#263a31" />
+                <input id="frameColor" type="color" />
               </label>
               <label>
                 <span>Accent</span>
-                <input id="accentColor" type="color" value="#d69d42" />
+                <input id="accentColor" type="color" />
               </label>
               <label>
                 <span>Text</span>
-                <input id="textColor" type="color" value="#f8f4e8" />
+                <input id="textColor" type="color" />
               </label>
               <label>
                 <span>Panel</span>
-                <input id="panelColor" type="color" value="#fff7df" />
+                <input id="panelColor" type="color" />
               </label>
             </div>
           </fieldset>

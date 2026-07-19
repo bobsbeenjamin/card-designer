@@ -2290,6 +2290,7 @@ async function initialize() {
     setSaveStatus(error.message);
   }
 
+  if (defaults.name) resetCard();
   attachEvents();
   applyCardRenderProfile();
   syncCard();
