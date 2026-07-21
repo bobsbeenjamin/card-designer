@@ -33,6 +33,7 @@ const state = {
   libraryDraggedCardId: "",
   libraryDragMoved: false,
   currentSetCode: "",
+  cardImageReloadToken: "",
   exportSetCode: "",
   renameSetCode: "",
   sharePreflightKey: "",
@@ -96,6 +97,7 @@ const elements = {
   shareRecipientEmailLabel: document.querySelector("#shareRecipientEmailLabel"),
   shareCardHistoryInput: document.querySelector("#shareCardHistoryInput"),
   shareCardHistoryLabel: document.querySelector("#shareCardHistoryLabel"),
+  reloadSetImagesButton: document.querySelector("#reloadSetImagesButton"),
   setDetailExportButton: document.querySelector("#setDetailExportButton"),
   setDetailRenameButton: document.querySelector("#setDetailRenameButton"),
   setLibraryContent: document.querySelector("#setLibraryContent"),
@@ -1046,6 +1048,7 @@ function renderSetLibraryList() {
   elements.setsTitle.textContent = "My Sets";
   elements.setsCloseButton.href = "../";
   elements.generateArtButton.classList.add("hidden");
+  elements.reloadSetImagesButton.classList.add("hidden");
   elements.setDetailExportButton.classList.add("hidden");
   elements.setDetailRenameButton.classList.add("hidden");
   elements.setLibraryContent.innerHTML = "";
@@ -1120,6 +1123,19 @@ function getDesignerCardUrl(cardId) {
   return designerUrl;
 }
 
+/** Returns a cache-busted public image URL for the current grid refresh. */
+function getCardPreviewImageUrl(card) {
+  if (!state.cardImageReloadToken || !card.publicImageUrl) return card.imageUrl || "";
+
+  try {
+    const imageUrl = new URL(card.publicImageUrl);
+    imageUrl.searchParams.set("reload", state.cardImageReloadToken);
+    return imageUrl.toString();
+  } catch (error) {
+    return card.imageUrl || "";
+  }
+}
+
 /** Builds a draggable card tile for the set grid. */
 function createLibraryCardTile(card, setCode) {
   const tile = document.createElement("button");
@@ -1166,7 +1182,7 @@ function createLibraryCardTile(card, setCode) {
     image.className = "library-card-art";
     image.alt = card.name || "Saved card";
     image.addEventListener("error", () => replaceMissingLibraryImage(image, card));
-    image.src = card.imageUrl;
+    image.src = getCardPreviewImageUrl(card);
     frame.append(image);
     tile.append(frame);
   } else {
@@ -1183,6 +1199,27 @@ function createLibraryCardTile(card, setCode) {
   return tile;
 }
 
+/** Reloads all card preview image URLs for the active set. */
+async function reloadSetImages() {
+  const setCode = state.currentSetCode;
+  if (!setCode || elements.reloadSetImagesButton.disabled) return;
+
+  const reloadToken = String(Date.now());
+  elements.reloadSetImagesButton.disabled = true;
+  setStatus("Reloading card images...");
+
+  try {
+    await refreshSetsAndCards(false, reloadToken);
+    state.cardImageReloadToken = reloadToken;
+    renderSetCardGrid(setCode);
+    setStatus("Card images reloaded");
+  } catch (error) {
+    setStatus(error.message);
+  } finally {
+    elements.reloadSetImagesButton.disabled = false;
+  }
+}
+
 /** Shows the cards in a selected set as a five-column grid. */
 function renderSetCardGrid(setCode) {
   state.currentSetCode = setCode;
@@ -1194,6 +1231,7 @@ function renderSetCardGrid(setCode) {
   elements.setsTitle.textContent = cardSet ? `${cardSet.code} - ${cardSet.name || "Untitled Set"}` : setCode;
   elements.setsCloseButton.href = "./";
   elements.generateArtButton.classList.toggle("hidden", !cardSet);
+  elements.reloadSetImagesButton.classList.toggle("hidden", !cardSet);
   elements.setDetailExportButton.classList.toggle("hidden", !cardSet);
   elements.setDetailRenameButton.classList.toggle("hidden", !cardSet);
   elements.setLibraryContent.innerHTML = "";
@@ -1261,9 +1299,10 @@ async function reorderCardsInSet(setCode, draggedCardId, targetCardId) {
 }
 
 /** Loads set and card summaries from the backend. */
-async function refreshSetsAndCards(renderInitialView = true) {
+async function refreshSetsAndCards(renderInitialView = true, cacheBust = "") {
   setStatus("Loading your sets...");
-  const [setsData, cardsData] = await Promise.all([apiFetch("/sets"), apiFetch("/cards")]);
+  const query = cacheBust ? `?reload=${encodeURIComponent(cacheBust)}` : "";
+  const [setsData, cardsData] = await Promise.all([apiFetch(`/sets${query}`), apiFetch(`/cards${query}`)]);
   state.savedSets = setsData.sets || [];
   state.savedCards = cardsData.cards || [];
   if (!renderInitialView) return;
@@ -1307,6 +1346,7 @@ function attachEvents() {
     const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === state.currentSetCode);
     if (cardSet) openRenameSetDialog(cardSet);
   });
+  elements.reloadSetImagesButton.addEventListener("click", reloadSetImages);
   elements.setDetailExportButton.addEventListener("click", () => {
     const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === state.currentSetCode);
     if (cardSet) openExportSetDialog(cardSet);

@@ -268,10 +268,17 @@ h1 {
   color: #000000;
 }
 
-.replace-credentials-button svg {
+.replace-credentials-button svg,
+.replace-credentials-button .refresh-icon {
   display: block;
   height: 26px;
   width: 26px;
+}
+
+.replace-credentials-button .refresh-icon {
+  background: currentColor;
+  mask: url("assets/refresh-icon.svg") center / contain no-repeat;
+  -webkit-mask: url("assets/refresh-icon.svg") center / contain no-repeat;
 }
 
 .toast-region {
