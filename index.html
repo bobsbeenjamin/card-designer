@@ -452,6 +452,17 @@
       </form>
     </dialog>
 
+    <dialog id="unsavedChangesDialog" class="modal-dialog" aria-labelledby="unsavedChangesTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="unsavedChangesTitle">Unsaved changes</h2>
+        <p id="unsavedChangesMessage">Save changes before loading the selected card?</p>
+        <div class="modal-actions two-up">
+          <button class="button subtle" value="discard" type="submit">Don't Save</button>
+          <button class="button primary" value="save" type="submit">Save Changes</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="cardHistoryDialog" class="modal-dialog card-history-dialog" aria-labelledby="cardHistoryTitle">
       <form method="dialog" class="modal-card export-set-card">
         <button class="modal-close-button" value="close" type="submit" aria-label="Close card history">&times;</button>

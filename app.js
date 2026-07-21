@@ -118,6 +118,7 @@ const state = {
   imageGenerationSettings: null,
   renderSetTotal: null,
   imageProviderCredentialsExpanded: false,
+  currentCardSnapshot: "",
 };
 
 const elements = {
@@ -228,6 +229,8 @@ const elements = {
   exportPng: document.querySelector("#exportPng"),
   duplicateSaveDialog: document.querySelector("#duplicateSaveDialog"),
   duplicateSaveMessage: document.querySelector("#duplicateSaveMessage"),
+  unsavedChangesDialog: document.querySelector("#unsavedChangesDialog"),
+  unsavedChangesMessage: document.querySelector("#unsavedChangesMessage"),
   deleteSetDialog: document.querySelector("#deleteSetDialog"),
   deleteSetTitle: document.querySelector("#deleteSetTitle"),
   deleteSetMessage: document.querySelector("#deleteSetMessage"),
@@ -830,6 +833,7 @@ function resetCard() {
   state.pendingArtUpload = null;
   clearArt();
   syncCard();
+  updateCurrentCardSnapshot();
 }
 
 /** Reads an uploaded artwork file into the preview. */
@@ -907,6 +911,54 @@ function collectCardData() {
   };
 }
 
+/** Normalizes card fields so dirty checking ignores backend/default shape differences. */
+function normalizeCardForSnapshot(card) {
+  const typeValue = String(card.type || defaults.type || "").trim();
+  const isStatless = isStatlessType(typeValue);
+  const statMode = isStatless
+    ? "none"
+    : (["combat", "loyalty"].includes(card.statMode) ? card.statMode : "combat");
+
+  return {
+    name: String(card.name || "Untitled Card").trim() || "Untitled Card",
+    artUrl: String(card.artUrl || "").trim(),
+    cost: Number(card.cost || 0),
+    type: typeValue,
+    sub_type: String(card.sub_type || card.subtype || "").trim(),
+    statMode,
+    attack: !isStatless && statMode === "combat" ? Number(card.attack || 0) : null,
+    health: !isStatless && statMode === "combat" ? Number(card.health || 0) : null,
+    loyalty: !isStatless && statMode === "loyalty" ? Number(card.loyalty || 0) : null,
+    setCode: card.setCode || "DEFAULT",
+    abilities: String(card.abilities || ""),
+    flavorText: String(card.flavorText || ""),
+    artistName: String(card.artistName || "").trim(),
+    collectorNumber: normalizeCollectorNumber(card.collectorNumber),
+    rarity: card.rarity || "common",
+    colors: {
+      frame: card.colors?.frame || defaults.frame,
+      accent: card.colors?.accent || defaults.accent,
+      text: card.colors?.text || defaults.text,
+      panel: card.colors?.panel || defaults.panel,
+    },
+  };
+}
+
+/** Creates the comparable snapshot used to detect unsaved card changes. */
+function createCardSnapshot(card) {
+  return JSON.stringify(normalizeCardForSnapshot(card));
+}
+
+/** Marks the current editor values as the saved baseline. */
+function updateCurrentCardSnapshot(card = collectCardData()) {
+  state.currentCardSnapshot = createCardSnapshot(card);
+}
+
+/** Returns whether the current editor differs from its last saved or loaded baseline. */
+function hasUnsavedCardChanges() {
+  return Boolean(state.currentCardSnapshot) && createCardSnapshot(collectCardData()) !== state.currentCardSnapshot;
+}
+
 /** Loads a saved card record into the editor controls and preview. */
 function applyCardData(card) {
   state.currentCardId = card.cardId || "";
@@ -940,6 +992,7 @@ function applyCardData(card) {
   }
 
   syncCard();
+  updateCurrentCardSnapshot();
 }
 
 /** Formats a stored history timestamp in the user's local date and time. */
@@ -1930,6 +1983,24 @@ function promptDuplicateSave(cardName, existingCard) {
   });
 }
 
+/** Asks whether to save current edits before loading a different saved card. */
+function promptSaveUnsavedChanges() {
+  if (!elements.unsavedChangesDialog) return Promise.resolve(window.confirm("Save changes before loading the selected card?"));
+
+  const cardName = elements.nameInput.value.trim() || "Untitled Card";
+  elements.unsavedChangesMessage.textContent = `Save changes to "${cardName}" before loading the selected card?`;
+
+  return new Promise((resolve) => {
+    const handleClose = () => {
+      elements.unsavedChangesDialog.removeEventListener("close", handleClose);
+      resolve(elements.unsavedChangesDialog.returnValue === "save");
+    };
+
+    elements.unsavedChangesDialog.addEventListener("close", handleClose);
+    elements.unsavedChangesDialog.showModal();
+  });
+}
+
 /** Loads saved card summaries for the signed-in user. */
 async function refreshSavedCards() {
   try {
@@ -2020,6 +2091,7 @@ async function saveCard(cardId = "") {
       body: JSON.stringify(card),
     });
     state.currentCardId = data.card.cardId;
+    updateCurrentCardSnapshot(card);
     elements.cardSetsInput.value = data.card.setCode || card.setCode || "DEFAULT";
     const imageStatus = data.card.imageKey ? " and uploaded PNG" : "";
     setSaveStatus(cardId ? `Saved changes${imageStatus}` : `Saved new design${imageStatus}`);
@@ -2057,18 +2129,36 @@ async function saveNewCard() {
   await saveCard();
 }
 /** Loads the selected saved-card dropdown item into the editor. */
-async function loadSelectedCard() {
+async function loadSelectedCard(cardId = elements.savedCardsInput.value) {
   try {
-    const cardId = elements.savedCardsInput.value;
     if (!cardId) throw new Error("Choose a saved card first.");
 
-    const data = await apiFetch(`/cards/${cardId}`);
+    elements.savedCardsInput.value = cardId;
+    const data = await apiFetch(`/cards/${encodeURIComponent(cardId)}`);
     applyCardData(data.card);
     await refreshCardHistory(data.card.cardId, 3);
     setSaveStatus("Loaded design");
   } catch (error) {
     setSaveStatus(error.message);
   }
+}
+
+/** Saves current edits when requested, then loads the newly selected saved card. */
+async function handleSavedCardSelectionChange() {
+  const selectedCardId = elements.savedCardsInput.value;
+  if (!selectedCardId) return;
+
+  if (hasUnsavedCardChanges()) {
+    const shouldSave = await promptSaveUnsavedChanges();
+    if (shouldSave) {
+      const cardIdToSave = state.currentCardId;
+      if (cardIdToSave) await saveCard(cardIdToSave);
+      else await saveNewCard();
+    }
+  }
+
+  elements.savedCardsInput.value = selectedCardId;
+  await loadSelectedCard(selectedCardId);
 }
 
 /** Deletes the selected saved card after confirmation. */
@@ -2373,7 +2463,8 @@ function attachEvents() {
     }
     saveCard(cardId);
   });
-  elements.loadSavedButton.addEventListener("click", loadSelectedCard);
+  elements.savedCardsInput.addEventListener("change", handleSavedCardSelectionChange);
+  elements.loadSavedButton.addEventListener("click", () => loadSelectedCard());
   elements.deleteSavedButton.addEventListener("click", deleteSelectedCard);
   window.addEventListener("resize", () => {
     fitCardName();
