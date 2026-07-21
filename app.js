@@ -7,6 +7,7 @@ let rarityLabels = {};
 const imageProviderStorageKey = "cardDesignerImageProvider";
 const isRenderWorkspace = new URLSearchParams(window.location.search).get("render") === "card";
 const cardRenderProfileStorageKey = "cardDesignerRenderProfile";
+const lastLoadedCardStoragePrefix = "cardDesignerLastLoaded";
 
 const cardHistoryFieldLabels = {
   name: "Name",
@@ -67,6 +68,38 @@ const modelConfigProviders = new Set([
   "firefly",
   "stability",
 ]);
+
+/** Builds a user-scoped key for the last loaded set and card. */
+function getLastLoadedCardStorageKey() {
+  const userKey = String(state.email || getJwtPayload(state.idToken)?.email || "guest")
+    .trim()
+    .toLowerCase();
+  return `${lastLoadedCardStoragePrefix}:${userKey || "guest"}`;
+}
+
+/** Reads the last loaded set/card selection for the current signed-in user. */
+function getLastLoadedCardSelection() {
+  try {
+    const selection = JSON.parse(localStorage.getItem(getLastLoadedCardStorageKey()) || "{}");
+    return {
+      setCode: selection.setCode || "DEFAULT",
+      cardId: selection.cardId || "",
+    };
+  } catch (error) {
+    return { setCode: "DEFAULT", cardId: "" };
+  }
+}
+
+/** Stores the latest set/card selection without affecting hidden render workspaces. */
+function rememberLastLoadedCardSelection(setCode = "DEFAULT", cardId = "") {
+  if (isRenderWorkspace) return;
+
+  try {
+    localStorage.setItem(getLastLoadedCardStorageKey(), JSON.stringify({ setCode, cardId }));
+  } catch (error) {
+    // Storage can be unavailable in private or locked-down browser modes.
+  }
+}
 
 /** Returns the stored image provider choice when it is still supported. */
 function getStoredImageProvider() {
@@ -993,6 +1026,7 @@ function applyCardData(card) {
 
   syncCard();
   updateCurrentCardSnapshot();
+  if (state.currentCardId) rememberLastLoadedCardSelection(card.setCode || "DEFAULT", state.currentCardId);
 }
 
 /** Formats a stored history timestamp in the user's local date and time. */
@@ -1358,6 +1392,7 @@ async function signIn() {
     setAuthStatus(`Signed in as ${email}`);
     setSaveStatus("Loading saved designs...");
     await Promise.all([refreshSavedCards(), refreshCardSets(), refreshImageGenerationSettings()]);
+    await restoreLastLoadedCardSelection();
     await setSharing.checkSetShareResponses();
     await setSharing.checkIncomingSetShares();
   } catch (error) {
@@ -1903,6 +1938,22 @@ async function loadCardFromLibrary(cardId) {
   }
 }
 
+/** Restores the last set/card loaded by the current signed-in user. */
+async function restoreLastLoadedCardSelection() {
+  const selection = getLastLoadedCardSelection();
+  const hasSet = getAvailableSets().some((cardSet) => (cardSet.code || "DEFAULT") === selection.setCode);
+  const setCode = hasSet ? selection.setCode : "DEFAULT";
+  elements.cardSetsInput.value = setCode;
+  elements.setInput.value = setCode;
+  renderSavedCards();
+  updateMakeSetPublicButton();
+
+  const cardExists = selection.cardId && state.savedCards.some((card) => card.cardId === selection.cardId);
+  if (!cardExists) return;
+
+  await loadSelectedCard(selection.cardId);
+}
+
 /** Loads a card requested by the URL query string, then clears the query. */
 async function loadRequestedCardFromUrl() {
   const url = new URL(window.location.href);
@@ -2106,6 +2157,7 @@ async function saveCard(cardId = "") {
       }
     }
     elements.savedCardsInput.value = state.currentCardId;
+    rememberLastLoadedCardSelection(data.card.setCode || card.setCode || "DEFAULT", state.currentCardId);
     await refreshCardHistory(state.currentCardId, 3);
   } catch (error) {
     setSaveStatus(error.message);
@@ -2415,8 +2467,10 @@ function attachEvents() {
   elements.deleteArtButton.addEventListener("click", deleteCurrentCardArt);
   elements.viewAllCardHistoryButton.addEventListener("click", openCardHistoryDialog);
   elements.cardSetsInput.addEventListener("change", () => {
+    const setCode = elements.cardSetsInput.value || "DEFAULT";
     renderSavedCards();
     updateMakeSetPublicButton();
+    rememberLastLoadedCardSelection(setCode, "");
   });
   elements.makeSetPublicButton.addEventListener("click", makeSelectedSetPublic);
   elements.setInput.addEventListener("change", () => {
@@ -2497,6 +2551,7 @@ async function initialize() {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
     await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets()]);
     if (!isRenderWorkspace) {
+      await restoreLastLoadedCardSelection();
       await setSharing.checkSetShareResponses();
       await setSharing.checkIncomingSetShares();
       await loadRequestedCardFromUrl();
