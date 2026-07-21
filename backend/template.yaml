@@ -437,6 +437,12 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /cards/{cardId}
             Method: PUT
+        UpdateCardImage:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /cards/{cardId}/image
+            Method: PUT
         DeleteCard:
           Type: HttpApi
           Properties:

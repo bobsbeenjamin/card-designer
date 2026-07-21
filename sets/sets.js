@@ -658,7 +658,7 @@ async function getCardRendererWindow() {
           const renderer = frame.contentWindow;
           if (!renderer) throw new Error("Card renderer is unavailable.");
           if (renderer.cardDesignerReady) await renderer.cardDesignerReady;
-          if (!renderer.applyCardData || !renderer.setArtSource || !renderer.getCardPngDataUrl) {
+          if (!renderer.applyCardData || !renderer.getCardPngDataUrl || !renderer.setArtSource || !renderer.setCardRenderTotal) {
             throw new Error("Card renderer did not finish loading.");
           }
           resolve(renderer);
@@ -677,12 +677,17 @@ async function getCardRendererWindow() {
 }
 
 /** Renders an updated card through the main designer preview. */
-async function renderUpdatedCardPng(card) {
+async function renderUpdatedCardPng(card, setTotal = getSetTotal(card.setCode)) {
   const renderer = await getCardRendererWindow();
-  renderer.applyCardData({ ...card, artUrl: "" });
-  if (card.artUrl) await renderer.setArtSource(card.artUrl);
-  renderer.syncCard();
-  return renderer.getCardPngDataUrl();
+  renderer.setCardRenderTotal(setTotal);
+  try {
+    renderer.applyCardData({ ...card, artUrl: "" });
+    if (card.artUrl) await renderer.setArtSource(card.artUrl);
+    renderer.syncCard();
+    return renderer.getCardPngDataUrl();
+  } finally {
+    renderer.setCardRenderTotal(null);
+  }
 }
 
 /** Loads full card records for a set without overwhelming the hosted API. */
@@ -1212,6 +1217,9 @@ function renderSetCardGrid(setCode) {
 async function reorderCardsInSet(setCode, draggedCardId, targetCardId) {
   if (!draggedCardId || draggedCardId === targetCardId) return;
   const cards = getCardsInSet(setCode);
+  const previousCollectorNumbers = new Map(
+    cards.map((card) => [card.cardId, normalizeCollectorNumber(card.collectorNumber)]),
+  );
   const draggedIndex = cards.findIndex((card) => card.cardId === draggedCardId);
   const targetIndex = cards.findIndex((card) => card.cardId === targetCardId);
   if (draggedIndex < 0 || targetIndex < 0) return;
@@ -1233,6 +1241,16 @@ async function reorderCardsInSet(setCode, draggedCardId, targetCardId) {
       const savedCard = state.savedCards.find((card) => card.cardId === updatedCard.cardId);
       if (savedCard) Object.assign(savedCard, updatedCard);
     }
+    const cardsNeedingImageRegeneration = cards.filter(
+      (card) => previousCollectorNumbers.get(card.cardId) !== normalizeCollectorNumber(card.collectorNumber),
+    );
+    await window.cardImageTools.regenerateCardImages({
+      cards: cardsNeedingImageRegeneration,
+      apiFetch,
+      onProgress: setStatus,
+      renderCardPng: renderUpdatedCardPng,
+      setTotal: getSetTotal(setCode),
+    });
     renderSetCardGrid(setCode);
     setStatus("Collector order saved");
   } catch (error) {

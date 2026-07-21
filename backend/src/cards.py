@@ -212,6 +212,10 @@ def handler(event, _context):
         if method == "PUT" and route_key == "PUT /cards/{cardId}":
             return ok(save_card(user_id, read_body(event), event["pathParameters"]["cardId"], user_email))
 
+        if method == "PUT" and route_key == "PUT /cards/{cardId}/image":
+            card_id = event["pathParameters"]["cardId"]
+            return ok(update_card_image(user_id, card_id, read_body(event)))
+
         if method == "DELETE" and route_key == "DELETE /cards/{cardId}":
             delete_card(user_id, event["pathParameters"]["cardId"])
             return ok({"deleted": True})
@@ -2525,6 +2529,7 @@ def put_card_image(user_id, card, image_bytes, bucket_name=None):
         Bucket=bucket_name,
         Key=image_key,
         Body=image_bytes,
+        CacheControl="no-cache, no-store, must-revalidate",
         ContentType="image/png",
         ServerSideEncryption="AES256",
     )
@@ -2591,6 +2596,36 @@ def save_card(user_id, body, card_id=None, changed_by=""):
             delete_card_image(existing_item)
 
     return {"card": item}
+
+
+def update_card_image(user_id, card_id, body):
+    """Update only a card's rendered PNG without adding card history.
+
+    Args:
+        user_id: Authenticated owner of the card.
+        card_id: Card receiving the refreshed image.
+        body: Request body containing the PNG data URL.
+    """
+    response = TABLE.get_item(Key={"userId": user_id, "cardId": card_id})
+    item = response.get("Item")
+    if not item:
+        raise ValueError("Card not found.")
+
+    image_bytes = decode_card_image(body)
+    if not image_bytes:
+        raise ValueError("Card image is required.")
+
+    updated_item = {**item}
+    put_card_image(user_id, updated_item, image_bytes)
+    TABLE.update_item(
+        Key={"userId": user_id, "cardId": card_id},
+        UpdateExpression="SET imageBucket = :bucket, imageKey = :key",
+        ExpressionAttributeValues={
+            ":bucket": updated_item["imageBucket"],
+            ":key": updated_item["imageKey"],
+        },
+    )
+    return {"card": updated_item}
 
 
 def delete_card(user_id, card_id):

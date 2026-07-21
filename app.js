@@ -114,12 +114,15 @@ const state = {
   pendingArtLoad: null,
   libraryDraggedCardId: "",
   libraryDragMoved: false,
+  cardRendererReadyPromise: null,
   imageGenerationSettings: null,
+  renderSetTotal: null,
   imageProviderCredentialsExpanded: false,
 };
 
 const elements = {
   card: document.querySelector("#card"),
+  cardRenderFrame: document.querySelector("#cardRenderFrame"),
   artWindow: document.querySelector(".art-window"),
   art: document.querySelector("#cardArt"),
   rulesPanel: document.querySelector(".rules-panel"),
@@ -546,7 +549,10 @@ function formatCollectorNumber(number, setCode, total = getSetTotal(setCode)) {
 
 function formatPreviewCollectorNumber() {
   const setCode = elements.setInput.value || "DEFAULT";
-  return formatCollectorNumber(elements.collectorInput.value, setCode, getPreviewSetTotal(setCode));
+  const setTotal = isRenderWorkspace && state.renderSetTotal
+    ? state.renderSetTotal
+    : getPreviewSetTotal(setCode);
+  return formatCollectorNumber(elements.collectorInput.value, setCode, setTotal);
 }
 
 /** Keeps new unsaved cards assigned to the next set slot. */
@@ -1780,6 +1786,9 @@ function renderSetCardGrid(setCode) {
 async function reorderCardsInSet(setCode, draggedCardId, targetCardId) {
   if (!draggedCardId || draggedCardId === targetCardId) return;
   const cards = getCardsInSet(setCode);
+  const previousCollectorNumbers = new Map(
+    cards.map((card) => [card.cardId, normalizeCollectorNumber(card.collectorNumber)]),
+  );
   const draggedIndex = cards.findIndex((card) => card.cardId === draggedCardId);
   const targetIndex = cards.findIndex((card) => card.cardId === targetCardId);
   if (draggedIndex < 0 || targetIndex < 0) return;
@@ -1801,6 +1810,10 @@ async function reorderCardsInSet(setCode, draggedCardId, targetCardId) {
       const savedCard = state.savedCards.find((card) => card.cardId === updatedCard.cardId);
       if (savedCard) Object.assign(savedCard, updatedCard);
     }
+    const cardsNeedingImageRegeneration = cards.filter(
+      (card) => previousCollectorNumbers.get(card.cardId) !== normalizeCollectorNumber(card.collectorNumber),
+    );
+    await regenerateCardImages(cardsNeedingImageRegeneration, getSetTotal(setCode));
     renderSavedCards();
     renderSetCardGrid(setCode);
     syncCard();
@@ -2011,6 +2024,15 @@ async function saveCard(cardId = "") {
     const imageStatus = data.card.imageKey ? " and uploaded PNG" : "";
     setSaveStatus(cardId ? `Saved changes${imageStatus}` : `Saved new design${imageStatus}`);
     await Promise.all([refreshSavedCards(), refreshCardSets()]);
+    if (!cardId) {
+      const cardsToRegenerate = getCardsInSet(data.card.setCode || card.setCode)
+        .filter((savedCard) => savedCard.cardId !== state.currentCardId);
+      try {
+        await regenerateCardImages(cardsToRegenerate, getSetTotal(data.card.setCode || card.setCode));
+      } catch (error) {
+        setSaveStatus(`Saved new design${imageStatus}, but existing card images could not be regenerated: ${error.message}`);
+      }
+    }
     elements.savedCardsInput.value = state.currentCardId;
     await refreshCardHistory(state.currentCardId, 3);
   } catch (error) {
@@ -2066,6 +2088,39 @@ async function deleteSelectedCard() {
   } catch (error) {
     setSaveStatus(error.message);
   }
+}
+
+/** Waits for the hidden card renderer used by image-only updates. */
+async function getCardRendererWindow() {
+  if (!state.cardRendererReadyPromise) {
+    state.cardRendererReadyPromise = new Promise((resolve, reject) => {
+      const frame = elements.cardRenderFrame;
+      if (!frame) {
+        reject(new Error("Card renderer is unavailable."));
+        return;
+      }
+
+      const finishLoading = async () => {
+        try {
+          const renderer = frame.contentWindow;
+          if (!renderer) throw new Error("Card renderer is unavailable.");
+          if (renderer.cardDesignerReady) await renderer.cardDesignerReady;
+          if (!renderer.applyCardData || !renderer.getCardPngDataUrl || !renderer.setArtSource || !renderer.setCardRenderTotal) {
+            throw new Error("Card renderer did not finish loading.");
+          }
+          resolve(renderer);
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      frame.addEventListener("load", finishLoading, { once: true });
+      frame.addEventListener("error", () => reject(new Error("Card renderer failed to load.")), { once: true });
+      if (!frame.getAttribute("src")) frame.src = "?render=card";
+    });
+  }
+
+  return state.cardRendererReadyPromise;
 }
 
 /** Returns current preview CSS variables so the SVG snapshot inherits live colors. */
@@ -2137,6 +2192,19 @@ function flattenCardCanvas(canvas) {
   return flattenedCanvas;
 }
 
+/** Waits for updated card layout to reach the browser's paint pipeline. */
+function waitForRenderPaint() {
+  return new Promise((resolve) => {
+    const timeoutId = window.setTimeout(resolve, 250);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        window.clearTimeout(timeoutId);
+        resolve();
+      });
+    });
+  });
+}
+
 /** Renders the actual preview DOM to a canvas so PNG output matches the card. */
 async function createCardCanvas(scale = 3) {
   syncCard();
@@ -2144,6 +2212,7 @@ async function createCardCanvas(scale = 3) {
     await elements.art.decode().catch(() => {});
   }
   if (document.fonts?.ready) await document.fonts.ready;
+  await waitForRenderPaint();
 
   if (window.html2canvas) {
     const canvas = await window.html2canvas(elements.card, {
@@ -2198,6 +2267,37 @@ async function getCardPngDataUrl() {
   } catch (error) {
     throw new Error(error.message || "Card image could not be saved.");
   }
+}
+
+/** Sets or clears the total used by the dedicated card-render workspace. */
+function setCardRenderTotal(setTotal) {
+  const normalizedTotal = Number(setTotal);
+  state.renderSetTotal = Number.isFinite(normalizedTotal) && normalizedTotal > 0 ? normalizedTotal : null;
+}
+
+/** Renders a complete card PNG through the hidden designer workspace. */
+async function renderUpdatedCardPng(card, setTotal) {
+  const renderer = await getCardRendererWindow();
+  renderer.setCardRenderTotal(setTotal);
+  try {
+    renderer.applyCardData({ ...card, artUrl: "" });
+    if (card.artUrl) await renderer.setArtSource(card.artUrl);
+    renderer.syncCard();
+    return renderer.getCardPngDataUrl();
+  } finally {
+    renderer.setCardRenderTotal(null);
+  }
+}
+
+/** Regenerates complete saved-card images after collector data changes. */
+async function regenerateCardImages(cards, setTotal) {
+  return window.cardImageTools.regenerateCardImages({
+    cards,
+    apiFetch,
+    onProgress: setSaveStatus,
+    renderCardPng: renderUpdatedCardPng,
+    setTotal,
+  });
 }
 
 /** Downloads the current card front as a PNG. */

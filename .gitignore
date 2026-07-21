@@ -1,8 +1,10 @@
 .aws-sam/
+.claude/
+**/__pycache__/**
+
+config.local.js
 samconfig.toml
 .env
 .env.*
-config.local.js
 *.pem
 *.key
-**/__pycache__/**
