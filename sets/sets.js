@@ -44,6 +44,7 @@ const state = {
   generateArtResumeResolver: null,
   generateArtRunning: false,
   generateArtErrors: [],
+  selectedCardIds: new Set(),
 };
 
 const elements = {
@@ -68,6 +69,17 @@ const elements = {
   exportSetPublicLabel: document.querySelector("#exportSetPublicLabel"),
   exportSetTitle: document.querySelector("#exportSetTitle"),
   generateArtButton: document.querySelector("#generateArtButton"),
+  massEditControl: document.querySelector("#massEditControl"),
+  massEditInput: document.querySelector("#massEditInput"),
+  massColorChangeDialog: document.querySelector("#massColorChangeDialog"),
+  massColorChangeForm: document.querySelector("#massColorChangeForm"),
+  massFrameColor: document.querySelector("#massFrameColor"),
+  massAccentColor: document.querySelector("#massAccentColor"),
+  massTextColor: document.querySelector("#massTextColor"),
+  massPanelColor: document.querySelector("#massPanelColor"),
+  massColorChangeStatus: document.querySelector("#massColorChangeStatus"),
+  updateMassColorButton: document.querySelector("#updateMassColorButton"),
+  cancelMassColorButton: document.querySelector("#cancelMassColorButton"),
   generateArtDialog: document.querySelector("#generateArtDialog"),
   closeGenerateArtButton: document.querySelector("#closeGenerateArtButton"),
   confirmGenerateArtButton: document.querySelector("#confirmGenerateArtButton"),
@@ -1044,6 +1056,8 @@ function createSetDeleteButton(cardSet) {
 /** Shows the set list view on the page. */
 function renderSetLibraryList() {
   state.currentSetCode = "";
+  state.selectedCardIds.clear();
+  updateMassEditUi();
   document.title = "My Sets - Card Designer";
   elements.setsTitle.textContent = "My Sets";
   elements.setsCloseButton.href = "../";
@@ -1136,18 +1150,64 @@ function getCardPreviewImageUrl(card) {
   }
 }
 
+/** Updates the mass-edit dropdown visibility from the current card selection. */
+function updateMassEditUi() {
+  const showMassEdit = Boolean(state.currentSetCode) && state.selectedCardIds.size > 0;
+  elements.massEditControl.classList.toggle("hidden", !showMassEdit);
+  if (!showMassEdit) elements.massEditInput.value = "";
+}
+
+/** Updates one card's selected state and the mass-edit controls. */
+function setCardSelected(cardId, isSelected) {
+  if (isSelected) {
+    state.selectedCardIds.add(cardId);
+  } else {
+    state.selectedCardIds.delete(cardId);
+  }
+  updateMassEditUi();
+}
+
+/** Removes selected cards that are no longer in the active set. */
+function pruneSelectedCardIds(cards) {
+  const visibleCardIds = new Set(cards.map((card) => card.cardId));
+  for (const cardId of state.selectedCardIds) {
+    if (!visibleCardIds.has(cardId)) state.selectedCardIds.delete(cardId);
+  }
+}
+
 /** Builds a draggable card tile for the set grid. */
 function createLibraryCardTile(card, setCode) {
-  const tile = document.createElement("button");
+  const tile = document.createElement("div");
   tile.className = "library-card-tile";
   tile.draggable = true;
-  tile.type = "button";
+  tile.tabIndex = 0;
+  tile.setAttribute("role", "button");
   tile.dataset.cardId = card.cardId;
+
+  const selectionLabel = document.createElement("label");
+  selectionLabel.className = "library-card-select";
+  selectionLabel.title = `Select ${card.name || "card"} for mass editing`;
+  selectionLabel.addEventListener("click", (event) => event.stopPropagation());
+  const selection = document.createElement("input");
+  selection.type = "checkbox";
+  selection.className = "library-card-checkbox";
+  selection.checked = state.selectedCardIds.has(card.cardId);
+  selection.setAttribute("aria-label", `Select ${card.name || "card"} for mass editing`);
+  selection.addEventListener("click", (event) => event.stopPropagation());
+  selection.addEventListener("change", () => setCardSelected(card.cardId, selection.checked));
+  selectionLabel.append(selection);
+  tile.append(selectionLabel);
+
   tile.addEventListener("click", () => {
     if (state.libraryDragMoved) {
       state.libraryDragMoved = false;
       return;
     }
+    window.location.href = getDesignerCardUrl(card.cardId);
+  });
+  tile.addEventListener("keydown", (event) => {
+    if (event.target !== tile || !["Enter", " "].includes(event.key)) return;
+    event.preventDefault();
     window.location.href = getDesignerCardUrl(card.cardId);
   });
   tile.addEventListener("dragstart", (event) => {
@@ -1199,6 +1259,103 @@ function createLibraryCardTile(card, setCode) {
   return tile;
 }
 
+/** Loads the first selected card's colors before opening the mass-edit modal. */
+async function openMassColorChangeDialog() {
+  const selectedCards = getSelectedCardsInSet();
+  if (!selectedCards.length) {
+    updateMassEditUi();
+    return;
+  }
+
+  elements.massColorChangeStatus.textContent = "Loading selected card colors...";
+  try {
+    const response = await apiFetch(`/cards/${encodeURIComponent(selectedCards[0].cardId)}`);
+    populateMassColorFields(response.card || selectedCards[0]);
+    elements.massColorChangeStatus.textContent = `Selected ${selectedCards.length} card${selectedCards.length === 1 ? "" : "s"}.`;
+    elements.massColorChangeDialog.showModal();
+  } catch (error) {
+    elements.massEditInput.value = "";
+    elements.massColorChangeStatus.textContent = error.message;
+  }
+}
+
+/** Returns the selected cards in the active set in collector order. */
+function getSelectedCardsInSet(setCode = state.currentSetCode) {
+  return getCardsInSet(setCode).filter((card) => state.selectedCardIds.has(card.cardId));
+}
+
+/** Sets mass color fields from the first selected card or the current theme. */
+function populateMassColorFields(selectedCard) {
+  const rootStyles = getComputedStyle(document.documentElement);
+  const getColor = (cardColor, variable, fallback) =>
+    cardColor || rootStyles.getPropertyValue(variable).trim() || fallback;
+
+  elements.massFrameColor.value = getColor(selectedCard?.colors?.frame, "--frame", "#263a31");
+  elements.massAccentColor.value = getColor(selectedCard?.colors?.accent, "--accent", "#d69d42");
+  elements.massTextColor.value = getColor(selectedCard?.colors?.text, "--card-text", "#f8f4e8");
+  elements.massPanelColor.value = getColor(selectedCard?.colors?.panel, "--panel", "#fff7df");
+}
+
+/** Saves the selected cards with the new colors and regenerated images. */
+async function applyMassColorChange() {
+  const setCode = state.currentSetCode;
+  const selectedCardIds = [...state.selectedCardIds];
+  if (!setCode || !selectedCardIds.length) {
+    closeMassColorChangeDialog();
+    return;
+  }
+
+  const colors = {
+    frame: elements.massFrameColor.value,
+    accent: elements.massAccentColor.value,
+    text: elements.massTextColor.value,
+    panel: elements.massPanelColor.value,
+  };
+  elements.updateMassColorButton.disabled = true;
+  elements.cancelMassColorButton.disabled = true;
+
+  try {
+    let updatedCount = 0;
+    for (const cardId of selectedCardIds) {
+      elements.massColorChangeStatus.textContent =
+        `Updating ${updatedCount + 1} of ${selectedCardIds.length} cards...`;
+      const response = await apiFetch(`/cards/${encodeURIComponent(cardId)}`);
+      const card = response.card;
+      if (!card) throw new Error("Unable to load a selected card.");
+      const updatedCard = {
+        ...card,
+        colors: { ...card.colors, ...colors },
+      };
+      updatedCard.cardImagePng = await renderUpdatedCardPng(updatedCard, getSetTotal(setCode));
+      await apiFetch(`/cards/${encodeURIComponent(cardId)}`, {
+        method: "PUT",
+        body: JSON.stringify(updatedCard),
+      });
+      updatedCount += 1;
+    }
+
+    const reloadToken = String(Date.now());
+    await refreshSetsAndCards(false, reloadToken);
+    state.cardImageReloadToken = reloadToken;
+    state.selectedCardIds.clear();
+    renderSetCardGrid(setCode);
+    closeMassColorChangeDialog();
+    setStatus(`Updated colors on ${updatedCount} card${updatedCount === 1 ? "" : "s"}.`);
+  } catch (error) {
+    elements.massColorChangeStatus.textContent = error.message;
+  } finally {
+    elements.updateMassColorButton.disabled = false;
+    elements.cancelMassColorButton.disabled = false;
+  }
+}
+
+/** Closes the Mass Color Change modal and resets its action dropdown. */
+function closeMassColorChangeDialog() {
+  elements.massEditInput.value = "";
+  elements.massColorChangeStatus.textContent = "";
+  elements.massColorChangeDialog.close();
+}
+
 /** Reloads all card preview image URLs for the active set. */
 async function reloadSetImages() {
   const setCode = state.currentSetCode;
@@ -1225,6 +1382,7 @@ function renderSetCardGrid(setCode) {
   state.currentSetCode = setCode;
   const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === setCode);
   const cards = getCardsInSet(setCode);
+  pruneSelectedCardIds(cards);
   document.title = cardSet
     ? `[${cardSet.code || setCode}] ${cardSet.name || "Untitled Set"} - Card Designer`
     : "My Sets - Card Designer";
@@ -1234,6 +1392,7 @@ function renderSetCardGrid(setCode) {
   elements.reloadSetImagesButton.classList.toggle("hidden", !cardSet);
   elements.setDetailExportButton.classList.toggle("hidden", !cardSet);
   elements.setDetailRenameButton.classList.toggle("hidden", !cardSet);
+  updateMassEditUi();
   elements.setLibraryContent.innerHTML = "";
 
   const grid = document.createElement("div");
@@ -1350,6 +1509,18 @@ function attachEvents() {
   elements.setDetailExportButton.addEventListener("click", () => {
     const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === state.currentSetCode);
     if (cardSet) openExportSetDialog(cardSet);
+  });
+  elements.massEditInput.addEventListener("change", () => {
+    if (elements.massEditInput.value === "change-color") openMassColorChangeDialog();
+  });
+  elements.massColorChangeForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    applyMassColorChange();
+  });
+  elements.cancelMassColorButton.addEventListener("click", closeMassColorChangeDialog);
+  elements.massColorChangeDialog.addEventListener("close", () => {
+    elements.massEditInput.value = "";
+    elements.massColorChangeStatus.textContent = "";
   });
 
   elements.deleteSetDialog.addEventListener("close", () => {

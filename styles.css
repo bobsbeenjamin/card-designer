@@ -1128,7 +1128,33 @@ input[type="color"] {
   gap: 8px;
   min-width: 0;
   padding: 0;
+  position: relative;
   text-align: left;
+}
+
+.library-card-select {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  box-shadow: 0 5px 12px rgba(32, 38, 33, 0.2);
+  cursor: pointer;
+  display: grid;
+  height: 30px;
+  justify-content: center;
+  left: -11px;
+  position: absolute;
+  top: -8px;
+  width: 30px;
+  z-index: 2;
+}
+
+.library-card-checkbox {
+  accent-color: var(--accent);
+  cursor: pointer;
+  height: 18px;
+  margin: 0;
+  width: 18px;
 }
 
 .library-card-tile.is-dragging {
@@ -1663,6 +1689,27 @@ input[type="color"] {
   justify-content: flex-end;
 }
 
+.mass-edit-control {
+  align-items: center;
+  display: inline-flex;
+  gap: 7px;
+}
+
+.mass-edit-control.hidden {
+  display: none;
+}
+
+.mass-edit-control span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.mass-edit-control select {
+  min-width: 150px;
+}
+
 .sets-sign-in {
   max-width: 420px;
   width: 100%;
@@ -1680,6 +1727,10 @@ input[type="color"] {
 
 .sets-content .library-modal-content {
   padding-top: 0;
+}
+
+.sets-page .sets-content .library-modal-content {
+  padding-top: 10px;
 }
 
 .sets-page .card-library-grid {

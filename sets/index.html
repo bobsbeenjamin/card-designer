@@ -31,6 +31,13 @@
           <p id="setsStatus" class="status-line">Sign in to view your sets.</p>
         </div>
         <div class="sets-header-actions">
+          <label id="massEditControl" class="mass-edit-control hidden">
+            <span>Mass edit</span>
+            <select id="massEditInput" aria-label="Mass edit">
+              <option value="">Choose an action</option>
+              <option value="change-color">Change Color</option>
+            </select>
+          </label>
           <button
             id="generateArtButton"
             class="button subtle hidden"
@@ -147,6 +154,38 @@
         <div class="modal-actions two-up">
           <button id="confirmGenerateArtButton" class="button primary" type="button">Generate Art</button>
           <button id="cancelGenerateArtButton" class="button subtle" type="button">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="massColorChangeDialog" class="modal-dialog" aria-labelledby="massColorChangeTitle">
+      <form id="massColorChangeForm" class="modal-card">
+        <h2 id="massColorChangeTitle">Mass Color Change</h2>
+        <fieldset>
+          <legend>Colors</legend>
+          <div class="color-grid">
+            <label>
+              <span>Frame</span>
+              <input id="massFrameColor" type="color" />
+            </label>
+            <label>
+              <span>Accent</span>
+              <input id="massAccentColor" type="color" />
+            </label>
+            <label>
+              <span>Text</span>
+              <input id="massTextColor" type="color" />
+            </label>
+            <label>
+              <span>Panel</span>
+              <input id="massPanelColor" type="color" />
+            </label>
+          </div>
+        </fieldset>
+        <p id="massColorChangeStatus" class="status-line"></p>
+        <div class="modal-actions two-up">
+          <button id="updateMassColorButton" class="button primary" type="submit">Update</button>
+          <button id="cancelMassColorButton" class="button subtle" type="button">Cancel</button>
         </div>
       </form>
     </dialog>
