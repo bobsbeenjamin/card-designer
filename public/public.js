@@ -6,8 +6,15 @@ const setMeta = document.querySelector("#setMeta");
 const cardGrid = document.querySelector("#cardGrid");
 const publicStatus = document.querySelector("#publicStatus");
 const zoomDialog = document.querySelector("#cardZoomDialog");
+const zoomViewer = document.querySelector(".card-zoom-viewer");
 const zoomContent = document.querySelector("#cardZoomContent");
 const zoomClose = document.querySelector("#cardZoomClose");
+const previousZoomCardButton = document.querySelector("#previousZoomCardButton");
+const nextZoomCardButton = document.querySelector("#nextZoomCardButton");
+
+let zoomCards = [];
+let zoomCardIndex = -1;
+let zoomTouchStart = null;
 
 function setStatus(message) {
   publicStatus.textContent = message;
@@ -29,7 +36,15 @@ function replaceMissingImage(image, card) {
   image.replaceWith(empty);
 }
 
+/** Opens a public card in the zoom viewer. */
 function openZoom(card) {
+  zoomCardIndex = zoomCards.indexOf(card);
+  renderZoomCard(card);
+  if (!zoomDialog.open) zoomDialog.showModal();
+}
+
+/** Updates the zoom viewer content for the selected public card. */
+function renderZoomCard(card) {
   zoomContent.innerHTML = "";
   if (card.imageUrl) {
     const image = document.createElement("img");
@@ -43,7 +58,40 @@ function openZoom(card) {
     empty.textContent = card.name || "Untitled Card";
     zoomContent.append(empty);
   }
-  zoomDialog.showModal();
+
+  previousZoomCardButton.disabled = zoomCardIndex <= 0;
+  nextZoomCardButton.disabled = zoomCardIndex < 0 || zoomCardIndex >= zoomCards.length - 1;
+}
+
+/** Navigates to another card while keeping the zoom viewer open. */
+function navigateZoomCard(offset) {
+  const nextIndex = zoomCardIndex + offset;
+  if (nextIndex < 0 || nextIndex >= zoomCards.length) return;
+
+  zoomCardIndex = nextIndex;
+  renderZoomCard(zoomCards[zoomCardIndex]);
+}
+
+/** Records the start of a possible horizontal card swipe. */
+function handleZoomSwipeStart(event) {
+  if (event.touches.length !== 1) return;
+  zoomTouchStart = {
+    x: event.touches[0].clientX,
+    y: event.touches[0].clientY,
+  };
+}
+
+/** Navigates on horizontal swipes without blocking vertical page movement. */
+function handleZoomSwipeEnd(event) {
+  if (!zoomTouchStart || event.changedTouches.length !== 1) return;
+
+  const start = zoomTouchStart;
+  zoomTouchStart = null;
+  const deltaX = event.changedTouches[0].clientX - start.x;
+  const deltaY = event.changedTouches[0].clientY - start.y;
+  if (Math.abs(deltaX) < 40 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+
+  navigateZoomCard(deltaX < 0 ? 1 : -1);
 }
 
 function renderCard(card, total) {
@@ -94,10 +142,15 @@ async function loadPublicSet() {
     : `${cardSet.name || setName} - public link - Card Designer`;
   pageTitle.textContent = title;
   setMeta.textContent = cardSet.code ? `${cardSet.code} - ${cards.length} cards` : `${cards.length} cards`;
+  zoomCards = cards;
   cardGrid.replaceChildren(...cards.map((card) => renderCard(card, cards.length)));
   setStatus(cards.length ? "" : "No cards are available in this set.");
 }
 
+previousZoomCardButton.addEventListener("click", () => navigateZoomCard(-1));
+nextZoomCardButton.addEventListener("click", () => navigateZoomCard(1));
+zoomViewer.addEventListener("touchstart", handleZoomSwipeStart, { passive: true });
+zoomViewer.addEventListener("touchend", handleZoomSwipeEnd, { passive: true });
 zoomClose.addEventListener("click", () => zoomDialog.close());
 zoomDialog.addEventListener("click", (event) => {
   if (event.target === zoomDialog) zoomDialog.close();

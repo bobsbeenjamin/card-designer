@@ -20,7 +20,15 @@
 
     <dialog id="cardZoomDialog" class="card-zoom-dialog" aria-label="Card image preview">
       <button id="cardZoomClose" class="card-zoom-close" type="button" aria-label="Close preview">x</button>
-      <div id="cardZoomContent" class="card-zoom-content"></div>
+      <div class="card-zoom-viewer">
+        <button id="previousZoomCardButton" class="card-navigation-button" type="button" title="Previous card" aria-label="Previous card">
+          <span aria-hidden="true">&#8592;</span>
+        </button>
+        <div id="cardZoomContent" class="card-zoom-content"></div>
+        <button id="nextZoomCardButton" class="card-navigation-button" type="button" title="Next card" aria-label="Next card">
+          <span aria-hidden="true">&#8594;</span>
+        </button>
+      </div>
     </dialog>
 
     <script src="./public.js"></script>

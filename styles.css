@@ -1752,6 +1752,15 @@ input[type="color"] {
   width: 42px;
 }
 
+.card-zoom-viewer {
+  align-items: center;
+  display: grid;
+  gap: clamp(10px, 2vw, 24px);
+  grid-template-columns: minmax(42px, 1fr) auto minmax(42px, 1fr);
+  touch-action: pan-y;
+}
+
+
 .card-zoom-content {
   display: grid;
   place-items: center;
@@ -1770,6 +1779,15 @@ input[type="color"] {
 }
 
 @media (max-width: 620px) {
+  .card-zoom-viewer {
+    display: flex;
+    justify-content: center;
+    position: relative;
+    touch-action: auto;
+    width: 100%;
+  }
+
+
   .public-page .card-library-grid,
   .sets-page .card-library-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
