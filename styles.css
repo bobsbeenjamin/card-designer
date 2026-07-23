@@ -475,7 +475,6 @@ h1 {
   min-height: 0;
   padding: 6px 18px 18px;
   place-items: start center;
-  touch-action: pan-y;
 }
 
 .card-navigation-button {
@@ -492,6 +491,7 @@ h1 {
   justify-content: center;
   line-height: 1;
   padding: 0;
+  touch-action: manipulation;
   width: 42px;
 }
 
@@ -1536,16 +1536,29 @@ input[type="color"] {
   }
 
   .preview-stage {
-    gap: 6px;
-    grid-template-columns: 36px minmax(0, 1fr) 36px;
+    align-items: start;
+    display: flex;
+    justify-content: center;
     min-height: 500px;
     padding: 0;
+    position: relative;
   }
 
   .card-navigation-button {
-    font-size: 1.15rem;
-    height: 36px;
-    width: 36px;
+    height: 42px;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 42px;
+    z-index: 3;
+  }
+
+  .card-navigation-button:first-child {
+    left: 2px;
+  }
+
+  .card-navigation-button:last-child {
+    right: 2px;
   }
 
   .library-modal-shell {
