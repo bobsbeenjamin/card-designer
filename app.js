@@ -145,18 +145,23 @@ const state = {
   artUrl: "",
   pendingArtUpload: null,
   pendingArtLoad: null,
+  previewTouchStart: null,
   libraryDraggedCardId: "",
   libraryDragMoved: false,
   cardRendererReadyPromise: null,
   imageGenerationSettings: null,
   renderSetTotal: null,
   imageProviderCredentialsExpanded: false,
+  cardNavigationPending: false,
   currentCardSnapshot: "",
 };
 
 const elements = {
   card: document.querySelector("#card"),
   cardRenderFrame: document.querySelector("#cardRenderFrame"),
+  previewStage: document.querySelector(".preview-stage"),
+  previousCardButton: document.querySelector("#previousCardButton"),
+  nextCardButton: document.querySelector("#nextCardButton"),
   artWindow: document.querySelector(".art-window"),
   art: document.querySelector("#cardArt"),
   rulesPanel: document.querySelector(".rules-panel"),
@@ -615,6 +620,65 @@ function getCardsInSet(setCode) {
       if (firstNumber !== secondNumber) return firstNumber - secondNumber;
       return String(first.name || "").localeCompare(String(second.name || ""));
     });
+}
+
+/** Updates the previous and next card controls for the current set position. */
+function updateCardNavigationControls() {
+  const currentCardId = state.currentCardId || elements.savedCardsInput.value;
+  const currentCard = state.savedCards.find((card) => card.cardId === currentCardId);
+  const setCode = currentCard?.setCode || elements.cardSetsInput.value || "DEFAULT";
+  const cardsInSet = getCardsInSet(setCode);
+  const currentIndex = cardsInSet.findIndex((card) => card.cardId === currentCardId);
+  const hasPreviousCard = currentIndex > 0;
+  const hasNextCard = currentIndex >= 0 && currentIndex < cardsInSet.length - 1;
+
+  elements.previousCardButton.disabled = state.cardNavigationPending || !hasPreviousCard;
+  elements.nextCardButton.disabled = state.cardNavigationPending || !hasNextCard;
+}
+
+/** Navigates to an another card in the set by offset amount after resolving any unsaved changes. */
+async function navigateToCard(offset) {
+  if (state.cardNavigationPending) return;
+
+  const currentCardId = state.currentCardId || elements.savedCardsInput.value;
+  const currentCard = state.savedCards.find((card) => card.cardId === currentCardId);
+  const setCode = currentCard?.setCode || elements.cardSetsInput.value || "DEFAULT";
+  const cardsInSet = getCardsInSet(setCode);
+  const currentIndex = cardsInSet.findIndex((card) => card.cardId === currentCardId);
+  const targetCard = cardsInSet[currentIndex + offset];
+  if (!targetCard) return;
+
+  state.cardNavigationPending = true;
+  updateCardNavigationControls();
+  try {
+    elements.savedCardsInput.value = targetCard.cardId;
+    await handleSavedCardSelectionChange();
+  } finally {
+    state.cardNavigationPending = false;
+    updateCardNavigationControls();
+  }
+}
+
+/** Handles horizontal preview swipes as previous or next card navigation. */
+function handlePreviewSwipeStart(event) {
+  if (event.touches.length !== 1) return;
+  state.previewTouchStart = {
+    x: event.touches[0].clientX,
+    y: event.touches[0].clientY,
+  };
+}
+
+/** Navigates on a deliberate horizontal swipe without blocking vertical scrolling. */
+function handlePreviewSwipeEnd(event) {
+  if (!state.previewTouchStart || event.changedTouches.length !== 1) return;
+
+  const start = state.previewTouchStart;
+  state.previewTouchStart = null;
+  const deltaX = event.changedTouches[0].clientX - start.x;
+  const deltaY = event.changedTouches[0].clientY - start.y;
+  if (Math.abs(deltaX) < 40 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+
+  navigateToCard(deltaX < 0 ? 1 : -1);
 }
 
 function getSetTotal(setCode) {
@@ -2033,6 +2097,7 @@ function renderSavedCards() {
   const selectedSetCode = elements.cardSetsInput.value || "DEFAULT";
   const cardsInSet = getCardsInSet(selectedSetCode);
   elements.savedCardsInput.innerHTML = "";
+  updateCardNavigationControls();
 
   if (!state.savedCards.length) {
     const option = document.createElement("option");
@@ -2573,6 +2638,10 @@ function attachEvents() {
     saveCard(cardId);
   });
   elements.savedCardsInput.addEventListener("change", handleSavedCardSelectionChange);
+  elements.previousCardButton.addEventListener("click", () => navigateToCard(-1));
+  elements.nextCardButton.addEventListener("click", () => navigateToCard(1));
+  elements.previewStage.addEventListener("touchstart", handlePreviewSwipeStart, { passive: true });
+  elements.previewStage.addEventListener("touchend", handlePreviewSwipeEnd, { passive: true });
   elements.loadSavedButton.addEventListener("click", () => loadSelectedCard());
   elements.deleteSavedButton.addEventListener("click", deleteSelectedCard);
   window.addEventListener("resize", () => {
