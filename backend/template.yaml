@@ -286,6 +286,10 @@ Resources:
               Resource: !Sub "arn:${AWS::Partition}:s3:::cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}-*/*"
             - Effect: Allow
               Action:
+                - s3:ListBucket
+              Resource: !GetAtt CardArtBucket.Arn
+            - Effect: Allow
+              Action:
                 - s3:GetObject
                 - s3:PutObject
                 - s3:DeleteObject
