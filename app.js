@@ -2256,6 +2256,11 @@ async function saveCard(cardId = "") {
     await savePendingArtForLater();
     await syncArtInputBeforeSave();
     const card = collectCardData();
+    if (!cardId) {
+      card.collectorNumber = getNextCollectorNumber(card.setCode);
+      elements.collectorInput.value = card.collectorNumber;
+      syncCard();
+    }
     card.cardImagePng = await getCardPngDataUrl();
     const data = await apiFetch(cardId ? `/cards/${cardId}` : "/cards", {
       method: cardId ? "PUT" : "POST",

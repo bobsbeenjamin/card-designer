@@ -1203,6 +1203,20 @@ def normalize_collector_number(value):
     return max(1, number)
 
 
+def get_next_collector_number(user_id, set_code):
+    """Return the collector number after the current last card in a set."""
+    response = TABLE.query(
+        KeyConditionExpression=Key("userId").eq(user_id),
+        ProjectionExpression="setCode, collectorNumber",
+    )
+    numbers = [
+        normalize_collector_number(item.get("collectorNumber"))
+        for item in response.get("Items", [])
+        if (item.get("setCode") or DEFAULT_SET["code"]) == set_code
+    ]
+    return max(numbers, default=0) + 1
+
+
 def ensure_default_set_if_missing(user_id):
     """Create the built-in default set for a user when absent."""
     item = {"userId": user_id, **DEFAULT_SET}
@@ -2559,6 +2573,8 @@ def save_card(user_id, body, card_id=None, changed_by=""):
     card = clean_card(body)
     image_bytes = decode_card_image(body)
     validate_card_set(user_id, card["setCode"])
+    if not card_id:
+        card["collectorNumber"] = get_next_collector_number(user_id, card["setCode"])
     user_bucket_name = ensure_user_bucket(user_id)
     existing_item = None
     if card_id:
