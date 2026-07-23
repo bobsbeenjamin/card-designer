@@ -342,6 +342,46 @@ function updateMultilineText(target, value, fallback) {
   }
 }
 
+/** Renders rules text line breaks and parenthetical emphasis.
+ * @param {*} target Element that receives the rendered rules text.
+ * @param {*} value Rules text entered by the user.
+ * @param {*} fallback Text to render when the rules field is empty.
+ */
+function updateRulesText(target, value, fallback) {
+  const text = String(value || "").trim() || fallback;
+  target.replaceChildren();
+  if (!text) return;
+
+  for (const line of text.split(/\r?\n/)) {
+    const lineElement = document.createElement("span");
+    lineElement.className = "card-text-line";
+    appendRuleTextWithParentheses(lineElement, line);
+    target.append(lineElement);
+  }
+}
+
+/** Appends one rules line while italicizing parenthetical text. */
+function appendRuleTextWithParentheses(lineElement, line) {
+  if (!line) {
+    lineElement.textContent = "\u00a0";
+    return;
+  }
+
+  const parentheticalPattern = /\(([^)]*)\)/g;
+  let cursor = 0;
+  let match = parentheticalPattern.exec(line);
+  while (match) {
+    lineElement.append(document.createTextNode(line.slice(cursor, match.index)));
+    const emphasis = document.createElement("em");
+    emphasis.textContent = match[0];
+    lineElement.append(emphasis);
+    cursor = match.index + match[0].length;
+    match = parentheticalPattern.exec(line);
+  }
+
+  lineElement.append(document.createTextNode(line.slice(cursor)));
+}
+
 function setAuthStatus(message) {
   elements.authStatus.textContent = message;
 }
@@ -634,7 +674,7 @@ function syncCard() {
   updateText(elements.cardAttack, elements.attackInput.value, "0");
   updateText(elements.cardHealth, elements.healthInput.value, "0");
   updateText(elements.cardLoyalty, elements.loyaltyInput.value, "0");
-  updateMultilineText(elements.cardAbility, elements.abilityInput.value, "");
+  updateRulesText(elements.cardAbility, elements.abilityInput.value, "");
   updateMultilineText(elements.cardFlavor, elements.flavorInput.value, "");
   elements.cardFlavor.classList.toggle(
     "has-separator",
