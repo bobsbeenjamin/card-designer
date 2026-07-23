@@ -654,6 +654,44 @@ h1 {
   padding-top: 9px;
 }
 
+.rules-panel.is-short-split {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+}
+
+.rules-panel.is-short-split::after {
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(0, 0, 0, 0.24) 18%,
+    rgba(0, 0, 0, 0.24) 82%,
+    transparent
+  );
+  content: "";
+  height: 1px;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translateX(-50%);
+  width: min(84%, 230px);
+}
+
+.rules-panel.is-short-split::before {
+  display: none;
+}
+
+.rules-panel.is-short-split .ability-text,
+.rules-panel.is-short-split .flavor-text {
+  align-self: center;
+  margin: 0;
+}
+
+.rules-panel.is-short-split .flavor-text.has-separator {
+  border-top: 0;
+  padding-top: 0;
+}
+
 .card-footer {
   bottom: -7px;
   display: grid;

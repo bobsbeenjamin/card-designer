@@ -514,6 +514,7 @@ function fitRulesText() {
   const panel = elements.rulesPanel;
   const ability = elements.cardAbility;
   const flavor = elements.cardFlavor;
+  panel.classList.remove("is-short-split");
   ability.style.fontSize = "";
   ability.style.lineHeight = "";
   flavor.style.fontSize = "";
@@ -540,6 +541,20 @@ function fitRulesText() {
       flavor.style.lineHeight = "1.18";
     }
   }
+
+  panel.classList.toggle("is-short-split", shouldCenterShortRulesText());
+}
+
+/** Returns whether rules and flavor text are short enough for a centered split layout. */
+function shouldCenterShortRulesText() {
+  const hasAbility = Boolean(elements.abilityInput.value.trim());
+  const hasFlavor = Boolean(elements.flavorInput.value.trim());
+  if (!hasAbility || !hasFlavor) return false;
+
+  const panel = elements.rulesPanel;
+  const abilityHeight = elements.cardAbility.scrollHeight;
+  const flavorHeight = elements.cardFlavor.scrollHeight;
+  return abilityHeight + flavorHeight <= panel.clientHeight * 0.48;
 }
 
 /** Converts stored collector values to a positive card number. */
