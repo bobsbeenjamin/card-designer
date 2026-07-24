@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Card Designer</title>
+    <link rel="icon" href="../assets/card-maker-logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="library-panel" aria-label="Account and saved designs">
+        <div class="panel-header">
+          <h2>My Stuff</h2>
+        </div>
+
+        <section class="service-panel" aria-label="Account and saved designs">
+          <fieldset>
+            <legend>Account</legend>
+            <div id="signInPanel" class="account-panel">
+              <label>
+                <span>Email</span>
+                <input id="emailInput" type="email" autocomplete="username" />
+              </label>
+              <label>
+                <span>Password</span>
+                <input id="passwordInput" type="password" autocomplete="current-password" />
+              </label>
+              <div class="action-grid">
+                <button id="signUpButton" class="button subtle" type="button">Sign Up</button>
+                <button id="signInButton" class="button primary" type="button">Sign In</button>
+              </div>
+              <label>
+                <span>Confirmation code</span>
+                <input id="confirmationInput" type="text" inputmode="numeric" />
+              </label>
+              <button id="confirmButton" class="button subtle" type="button">Confirm Account</button>
+            </div>
+            <div id="signedInPanel" class="account-menu hidden">
+              <div>
+                <span class="account-kicker">Signed in</span>
+                <strong id="currentUserLabel">Account</strong>
+              </div>
+              <button id="accountMenuButton" class="avatar-button" type="button" aria-label="Account menu" aria-expanded="false">
+                <span class="avatar-face" aria-hidden="true"></span>
+              </button>
+              <div id="accountMenu" class="account-menu-popover hidden">
+                <button id="signOutButton" class="button subtle" type="button">Sign Out</button>
+              </div>
+            </div>
+            <div id="aiSettingsPanel" class="account-panel hidden">
+              <label>
+                <span>Image provider</span>
+                <span id="providerSelectRow" class="provider-select-row">
+                  <select id="imageProviderInput">
+                    <option value="aws">AWS Bedrock</option>
+                    <option value="gemini">Google Gemini</option>
+                    <option value="openai" default>OpenAI</option>
+                    <option value="stability">Stability AI</option>
+                    <option value="ace">ace.ai-compatible</option>
+                    <option value="firefly">Adobe Firefly-compatible</option>
+                    <option value="claude">Claude-compatible</option>
+                    <option value="fal">Fal.ai-compatible</option>
+                    <option value="leonardo">Leonardo.ai-compatible</option>
+                    <option value="midjourney">Midjourney-compatible</option>
+                    <option value="morphic">Morphic-compatible</option>
+                    <option value="runware">Runware-compatible</option>
+                  </select>
+                  <button
+                    id="replaceProviderCredentialsButton"
+                    class="replace-credentials-button hidden"
+                    type="button"
+                    title="click here to replace credentials for this provider"
+                    aria-label="click here to replace credentials for this provider"
+                  >
+                    <span class="refresh-icon" aria-hidden="true"></span>
+                  </button>
+                </span>
+              </label>
+              <label id="providerApiKeyLabel">
+                <span>Provider API key</span>
+                <input id="providerApiKeyInput" type="password" autocomplete="off" placeholder="Stored for selected provider" />
+              </label>
+              <label id="providerEndpointLabel">
+                <span>Provider endpoint URL</span>
+                <input id="providerEndpointInput" type="url" inputmode="url" placeholder="Provider-compatible API endpoint" />
+              </label>
+              <label id="providerModelLabel">
+                <span>Model or deployment</span>
+                <input id="providerModelInput" type="text" autocomplete="off" placeholder="Optional provider model or deployment" />
+              </label>
+              <button id="saveImageGenerationSettingsButton" class="button subtle" type="button">Save AI Settings</button>
+              <p id="imageGenerationStatus" class="status-line">No image provider configured</p>
+            </div>
+            <p id="authStatus" class="status-line">Signed out</p>
+          </fieldset>
+
+          <fieldset id="mySetsPanel" class="hidden">
+            <legend>My Sets</legend>
+            <div class="action-grid">
+              <button id="addSetButton" class="button primary" type="button">Add Set</button>
+              <button id="viewSetsButton" class="button subtle" type="button">View my sets</button>
+            </div>
+            <label>
+              <span>Card set</span>
+              <select id="cardSetsInput">
+                <option value="DEFAULT">DEFAULT - Default</option>
+              </select>
+            </label>
+            <button id="makeSetPublicButton" class="button subtle" type="button">Make this set public</button>
+            <p id="publicSetLinkLine" class="public-set-link hidden">
+              <span>Link to this set:</span>
+              <a id="publicSetLink" href="#" target="_blank" rel="noopener"></a>
+            </p>
+          </fieldset>
+
+          <fieldset>
+            <legend>Saved Designs</legend>
+            <label>
+              <span>Saved cards</span>
+              <select id="savedCardsInput">
+                <option value="">No saved cards loaded</option>
+              </select>
+            </label>
+            <div class="action-grid">
+              <button id="saveNewButton" class="button primary" type="button">Save New</button>
+              <button id="updateSavedButton" class="button subtle" type="button">Update</button>
+              <button id="loadSavedButton" class="button subtle" type="button">Load</button>
+              <button id="deleteSavedButton" class="button subtle danger" type="button">Delete</button>
+            </div>
+            <p id="saveStatus" class="status-line">Sign in to save designs</p>
+          </fieldset>
+          <fieldset>
+            <legend>Export</legend>
+            <button id="exportPng" class="button primary" type="button">Export PNG</button>
+          </fieldset>
+        </section>
+      </aside>
+      <section class="workspace" aria-label="Card preview">
+        <div class="preview-toolbar">
+          <div>
+            <p class="eyebrow preview-title">Card Preview</p>
+          </div>
+        </div>
+
+        <div class="preview-stage">
+          <button id="previousCardButton" class="card-navigation-button" type="button" title="Previous card" aria-label="Previous card">
+            <span aria-hidden="true">&#8592;</span>
+          </button>
+          <article id="card" class="card-frame" aria-label="Designed trading card preview">
+            <div class="card-inner">
+              <header class="card-top">
+                <div class="card-title-lines">
+                  <h2 id="cardName"></h2>
+                  <p id="cardType" class="card-type"></p>
+                </div>
+                <div id="cardCost" class="cost-badge"></div>
+              </header>
+
+              <section class="art-window" aria-label="Card artwork">
+                <img id="cardArt" alt="" />
+                <div id="artFallback" class="art-fallback">
+                  <span>ART</span>
+                </div>
+              </section>
+
+              <section class="rules-panel">
+                <p id="cardAbility" class="ability-text"></p>
+                <p id="cardFlavor" class="flavor-text"></p>
+              </section>
+
+              <footer class="card-footer">
+                <div class="card-bottom">
+                  <div id="combatStats" class="stat-pair">
+                    <div>
+                      <span class="stat-label">ATK</span>
+                      <strong id="cardAttack"></strong>
+                    </div>
+                    <div>
+                      <span class="stat-label">HP</span>
+                      <strong id="cardHealth"></strong>
+                    </div>
+                  </div>
+                  <div id="loyaltyStat" class="loyalty-stat">
+                    <span class="stat-label">LOYALTY</span>
+                    <strong id="cardLoyalty"></strong>
+                  </div>
+                </div>
+              </footer>
+            </div>
+            <div class="card-meta">
+              <span id="setSymbol" class="set-symbol" aria-label="Rarity symbol"></span>
+              <span id="cardCollector"></span>
+              <span id="cardRarity"></span>
+              <span id="cardArtist"></span>
+            </div>
+          </article>
+          <button id="nextCardButton" class="card-navigation-button" type="button" title="Next card" aria-label="Next card">
+            <span aria-hidden="true">&#8594;</span>
+          </button>
+        </div>
+      </section>
+
+      <aside class="control-panel" aria-label="Card controls">
+        <div class="panel-header">
+          <h2>Card Design Fields</h2>
+          <div class="panel-header-actions">
+            <button id="resetCard" class="button subtle" type="button">Reset</button>
+            <button id="homeButton" class="home-button" type="button" title="Go to the Home Page" aria-label="Go to the Home Page">
+              <span class="home-icon" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+        <form id="cardForm">
+          <fieldset>
+            <legend>Identity</legend>
+            <label>
+              <span>Set</span>
+              <select id="setInput">
+                <option value="DEFAULT">DEFAULT - Default</option>
+              </select>
+            </label>
+            <label>
+              <span>Name</span>
+              <input id="nameInput" type="text" maxlength="36" />
+            </label>
+            <label>
+              <span>Type</span>
+              <select id="typeInput">
+                <option value="Event">Event</option>
+                <option value="Item">Item</option>
+                <option value="Person">Person</option>
+                <option value="Organization">Organization</option>
+                <option value="__custom">Custom</option>
+              </select>
+            </label>
+            <label id="customTypeLabel" class="hidden">
+              <span>Custom type</span>
+              <input id="customTypeInput" type="text" maxlength="24" />
+            </label>
+            <label>
+              <span>Subtype</span>
+              <input id="subtypeInput" type="text" maxlength="28" />
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Numbers</legend>
+            <div class="number-grid">
+              <label>
+                <span>Cost</span>
+                <input id="costInput" type="number" min="0" max="99" />
+              </label>
+              <label>
+                <span>Stat mode</span>
+                <select id="statModeInput">
+                  <option value="combat">Attack / Health</option>
+                  <option value="loyalty">Loyalty</option>
+                </select>
+              </label>
+            </div>
+            <div id="combatInputs" class="number-grid">
+              <label>
+                <span>Attack</span>
+                <input id="attackInput" type="number" min="0" max="99" />
+              </label>
+              <label>
+                <span>Health</span>
+                <input id="healthInput" type="number" min="0" max="99" />
+              </label>
+            </div>
+            <div id="loyaltyInputs" class="number-grid hidden">
+              <label>
+                <span>Loyalty</span>
+                <input id="loyaltyInput" type="number" min="0" max="99" />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Text</legend>
+            <label>
+              <span>Rules</span>
+              <textarea id="abilityInput" rows="5"></textarea>
+            </label>
+            <label>
+              <span>Flavor</span>
+              <textarea id="flavorInput" rows="3"></textarea>
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Artwork</legend>
+            <div class="generate-image-row">
+              <button id="generateImageButton" class="button primary" type="button">Generate Image</button>
+              <span id="generateImageSpinner" class="inline-spinner hidden" aria-label="Generating image" role="status"></span>
+            </div>
+            <label class="file-input">
+              <span>Image file</span>
+              <input id="artInput" type="file" accept="image/*" />
+            </label>
+            <label>
+              <span>Image URL</span>
+              <span class="art-url-control">
+                <input id="artUrlInput" type="url" inputmode="url" />
+                <button id="deleteArtButton" class="set-delete-button" type="button" title="Delete card art" aria-label="Delete card art">
+                  <span class="trash-icon" aria-hidden="true"></span>
+                </button>
+              </span>
+            </label>
+            <label>
+              <span>Art fit</span>
+              <select id="fitInput">
+                <option value="cover">Cover (preserve ratio)</option>
+                <option value="contain">Contain (unaltered)</option>
+                <option value="fill">Fill (stretch)</option>
+              </select>
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Printing</legend>
+            <label>
+              <span>Artist name</span>
+              <input id="artistInput" type="text" maxlength="40" />
+            </label>
+            <div class="number-grid">
+              <label>
+                <span>Collector number</span>
+                <input id="collectorInput" type="text" maxlength="16" readonly />
+              </label>
+              <label>
+                <span>Rarity</span>
+                <select id="rarityInput">
+                  <option value="common">Common</option>
+                  <option value="uncommon">Uncommon</option>
+                  <option value="rare">Rare</option>
+                  <option value="mythic">Mythic</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Colors</legend>
+            <div class="color-grid">
+              <label>
+                <span>Frame</span>
+                <input id="frameColor" type="color" />
+              </label>
+              <label>
+                <span>Accent</span>
+                <input id="accentColor" type="color" />
+              </label>
+              <label>
+                <span>Text</span>
+                <input id="textColor" type="color" />
+              </label>
+              <label>
+                <span>Panel</span>
+                <input id="panelColor" type="color" />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset id="cardHistoryPanel">
+            <legend>History</legend>
+            <div class="card-history-table-wrapper">
+              <table class="card-history-table" aria-label="Recent card history">
+                <thead>
+                  <tr>
+                    <th scope="col">Date</th>
+                    <th scope="col">User</th>
+                    <th scope="col">Description</th>
+                  </tr>
+                </thead>
+                <tbody id="recentCardHistoryRows">
+                  <tr>
+                    <td class="card-history-empty" colspan="3">Load a saved card to view history.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <button id="viewAllCardHistoryButton" class="button subtle" type="button" disabled>View All Card History</button>
+          </fieldset>
+        </form>
+      </aside>
+    </main>
+
+    <dialog id="saveArtDialog" class="modal-dialog" aria-labelledby="saveArtTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="saveArtTitle">Do you want to save this card's artwork for later?</h2>
+        <div class="modal-actions two-up">
+          <button id="saveArtYesButton" class="button primary" value="yes" type="submit">Yes</button>
+          <button class="button subtle" value="no" type="submit">No</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="setLibraryDialog" class="library-modal" aria-labelledby="setLibraryTitle">
+      <section class="library-modal-shell">
+        <header class="library-modal-header">
+          <button id="setLibraryBackButton" class="button subtle hidden" type="button">Sets</button>
+          <h2 id="setLibraryTitle">My Sets</h2>
+          <button id="setLibraryCloseButton" class="button subtle" type="button">Close</button>
+        </header>
+        <p id="setLibraryStatus" class="status-line"></p>
+        <div id="setLibraryContent" class="library-modal-content"></div>
+      </section>
+    </dialog>
+
+    <dialog id="deleteSetDialog" class="modal-dialog" aria-labelledby="deleteSetTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="deleteSetTitle">Are you sure you want to delete this set?</h2>
+        <p id="deleteSetMessage">This action cannot be undone</p>
+        <div class="modal-actions delete-set-actions">
+          <button id="confirmDeleteSetButton" class="button danger no-wrap" value="delete" type="submit">Yes, delete forever</button>
+          <button class="button subtle no-wrap" value="cancel" type="submit">Cancel (back to safety)</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="setDialog" class="modal-dialog" aria-labelledby="setDialogTitle">
+      <form id="setDialogForm" class="modal-card">
+        <h2 id="setDialogTitle">Define a new set</h2>
+        <label>
+          <span>Code</span>
+          <input id="setCodeInput" type="text" maxlength="16" autocomplete="off" />
+        </label>
+        <label>
+          <span>Name</span>
+          <input id="setNameInput" type="text" maxlength="80" />
+        </label>
+        <label>
+          <span>Symbol image URL</span>
+          <input id="setSymbolInput" type="url" inputmode="url" />
+        </label>
+        <label>
+          <span>Copyright info</span>
+          <textarea id="setCopyrightInput" rows="3"></textarea>
+        </label>
+        <label class="checkbox-label">
+          <input id="setPublicInput" type="checkbox" />
+          <span>Public set</span>
+        </label>
+        <p id="setDialogStatus" class="status-line"></p>
+        <div class="modal-actions two-up">
+          <button id="cancelSetButton" class="button subtle" type="button">Cancel</button>
+          <button id="saveSetButton" class="button primary" type="button">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="duplicateSaveDialog" class="modal-dialog" aria-labelledby="duplicateSaveTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="duplicateSaveTitle">Saved card already exists</h2>
+        <p id="duplicateSaveMessage">A saved card has this name.</p>
+        <div class="modal-actions">
+          <button id="duplicateSaveNewButton" class="button subtle" value="save-new" type="submit">Save New</button>
+          <button id="duplicateUpdateButton" class="button primary" value="update" type="submit">Update Existing</button>
+          <button class="button subtle" value="cancel" type="submit">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="unsavedChangesDialog" class="modal-dialog" aria-labelledby="unsavedChangesTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="unsavedChangesTitle">Unsaved changes</h2>
+        <p id="unsavedChangesMessage">Save changes before loading the selected card?</p>
+        <div class="modal-actions two-up">
+          <button class="button subtle" value="discard" type="submit">Don't Save</button>
+          <button class="button primary" value="save" type="submit">Save Changes</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="cardHistoryDialog" class="modal-dialog card-history-dialog" aria-labelledby="cardHistoryTitle">
+      <form method="dialog" class="modal-card export-set-card">
+        <button class="modal-close-button" value="close" type="submit" aria-label="Close card history">&times;</button>
+        <h2 id="cardHistoryTitle">Card History</h2>
+        <p id="cardHistorySubtitle" class="card-history-subtitle"></p>
+        <div class="card-history-modal-table-wrapper">
+          <table class="card-history-table" aria-label="All card history">
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">User</th>
+                <th scope="col">Description</th>
+                <th scope="col">Old Value</th>
+                <th scope="col">New Value</th>
+              </tr>
+            </thead>
+            <tbody id="allCardHistoryRows"></tbody>
+          </table>
+        </div>
+        <div class="card-history-modal-actions">
+          <button class="button subtle" value="close" type="submit">Close</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="incomingShareDialog" class="modal-dialog" aria-labelledby="incomingShareTitle">
+      <form id="incomingShareForm" class="modal-card">
+        <h2 id="incomingShareTitle">Shared set copy</h2>
+        <p id="incomingShareMessage">A user sent you a set.</p>
+        <div id="incomingShareCodeChoice" class="share-conflict-choice hidden">
+          <p id="incomingShareCodeChoiceText" class="status-line"></p>
+          <label>
+            <span>Duplicate set code</span>
+            <select id="incomingShareCodeResolution">
+              <option value="" selected disabled>Choose an option</option>
+              <option value="overwrite">Overwrite the existing set</option>
+              <option value="new">Create a new set code</option>
+            </select>
+          </label>
+        </div>
+        <div id="incomingShareNameChoice" class="share-conflict-choice hidden">
+          <p id="incomingShareNameChoiceText" class="status-line"></p>
+          <label>
+            <span>Duplicate set name</span>
+            <select id="incomingShareNameResolution">
+              <option value="" selected disabled>Choose an option</option>
+              <option value="keep">Keep this set name</option>
+              <option value="new">Create a new set name</option>
+            </select>
+          </label>
+        </div>
+        <div class="modal-actions two-up">
+          <button id="acceptIncomingShareButton" class="button primary" type="button">Accept copy</button>
+          <button id="rejectIncomingShareButton" class="button subtle" type="button">Reject copy</button>
+        </div>
+      </form>
+    </dialog>
+    
+    <iframe id="cardRenderFrame" class="card-render-frame" title="Card render workspace"></iframe>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="../card-image.js"></script>
+    <script src="../config.js"></script>
+    <script src="../set-sharing.js"></script>
+    <script src="designer.js"></script>
+  </body>
+</html>

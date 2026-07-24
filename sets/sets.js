@@ -683,7 +683,7 @@ async function getCardRendererWindow() {
 
       frame.addEventListener("load", finishLoading, { once: true });
       frame.addEventListener("error", () => reject(new Error("Card renderer failed to load.")), { once: true });
-      if (!frame.getAttribute("src")) frame.src = "../?render=card";
+      if (!frame.getAttribute("src")) frame.src = "../designer/?render=card";
     });
   }
 
@@ -1132,7 +1132,7 @@ function replaceMissingLibraryImage(image, card) {
 
 /** Builds a URL that opens a card in the main designer. */
 function getDesignerCardUrl(cardId) {
-  const designerUrl = new URL("../", window.location.href);
+  const designerUrl = new URL("../designer/", window.location.href);
   designerUrl.searchParams.set("card", cardId);
   return designerUrl;
 }
