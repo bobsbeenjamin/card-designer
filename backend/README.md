@@ -85,7 +85,13 @@ All routes require `Authorization: Bearer <cognito-jwt>`.
 - `GET /cards/{cardId}`
 - `GET /cards/{cardId}/history`
 - `PUT /cards/{cardId}`
+- `PUT /cards/{cardId}/image`
 - `DELETE /cards/{cardId}`
+- `GET /art`
+- `POST /art`
+- `POST /art/generate`
+- `GET /frame`
+- `POST /frame`
 
 ## Card History
 
@@ -110,6 +116,8 @@ Card JSON accepts:
 {
   "name": "Test Card",
   "artUrl": "",
+  "frameUrl": "",
+  "frameFit": "fill",
   "cost": "4",
   "type": "Person",
   "sub_type": "World Leader",
@@ -139,7 +147,8 @@ Card JSON accepts:
   app client id. Those are not secrets.
 - Keep CORS restricted to your real frontend origin. Avoid `*` for production.
 - Use separate dev and production stacks.
-- Store uploaded art in S3 later using short-lived presigned upload URLs from
-  Lambda, not direct public write access.
+- Uploaded artwork and frame backgrounds are written through authenticated
+  Lambda routes to the stack-managed private S3 bucket; the browser never gets
+  direct S3 write access.
 - Review the generated Lambda role before production. It should only need
   access to the stack-managed DynamoDB tables and CloudWatch Logs.

@@ -53,6 +53,8 @@ DEFAULT_SET = {
 ALLOWED_FIELDS = {
     "name",
     "artUrl",
+    "frameUrl",
+    "frameFit",
     "cost",
     "type",
     "sub_type",
@@ -71,6 +73,8 @@ ALLOWED_FIELDS = {
 CARD_HISTORY_FIELD_LABELS = {
     "name": "name",
     "artUrl": "art",
+    "frameUrl": "card frame",
+    "frameFit": "background fit",
     "cost": "cost",
     "type": "type",
     "sub_type": "subtype",
@@ -88,6 +92,7 @@ CARD_HISTORY_FIELD_LABELS = {
 }
 CARD_IMAGE_FIELD = "cardImagePng"
 ART_IMAGE_FIELD = "artImage"
+FRAME_IMAGE_FIELD = "frameImage"
 OPENAI_KEY_SETTING = "openAiApiKey"
 IMAGE_PROVIDER_SETTING = "imageGenerationProvider"
 MIDJOURNEY_SETTING = "midjourneySettings"
@@ -139,6 +144,12 @@ def handler(event, _context):
 
         if method == "POST" and route_key == "POST /art":
             return ok(save_art(user_id, read_body(event)), status=201)
+
+        if method == "GET" and route_key == "GET /frame":
+            return get_saved_frame(user_id, event)
+
+        if method == "POST" and route_key == "POST /frame":
+            return ok(save_frame(user_id, read_body(event)), status=201)
 
         if method == "POST" and route_key == "POST /art/generate":
             return ok(generate_art(user_id, read_body(event)), status=201)
@@ -259,6 +270,26 @@ def get_saved_art_url(art_key):
     return f"/art?key={encoded_key}&version={uuid.uuid4()}"
 
 
+def get_frame_key(user_id, set_code, card_name, content_type):
+    """Build the S3 key for a saved card frame background.
+
+    Args:
+        user_id: Authenticated Cognito user id.
+        set_code: Card set code for the frame path.
+        card_name: Card name for the frame path.
+        content_type: Uploaded image MIME type.
+    """
+    art_key = get_art_key(user_id, set_code, card_name, content_type)
+    user_prefix, relative_key = art_key.split("/", 1)
+    return f"{user_prefix}/frames/{relative_key}"
+
+
+def get_saved_frame_url(frame_key):
+    """Build a versioned app URL for a saved card frame background."""
+    encoded_key = quote(frame_key, safe="")
+    return f"/frame?key={encoded_key}&version={uuid.uuid4()}"
+
+
 def decode_art_image(body):
     """Decode the uploaded artwork data URL."""
     art_image = str(body.get(ART_IMAGE_FIELD) or "")
@@ -291,6 +322,28 @@ def save_art(user_id, body):
         ServerSideEncryption="AES256",
     )
     return {"artKey": art_key, "artUrl": get_saved_art_url(art_key)}
+
+
+def decode_frame_image(body):
+    """Decode an uploaded card frame background data URL."""
+    frame_body = {ART_IMAGE_FIELD: body.get(FRAME_IMAGE_FIELD)}
+    return decode_art_image(frame_body)
+
+
+def save_frame(user_id, body):
+    """Store an uploaded frame background and return an authenticated app URL."""
+    image_bytes, content_type = decode_frame_image(body)
+    set_code = normalize_set_code(body.get("setCode"))
+    validate_card_set(user_id, set_code)
+    frame_key = get_frame_key(user_id, set_code, body.get("cardName"), content_type)
+    S3.put_object(
+        Bucket=ART_BUCKET_NAME,
+        Key=frame_key,
+        Body=image_bytes,
+        ContentType=content_type,
+        ServerSideEncryption="AES256",
+    )
+    return {"frameKey": frame_key, "frameUrl": get_saved_frame_url(frame_key)}
 
 
 def get_openai_key_item(user_id):
@@ -972,6 +1025,32 @@ def get_saved_art(user_id, event):
     }
 
 
+def get_saved_frame(user_id, event):
+    """Return a saved card frame background from the private art bucket."""
+    frame_key = unquote_plus((event.get("queryStringParameters") or {}).get("key", "")).strip()
+    user_prefix = f"{get_art_user_prefix(user_id)}/frames/"
+    if not frame_key.startswith(user_prefix):
+        raise PermissionError()
+    try:
+        response = S3.get_object(Bucket=ART_BUCKET_NAME, Key=frame_key)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") in {"NoSuchKey", "404"}:
+            raise ValueError("Saved frame background was not found.")
+        raise
+    image_bytes = response["Body"].read(MAX_ART_IMAGE_BYTES + 1)
+    if len(image_bytes) > MAX_ART_IMAGE_BYTES:
+        raise ValueError("Saved frame background is larger than 7 MB.")
+    return {
+        "statusCode": 200,
+        "headers": {
+            "cache-control": "private, max-age=3600",
+            "content-type": response.get("ContentType") or "image/png",
+        },
+        "isBase64Encoded": True,
+        "body": base64.b64encode(image_bytes).decode("ascii"),
+    }
+
+
 def proxy_image(event):
     """Fetch and return a validated remote image for browser-safe rendering."""
     raw_url = (event.get("queryStringParameters") or {}).get("url", "")
@@ -1081,6 +1160,8 @@ def clean_card(body):
         raise ValueError("Card name is required.")
     card["setCode"] = normalize_set_code(card.get("setCode"))
     card["collectorNumber"] = normalize_collector_number(card.get("collectorNumber"))
+    if card.get("frameFit") not in {"cover", "contain", "fill"}:
+        card["frameFit"] = "fill"
     return card
 
 
@@ -1288,6 +1369,7 @@ def clear_set_cards_and_assets(user_id, set_code):
     deleted_cards = 0
     for card in get_cards_for_set(user_id, set_code):
         delete_card_art(card)
+        delete_card_frame(card)
         delete_card_image(card)
         TABLE.delete_item(Key={"userId": user_id, "cardId": card["cardId"]})
         deleted_cards += 1
@@ -1482,6 +1564,15 @@ def get_saved_art_key_from_url(art_url):
     return (query.get("key") or [""])[0].strip()
 
 
+def get_saved_frame_key_from_url(frame_url):
+    """Return the private art bucket key from a saved /frame URL when present."""
+    parsed = urlparse(str(frame_url or ""))
+    if not parsed.path.rstrip("/").endswith("/frame"):
+        return ""
+    query = parse_qs(parsed.query)
+    return (query.get("key") or [""])[0].strip()
+
+
 def get_shared_art_key(target_user_id, target_card, source_art_key):
     """Build a recipient-owned S3 art key while preserving the source extension."""
     extension = os.path.splitext(source_art_key)[1].lstrip(".").lower() or "png"
@@ -1489,6 +1580,15 @@ def get_shared_art_key(target_user_id, target_card, source_art_key):
         extension = "png"
     content_type = "image/jpeg" if extension in {"jpg", "jpeg"} else f"image/{extension}"
     return get_art_key(target_user_id, target_card.get("setCode"), target_card.get("name"), content_type)
+
+
+def get_shared_frame_key(target_user_id, target_card, source_frame_key):
+    """Build a recipient-owned S3 frame key while preserving its extension."""
+    extension = os.path.splitext(source_frame_key)[1].lstrip(".").lower() or "png"
+    if extension not in {"jpg", "jpeg", "png", "gif", "webp"}:
+        extension = "png"
+    content_type = "image/jpeg" if extension in {"jpg", "jpeg"} else f"image/{extension}"
+    return get_frame_key(target_user_id, target_card.get("setCode"), target_card.get("name"), content_type)
 
 
 def get_shared_art_url(api_base_url, target_art_key):
@@ -1499,6 +1599,16 @@ def get_shared_art_url(api_base_url, target_art_key):
         base_path = parsed.path.rstrip("/")
         return f"{parsed.scheme}://{parsed.netloc}{base_path}/art?key={encoded_key}"
     return f"/art?key={encoded_key}"
+
+
+def get_shared_frame_url(api_base_url, target_frame_key):
+    """Build the recipient frame URL from the card designer API base URL."""
+    encoded_key = quote(target_frame_key, safe="")
+    parsed = urlparse(str(api_base_url or "").strip())
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        base_path = parsed.path.rstrip("/")
+        return f"{parsed.scheme}://{parsed.netloc}{base_path}/frame?key={encoded_key}"
+    return f"/frame?key={encoded_key}"
 
 
 def copy_shared_card_art(source_card, target_user_id, target_card, api_base_url=""):
@@ -1518,6 +1628,26 @@ def copy_shared_card_art(source_card, target_user_id, target_card, api_base_url=
         ServerSideEncryption="AES256",
     )
     target_card["artUrl"] = get_shared_art_url(api_base_url, target_art_key)
+
+
+def copy_shared_card_frame(source_card, target_user_id, target_card, api_base_url=""):
+    """Copy a saved frame background into the recipient's private art prefix."""
+    source_frame_key = get_saved_frame_key_from_url(source_card.get("frameUrl"))
+    if not source_frame_key:
+        return
+    source_prefix = f"{get_art_user_prefix(source_card.get('userId', ''))}/frames/"
+    if not source_frame_key.startswith(source_prefix):
+        return
+
+    target_frame_key = get_shared_frame_key(target_user_id, target_card, source_frame_key)
+    S3.copy_object(
+        Bucket=ART_BUCKET_NAME,
+        Key=target_frame_key,
+        CopySource={"Bucket": ART_BUCKET_NAME, "Key": source_frame_key},
+        MetadataDirective="COPY",
+        ServerSideEncryption="AES256",
+    )
+    target_card["frameUrl"] = get_shared_frame_url(api_base_url, target_frame_key)
 
 
 def relocate_shared_card_art(user_id, card, final_set_code, api_base_url):
@@ -1548,6 +1678,35 @@ def relocate_shared_card_art(user_id, card, final_set_code, api_base_url):
     card["artUrl"] = get_shared_art_url(api_base_url, target_art_key)
 
 
+def relocate_shared_card_frame(user_id, card, final_set_code, api_base_url):
+    """Move pending shared frame imagery into the accepted set's final path.
+
+    Args:
+        user_id: Recipient account that owns the copied frame.
+        card: Pending copied card whose frame may need relocation.
+        final_set_code: Final selected code for the accepted set.
+        api_base_url: Public API base used to build the recipient frame URL.
+    """
+    source_frame_key = get_saved_frame_key_from_url(card.get("frameUrl"))
+    source_prefix = f"{get_art_user_prefix(user_id)}/frames/"
+    if not source_frame_key or not source_frame_key.startswith(source_prefix):
+        return
+
+    target_card = {**card, "setCode": final_set_code}
+    target_frame_key = get_shared_frame_key(user_id, target_card, source_frame_key)
+    if source_frame_key == target_frame_key:
+        return
+    S3.copy_object(
+        Bucket=ART_BUCKET_NAME,
+        Key=target_frame_key,
+        CopySource={"Bucket": ART_BUCKET_NAME, "Key": source_frame_key},
+        MetadataDirective="COPY",
+        ServerSideEncryption="AES256",
+    )
+    S3.delete_object(Bucket=ART_BUCKET_NAME, Key=source_frame_key)
+    card["frameUrl"] = get_shared_frame_url(api_base_url, target_frame_key)
+
+
 def delete_card_art(card):
     """Delete saved editable artwork for a card when it belongs to that user."""
     art_key = get_saved_art_key_from_url(card.get("artUrl"))
@@ -1564,6 +1723,25 @@ def delete_replaced_card_art(existing_card, updated_card):
     new_art_key = get_saved_art_key_from_url(updated_card.get("artUrl"))
     if old_art_key and old_art_key != new_art_key:
         delete_card_art(existing_card)
+
+
+def delete_card_frame(card):
+    """Delete a saved frame background when it belongs to the card's owner."""
+    frame_key = get_saved_frame_key_from_url(card.get("frameUrl"))
+    if not frame_key:
+        return
+    frame_prefix = f"{get_art_user_prefix(card.get('userId', ''))}/frames/"
+    if not frame_key.startswith(frame_prefix):
+        return
+    S3.delete_object(Bucket=ART_BUCKET_NAME, Key=frame_key)
+
+
+def delete_replaced_card_frame(existing_card, updated_card):
+    """Delete an old saved frame when a card no longer points at it."""
+    old_frame_key = get_saved_frame_key_from_url(existing_card.get("frameUrl"))
+    new_frame_key = get_saved_frame_key_from_url(updated_card.get("frameUrl"))
+    if old_frame_key and old_frame_key != new_frame_key:
+        delete_card_frame(existing_card)
 
 
 def copy_card_histories(source_user_id, source_card, target_user_id, target_card):
@@ -1649,6 +1827,7 @@ def finalize_pending_share_card(user_id, card, final_set_code, api_base_url):
         api_base_url: Public API base used to rebuild saved art URLs.
     """
     relocate_shared_card_art(user_id, card, final_set_code, api_base_url)
+    relocate_shared_card_frame(user_id, card, final_set_code, api_base_url)
     relocate_shared_card_image(card, final_set_code)
     card["setCode"] = final_set_code
     for field in {"pendingShare", "shareId", "senderUserId", "senderEmail", "originalCardId", "expiresAt"}:
@@ -1763,6 +1942,7 @@ def share_set_with_user(sender_user_id, sender_email, api_base_url, set_code, bo
             "expiresAt": now + SET_SHARE_EXPIRATION_SECONDS,
         })
         copy_shared_card_art(source_card, recipient["userId"], target_card, api_base_url)
+        copy_shared_card_frame(source_card, recipient["userId"], target_card, api_base_url)
         copy_shared_card_image(source_card, recipient["userId"], target_card)
         TABLE.put_item(Item=target_card)
         if include_card_history:
@@ -2605,6 +2785,7 @@ def save_card(user_id, body, card_id=None, changed_by=""):
 
     if existing_item:
         delete_replaced_card_art(existing_item, item)
+        delete_replaced_card_frame(existing_item, item)
 
     if existing_item and image_bytes:
         old_key = existing_item.get("imageKey") or get_card_image_key(existing_item)
@@ -2650,6 +2831,7 @@ def delete_card(user_id, card_id):
     item = response.get("Item")
     if item:
         delete_card_art(item)
+        delete_card_frame(item)
         delete_card_image(item)
     TABLE.delete_item(Key={"userId": user_id, "cardId": card_id})
 

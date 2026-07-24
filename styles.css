@@ -545,6 +545,21 @@ h1 {
   width: min(420px, 78vw, calc((100vh - 116px) * 63 / 88));
 }
 
+.card-frame-background {
+  border-radius: 20px;
+  height: 100%;
+  inset: 0;
+  object-fit: cover;
+  pointer-events: none;
+  position: absolute;
+  width: 100%;
+  z-index: 0;
+}
+
+.card-frame-background:not([src]) {
+  display: none;
+}
+
 .card-inner {
   background: transparent;
   border: 2px solid var(--accent);
@@ -556,6 +571,7 @@ h1 {
   overflow: visible;
   padding: 13px;
   position: relative;
+  z-index: 1;
 }
 
 .card-bottom,
@@ -770,6 +786,7 @@ h1 {
   min-height: 20px;
   position: absolute;
   right: 24px;
+  z-index: 1;
 }
 
 .card-meta span:nth-child(4) {

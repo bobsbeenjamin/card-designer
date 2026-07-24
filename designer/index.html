@@ -148,6 +148,7 @@
             <span aria-hidden="true">&#8592;</span>
           </button>
           <article id="card" class="card-frame" aria-label="Designed trading card preview">
+            <img id="cardFrameImage" class="card-frame-background" alt="" />
             <div class="card-inner">
               <header class="card-top">
                 <div class="card-title-lines">
@@ -363,6 +364,31 @@
             </div>
           </fieldset>
 
+          <fieldset>
+            <legend>Card Frame</legend>
+            <label class="file-input">
+              <span>Image file</span>
+              <input id="frameInput" type="file" accept="image/*" />
+            </label>
+            <label>
+              <span>Image URL</span>
+              <span class="art-url-control">
+                <input id="frameUrlInput" type="url" inputmode="url" />
+                <button id="deleteFrameButton" class="set-delete-button" type="button" title="Delete card frame image" aria-label="Delete card frame image">
+                  <span class="trash-icon" aria-hidden="true"></span>
+                </button>
+              </span>
+            </label>
+            <label>
+              <span>Background fit</span>
+              <select id="frameFitInput">
+                <option value="cover">Cover (preserve ratio)</option>
+                <option value="contain">Contain (unaltered)</option>
+                <option value="fill">Fill (stretch)</option>
+              </select>
+            </label>
+          </fieldset>
+
           <fieldset id="cardHistoryPanel">
             <legend>History</legend>
             <div class="card-history-table-wrapper">
@@ -392,6 +418,16 @@
         <h2 id="saveArtTitle">Do you want to save this card's artwork for later?</h2>
         <div class="modal-actions two-up">
           <button id="saveArtYesButton" class="button primary" value="yes" type="submit">Yes</button>
+          <button class="button subtle" value="no" type="submit">No</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="saveFrameDialog" class="modal-dialog" aria-labelledby="saveFrameTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="saveFrameTitle">Do you want to save this card's frame background for later?</h2>
+        <div class="modal-actions two-up">
+          <button class="button primary" value="yes" type="submit">Yes</button>
           <button class="button subtle" value="no" type="submit">No</button>
         </div>
       </form>

@@ -14,6 +14,8 @@ const lastLoadedCardStoragePrefix = "cardDesignerLastLoaded";
 const cardHistoryFieldLabels = {
   name: "Name",
   artUrl: "Art",
+  frameUrl: "Card frame",
+  frameFit: "Background fit",
   cost: "Cost",
   type: "Type",
   sub_type: "Subtype",
@@ -147,6 +149,10 @@ const state = {
   artUrl: "",
   pendingArtUpload: null,
   pendingArtLoad: null,
+  frameObjectUrl: "",
+  frameUrl: "",
+  pendingFrameUpload: null,
+  pendingFrameLoad: null,
   previewTouchStart: null,
   libraryDraggedCardId: "",
   libraryDragMoved: false,
@@ -160,6 +166,7 @@ const state = {
 
 const elements = {
   card: document.querySelector("#card"),
+  cardFrameImage: document.querySelector("#cardFrameImage"),
   cardRenderFrame: document.querySelector("#cardRenderFrame"),
   previewStage: document.querySelector(".preview-stage"),
   previousCardButton: document.querySelector("#previousCardButton"),
@@ -202,6 +209,10 @@ const elements = {
   artUrlInput: document.querySelector("#artUrlInput"),
   deleteArtButton: document.querySelector("#deleteArtButton"),
   fitInput: document.querySelector("#fitInput"),
+  frameInput: document.querySelector("#frameInput"),
+  frameUrlInput: document.querySelector("#frameUrlInput"),
+  deleteFrameButton: document.querySelector("#deleteFrameButton"),
+  frameFitInput: document.querySelector("#frameFitInput"),
   frameColor: document.querySelector("#frameColor"),
   accentColor: document.querySelector("#accentColor"),
   textColor: document.querySelector("#textColor"),
@@ -277,6 +288,7 @@ const elements = {
   deleteSetMessage: document.querySelector("#deleteSetMessage"),
   confirmDeleteSetButton: document.querySelector("#confirmDeleteSetButton"),
   saveArtDialog: document.querySelector("#saveArtDialog"),
+  saveFrameDialog: document.querySelector("#saveFrameDialog"),
   toastRegion: document.querySelector("#toastRegion"),
   incomingShareDialog: document.querySelector("#incomingShareDialog"),
   incomingShareForm: document.querySelector("#incomingShareForm"),
@@ -761,6 +773,7 @@ function syncCard() {
   elements.combatInputs.classList.toggle("hidden", isStatless || isLoyalty);
   elements.loyaltyInputs.classList.toggle("hidden", isStatless || !isLoyalty);
   updateArtFit();
+  updateFrameFit();
   document.documentElement.style.setProperty("--frame", elements.frameColor.value);
   document.documentElement.style.setProperty("--accent", elements.accentColor.value);
   document.documentElement.style.setProperty("--card-text", elements.textColor.value);
@@ -815,16 +828,38 @@ function updateArtFit() {
   elements.artWindow.style.backgroundSize = backgroundSize;
 }
 
+/** Applies the selected object fit to the card frame background image. */
+function updateFrameFit() {
+  elements.cardFrameImage.style.objectFit = elements.frameFitInput.value || "fill";
+}
+
+/** Releases the current object URL used for a proxied frame background. */
+function revokeFrameObjectUrl() {
+  if (state.frameObjectUrl) {
+    URL.revokeObjectURL(state.frameObjectUrl);
+    state.frameObjectUrl = "";
+  }
+}
+
+/** Removes the frame background from the preview and resets its image state. */
+function clearFrame() {
+  revokeFrameObjectUrl();
+  state.frameUrl = "";
+  state.pendingFrameUpload = null;
+  elements.cardFrameImage.removeAttribute("src");
+  elements.cardFrameImage.removeAttribute("crossorigin");
+}
+
 /** Fetches a remote image through the authenticated image proxy. */
-async function getProxiedImageSource(artUrl) {
+async function getProxiedImageSource(imageUrl) {
   if (!state.idToken || isJwtExpired(state.idToken)) {
     throw new Error("Sign in to load image URLs through the CORS-safe proxy.");
   }
 
-  const isSavedArtUrl = artUrl.startsWith(`${backendConfig.apiUrl}/art?`);
-  const imageRequestUrl = isSavedArtUrl
-    ? artUrl
-    : `${backendConfig.apiUrl}/image-proxy?url=${encodeURIComponent(artUrl)}`;
+  const isSavedImageUrl = ["/art?", "/frame?"].some((path) => imageUrl.startsWith(`${backendConfig.apiUrl}${path}`));
+  const imageRequestUrl = isSavedImageUrl
+    ? imageUrl
+    : `${backendConfig.apiUrl}/image-proxy?url=${encodeURIComponent(imageUrl)}`;
   const response = await fetch(imageRequestUrl, {
     headers: { Authorization: `Bearer ${state.idToken}` },
   });
@@ -930,6 +965,85 @@ function loadArtUrl() {
   setArtSource(elements.artUrlInput.value, "Image URL loaded");
 }
 
+/** Loads the card frame image element and resolves when its pixels are ready. */
+function loadFrameElement(src) {
+  return new Promise((resolve, reject) => {
+    const handleLoad = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = () => {
+      cleanup();
+      reject(new Error("Frame image URL did not load as an image."));
+    };
+    const cleanup = () => {
+      elements.cardFrameImage.removeEventListener("load", handleLoad);
+      elements.cardFrameImage.removeEventListener("error", handleError);
+    };
+
+    elements.cardFrameImage.addEventListener("load", handleLoad);
+    elements.cardFrameImage.addEventListener("error", handleError);
+    elements.cardFrameImage.src = src;
+    if (elements.cardFrameImage.complete) {
+      if (elements.cardFrameImage.naturalWidth > 0) handleLoad();
+      else handleError();
+    }
+  });
+}
+
+/** Loads a frame background from a file, data URL, proxied URL, or direct fallback. */
+async function setFrameSource(src, statusMessage = "") {
+  const frameUrl = String(src || "").trim();
+  revokeFrameObjectUrl();
+  state.frameUrl = frameUrl;
+  if (!frameUrl) {
+    clearFrame();
+    return;
+  }
+
+  if (!isValidImageUri(frameUrl)) {
+    clearFrame();
+    setSaveStatus("Enter a valid frame image URL.");
+    return;
+  }
+
+  elements.cardFrameImage.removeAttribute("crossorigin");
+  if (frameUrl.startsWith("data:")) {
+    try {
+      await loadFrameElement(frameUrl);
+      if (statusMessage) setSaveStatus(statusMessage);
+    } catch (error) {
+      clearFrame();
+      setSaveStatus(error.message);
+    }
+    return;
+  }
+
+  try {
+    const objectUrl = await getProxiedImageSource(frameUrl);
+    state.frameObjectUrl = objectUrl;
+    await loadFrameElement(objectUrl);
+    if (statusMessage) setSaveStatus(statusMessage);
+  } catch (error) {
+    try {
+      await loadFrameElement(frameUrl);
+      if (statusMessage) setSaveStatus(statusMessage);
+    } catch (loadError) {
+      clearFrame();
+      setSaveStatus(loadError.message);
+      return;
+    }
+    setSaveStatus(`${error.message} Preview may work, but PNG export may fail.`);
+  }
+}
+
+/** Loads a changed frame URL and clears any pending file upload. */
+function loadFrameUrl() {
+  elements.frameInput.value = "";
+  state.pendingFrameUpload = null;
+  setFrameSource(elements.frameUrlInput.value, "Frame image URL loaded");
+}
+
 /** Generates card art from the current name/flavor and loads the saved art URL. */
 async function generateImage() {
   try {
@@ -979,6 +1093,7 @@ function resetCard() {
   elements.collectorInput.value = getNextCollectorNumber(elements.setInput.value || "DEFAULT");
   elements.rarityInput.value = defaults.rarity;
   elements.fitInput.value = defaults.fit;
+  elements.frameFitInput.value = defaults.frameFit;
   elements.frameColor.value = defaults.frame;
   elements.accentColor.value = defaults.accent;
   elements.textColor.value = defaults.text;
@@ -987,6 +1102,10 @@ function resetCard() {
   elements.artUrlInput.value = "";
   state.pendingArtUpload = null;
   clearArt();
+  elements.frameInput.value = "";
+  elements.frameUrlInput.value = "";
+  state.pendingFrameUpload = null;
+  clearFrame();
   syncCard();
   updateCurrentCardSnapshot();
 }
@@ -1023,6 +1142,38 @@ function loadArt(event) {
   reader.readAsDataURL(file);
 }
 
+/** Reads an uploaded frame background file into the preview. */
+function loadFrame(event) {
+  const [file] = event.target.files;
+  if (!file) return;
+
+  elements.frameUrlInput.value = "";
+  const reader = new FileReader();
+  const pendingLoad = new Promise((resolve, reject) => {
+    reader.addEventListener("load", async () => {
+      state.pendingFrameUpload = {
+        dataUrl: reader.result,
+        fileName: file.name,
+        type: file.type,
+      };
+      try {
+        await setFrameSource(reader.result);
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+    reader.addEventListener("error", () => reject(new Error("The frame image file could not be read.")));
+  });
+  state.pendingFrameLoad = pendingLoad;
+  pendingLoad
+    .catch((error) => setSaveStatus(error.message))
+    .finally(() => {
+      if (state.pendingFrameLoad === pendingLoad) state.pendingFrameLoad = null;
+    });
+  reader.readAsDataURL(file);
+}
+
 /** Builds the card payload sent to the backend. */
 function collectCardData() {
   const typedArtUrl = elements.artUrlInput.value.trim();
@@ -1032,7 +1183,17 @@ function collectCardData() {
   );
   if (artUrl.startsWith("data:") && artUrl.length > 300000) {
     artUrl = "";
-    setSaveStatus("Design saved without art; uploaded image is too large for DynamoDB.");
+    setSaveStatus("Design saved without art. The uploaded image is too large for DynamoDB.");
+  }
+
+  const typedFrameUrl = elements.frameUrlInput.value.trim();
+  const hasDataUrlFrame = String(state.frameUrl || elements.cardFrameImage.src || "").startsWith("data:");
+  let frameUrl = typedFrameUrl || state.pendingFrameUpload?.dataUrl || (
+    hasDataUrlFrame ? state.frameUrl || elements.cardFrameImage.src || "" : ""
+  );
+  if (frameUrl.startsWith("data:") && frameUrl.length > 300000) {
+    frameUrl = "";
+    setSaveStatus("Design saved without its frame image. The uploaded image is too large for DynamoDB.");
   }
 
   const typeValue = getSelectedType();
@@ -1044,6 +1205,8 @@ function collectCardData() {
   return {
     name: elements.nameInput.value.trim() || "Untitled Card",
     artUrl,
+    frameUrl,
+    frameFit: elements.frameFitInput.value || "fill",
     cost: Number(elements.costInput.value || 0),
     type: typeValue,
     sub_type: elements.subtypeInput.value.trim(),
@@ -1077,6 +1240,8 @@ function normalizeCardForSnapshot(card) {
   return {
     name: String(card.name || "Untitled Card").trim() || "Untitled Card",
     artUrl: String(card.artUrl || "").trim(),
+    frameUrl: String(card.frameUrl || "").trim(),
+    frameFit: ["cover", "contain", "fill"].includes(card.frameFit) ? card.frameFit : defaults.frameFit,
     cost: Number(card.cost || 0),
     type: typeValue,
     sub_type: String(card.sub_type || card.subtype || "").trim(),
@@ -1089,7 +1254,7 @@ function normalizeCardForSnapshot(card) {
     flavorText: String(card.flavorText || ""),
     artistName: String(card.artistName || "").trim(),
     collectorNumber: normalizeCollectorNumber(card.collectorNumber),
-    rarity: card.rarity || "common",
+    rarity: card.rarity || defaults.rarity,
     colors: {
       frame: card.colors?.frame || defaults.frame,
       accent: card.colors?.accent || defaults.accent,
@@ -1137,6 +1302,7 @@ function applyCardData(card) {
   elements.accentColor.value = card.colors?.accent || defaults.accent;
   elements.textColor.value = card.colors?.text || defaults.text;
   elements.panelColor.value = card.colors?.panel || defaults.panel;
+  elements.frameFitInput.value = ["cover", "contain", "fill"].includes(card.frameFit) ? card.frameFit : defaults.frameFit;
 
   elements.artInput.value = "";
   elements.artUrlInput.value = card.artUrl && !card.artUrl.startsWith("data:") ? card.artUrl : "";
@@ -1144,6 +1310,14 @@ function applyCardData(card) {
     setArtSource(card.artUrl);
   } else {
     clearArt();
+  }
+
+  elements.frameInput.value = "";
+  elements.frameUrlInput.value = card.frameUrl && !card.frameUrl.startsWith("data:") ? card.frameUrl : "";
+  if (card.frameUrl) {
+    setFrameSource(card.frameUrl);
+  } else {
+    clearFrame();
   }
 
   syncCard();
@@ -2234,6 +2408,39 @@ async function savePendingArtForLater() {
   await setArtSource(artUrl, "Art saved for later");
 }
 
+/** Asks whether an uploaded frame background should be saved for later. */
+function promptSaveFrame() {
+  if (!elements.saveFrameDialog) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const handleClose = () => {
+      elements.saveFrameDialog.removeEventListener("close", handleClose);
+      resolve(elements.saveFrameDialog.returnValue === "yes");
+    };
+    elements.saveFrameDialog.addEventListener("close", handleClose);
+    elements.saveFrameDialog.showModal();
+  });
+}
+
+/** Uploads a selected frame file and swaps the editor to the returned app URL. */
+async function savePendingFrameForLater() {
+  if (!state.pendingFrameUpload) return;
+  const shouldSaveFrame = await promptSaveFrame();
+  if (!shouldSaveFrame) return;
+
+  const data = await apiFetch("/frame", {
+    method: "POST",
+    body: JSON.stringify({
+      frameImage: state.pendingFrameUpload.dataUrl,
+      cardName: elements.nameInput.value.trim() || "Untitled Card",
+      setCode: elements.setInput.value || "DEFAULT",
+    }),
+  });
+  const frameUrl = data.frameUrl?.startsWith("http") ? data.frameUrl : `${backendConfig.apiUrl}${data.frameUrl}`;
+  state.pendingFrameUpload = null;
+  elements.frameUrlInput.value = frameUrl;
+  await setFrameSource(frameUrl, "Frame background saved for later");
+}
+
 /** Aligns the preview art with the Image URL field before saving. */
 async function syncArtInputBeforeSave() {
   const typedArtUrl = elements.artUrlInput.value.trim();
@@ -2247,6 +2454,22 @@ async function syncArtInputBeforeSave() {
 
   if (!typedArtUrl && !state.pendingArtUpload && currentArtUrl && !currentArtUrl.startsWith("data:")) {
     clearArt();
+  }
+}
+
+/** Aligns the preview frame background with its Image URL field before saving. */
+async function syncFrameInputBeforeSave() {
+  const typedFrameUrl = elements.frameUrlInput.value.trim();
+  const currentFrameUrl = String(state.frameUrl || "").trim();
+  if (typedFrameUrl && typedFrameUrl !== currentFrameUrl) {
+    elements.frameInput.value = "";
+    state.pendingFrameUpload = null;
+    await setFrameSource(typedFrameUrl);
+    return;
+  }
+
+  if (!typedFrameUrl && !state.pendingFrameUpload && currentFrameUrl && !currentFrameUrl.startsWith("data:")) {
+    clearFrame();
   }
 }
 
@@ -2266,12 +2489,31 @@ async function deleteCurrentCardArt() {
   await saveCard(cardId);
 }
 
+/** Clears the current card's frame background and saves the update. */
+async function deleteCurrentCardFrame() {
+  const cardId = state.currentCardId || elements.savedCardsInput.value;
+  if (!cardId) {
+    setSaveStatus("Load a saved card before deleting its frame background.");
+    return;
+  }
+
+  elements.frameUrlInput.value = "";
+  elements.frameInput.value = "";
+  state.pendingFrameUpload = null;
+  clearFrame();
+  syncCard();
+  await saveCard(cardId);
+}
+
 /** Saves or updates a card and uploads its rendered PNG. */
 async function saveCard(cardId = "") {
   try {
     if (state.pendingArtLoad) await state.pendingArtLoad;
+    if (state.pendingFrameLoad) await state.pendingFrameLoad;
     await savePendingArtForLater();
+    await savePendingFrameForLater();
     await syncArtInputBeforeSave();
+    await syncFrameInputBeforeSave();
     const card = collectCardData();
     if (!cardId) {
       card.collectorNumber = getNextCollectorNumber(card.setCode);
@@ -2389,7 +2631,7 @@ async function getCardRendererWindow() {
           const renderer = frame.contentWindow;
           if (!renderer) throw new Error("Card renderer is unavailable.");
           if (renderer.cardDesignerReady) await renderer.cardDesignerReady;
-          if (!renderer.applyCardData || !renderer.getCardPngDataUrl || !renderer.setArtSource || !renderer.setCardRenderTotal) {
+          if (!renderer.applyCardData || !renderer.getCardPngDataUrl || !renderer.setArtSource || !renderer.setFrameSource || !renderer.setCardRenderTotal) {
             throw new Error("Card renderer did not finish loading.");
           }
           resolve(renderer);
@@ -2495,6 +2737,9 @@ async function createCardCanvas(scale = 3) {
   if (elements.art.src && !elements.art.complete) {
     await elements.art.decode().catch(() => {});
   }
+  if (elements.cardFrameImage.src && !elements.cardFrameImage.complete) {
+    await elements.cardFrameImage.decode().catch(() => {});
+  }
   if (document.fonts?.ready) await document.fonts.ready;
   await waitForRenderPaint();
 
@@ -2564,8 +2809,9 @@ async function renderUpdatedCardPng(card, setTotal) {
   const renderer = await getCardRendererWindow();
   renderer.setCardRenderTotal(setTotal);
   try {
-    renderer.applyCardData({ ...card, artUrl: "" });
+    renderer.applyCardData({ ...card, artUrl: "", frameUrl: "" });
     if (card.artUrl) await renderer.setArtSource(card.artUrl);
+    if (card.frameUrl) await renderer.setFrameSource(card.frameUrl);
     renderer.syncCard();
     return renderer.getCardPngDataUrl();
   } finally {
@@ -2607,6 +2853,9 @@ function attachEvents() {
   elements.artInput.addEventListener("change", loadArt);
   elements.artUrlInput.addEventListener("change", loadArtUrl);
   elements.deleteArtButton.addEventListener("click", deleteCurrentCardArt);
+  elements.frameInput.addEventListener("change", loadFrame);
+  elements.frameUrlInput.addEventListener("change", loadFrameUrl);
+  elements.deleteFrameButton.addEventListener("click", deleteCurrentCardFrame);
   elements.viewAllCardHistoryButton.addEventListener("click", openCardHistoryDialog);
   elements.cardSetsInput.addEventListener("change", () => {
     const setCode = elements.cardSetsInput.value || "DEFAULT";

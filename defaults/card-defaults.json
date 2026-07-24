@@ -13,6 +13,7 @@
   "collector": "",
   "rarity": "common",
   "fit": "cover",
+  "frameFit": "fill",
   "frame": "#263a31",
   "accent": "#d69d42",
   "text": "#f8f4e8",

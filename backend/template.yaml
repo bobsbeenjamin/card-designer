@@ -307,6 +307,18 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /art
             Method: POST
+        GetFrame:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /frame
+            Method: GET
+        SaveFrame:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /frame
+            Method: POST
         GenerateArt:
           Type: HttpApi
           Properties:
