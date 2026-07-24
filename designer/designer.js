@@ -105,6 +105,15 @@ function rememberLastLoadedCardSelection(setCode = "DEFAULT", cardId = "") {
   }
 }
 
+/** Clears the one-time new-card route flag after an existing card is loaded. */
+function clearNewCardRequest() {
+  if (!isNewCardRequest || isRenderWorkspace) return;
+
+  const url = new URL(window.location.href);
+  url.searchParams.delete('new');
+  window.history.replaceState({}, '', url);
+}
+
 /** Returns the stored image provider choice when it is still supported. */
 function getStoredImageProvider() {
   try {
@@ -2227,6 +2236,7 @@ async function loadCardFromLibrary(cardId) {
     closeSetLibrary();
     const data = await apiFetch(`/cards/${cardId}`);
     applyCardData(data.card);
+    clearNewCardRequest();
     await refreshCardHistory(data.card.cardId, 3);
     setSaveStatus("Loaded design");
   } catch (error) {
@@ -2572,6 +2582,7 @@ async function loadSelectedCard(cardId = elements.savedCardsInput.value) {
     elements.savedCardsInput.value = cardId;
     const data = await apiFetch(`/cards/${encodeURIComponent(cardId)}`);
     applyCardData(data.card);
+    clearNewCardRequest();
     await refreshCardHistory(data.card.cardId, 3);
     setSaveStatus("Loaded design");
   } catch (error) {
