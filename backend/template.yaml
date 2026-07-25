@@ -30,6 +30,7 @@ Globals:
         CARD_HISTORY_TABLE_NAME: !Ref CardHistoryTable
         SETS_TABLE_NAME: !Ref CardSetsTable
         USER_SETTINGS_TABLE_NAME: !Ref UserSettingsTable
+        USERS_TABLE_NAME: !Ref UsersTable
         USER_SETTINGS_KEY_ID: !Ref UserSettingsKey
         USER_BUCKET_PREFIX: !Sub "cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}"
         ART_BUCKET_NAME: !Ref CardArtBucket
@@ -134,6 +135,23 @@ Resources:
         - AttributeName: settingKey
           KeyType: RANGE
 
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "card-designer-${AppEnvironment}-users"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: normalizedUsername
+          AttributeType: S
+      KeySchema:
+        - AttributeName: normalizedUsername
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: reservationExpiresAt
+        Enabled: true
+
   CardArtBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -177,6 +195,40 @@ Resources:
         - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
 
+  CardDesignerNativeUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "card-designer-${AppEnvironment}-native-users"
+      AliasAttributes:
+        - preferred_username
+      AutoVerifiedAttributes:
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      LambdaConfig:
+        PreSignUp: !GetAtt CardDesignerPreSignUpFunction.Arn
+        PostConfirmation: !GetAtt CardDesignerNativePostConfirmationFunction.Arn
+        PostAuthentication: !GetAtt CardDesignerPostAuthenticationFunction.Arn
+        UserMigration: !GetAtt CardDesignerUserMigrationFunction.Arn
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          RequireUppercase: true
+
+  CardDesignerNativeUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref CardDesignerNativeUserPool
+      ClientName: !Sub "card-designer-${AppEnvironment}-native-web"
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
 
   CardDesignerPostConfirmationFunction:
     Type: AWS::Serverless::Function
@@ -187,6 +239,8 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CardSetsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
         - Statement:
             - Effect: Allow
               Action:
@@ -195,6 +249,105 @@ Resources:
                 - s3:PutEncryptionConfiguration
                 - s3:PutBucketPublicAccessBlock
               Resource: !Sub "arn:${AWS::Partition}:s3:::cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}-*"
+
+  CardDesignerPreSignUpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "card-designer-${AppEnvironment}-pre-sign-up"
+      CodeUri: src/
+      Handler: pre_signup.handler
+      Environment:
+        Variables:
+          LEGACY_USER_POOL_ID: !Ref CardDesignerUserPool
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:ListUsers
+              Resource: !Sub "arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*"
+
+  CardDesignerNativePostConfirmationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "card-designer-${AppEnvironment}-native-post-confirmation"
+      CodeUri: src/
+      Handler: native_post_confirmation.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CardSetsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:CreateBucket
+                - s3:ListBucket
+                - s3:PutEncryptionConfiguration
+                - s3:PutBucketPublicAccessBlock
+              Resource: !Sub "arn:${AWS::Partition}:s3:::cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}-*"
+
+  CardDesignerPostAuthenticationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "card-designer-${AppEnvironment}-post-authentication"
+      CodeUri: src/
+      Handler: post_authentication.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+
+  CardDesignerUserMigrationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "card-designer-${AppEnvironment}-user-migration"
+      CodeUri: src/
+      Handler: user_migration.handler
+      Environment:
+        Variables:
+          LEGACY_USER_POOL_ID: !Ref CardDesignerUserPool
+          LEGACY_USER_POOL_CLIENT_ID: !Ref CardDesignerUserPoolClient
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:AdminGetUser
+              Resource: !GetAtt CardDesignerUserPool.Arn
+
+  CardDesignerPreSignUpPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt CardDesignerPreSignUpFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt CardDesignerNativeUserPool.Arn
+
+  CardDesignerNativePostConfirmationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt CardDesignerNativePostConfirmationFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt CardDesignerNativeUserPool.Arn
+
+  CardDesignerPostAuthenticationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt CardDesignerPostAuthenticationFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt CardDesignerNativeUserPool.Arn
+
+  CardDesignerUserMigrationPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt CardDesignerUserMigrationFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt CardDesignerNativeUserPool.Arn
 
   CardDesignerPostConfirmationPermission:
     Type: AWS::Lambda::Permission
@@ -225,9 +378,9 @@ Resources:
         Authorizers:
           CardDesignerJwtAuthorizer:
             JwtConfiguration:
-              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${CardDesignerUserPool}"
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${CardDesignerNativeUserPool}"
               audience:
-                - !Ref CardDesignerUserPoolClient
+                - !Ref CardDesignerNativeUserPoolClient
             IdentitySource: "$request.header.Authorization"
 
   CardDesignerFunction:
@@ -239,7 +392,8 @@ Resources:
       Timeout: 60
       Environment:
         Variables:
-          USER_POOL_ID: !Ref CardDesignerUserPool
+          USER_POOL_ID: !Ref CardDesignerNativeUserPool
+          LEGACY_USER_POOL_ID: !Ref CardDesignerUserPool
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CardDesignsTable
@@ -249,6 +403,8 @@ Resources:
             TableName: !Ref CardSetsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref UserSettingsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
         - Statement:
             - Effect: Allow
               Action:
@@ -268,7 +424,9 @@ Resources:
             - Effect: Allow
               Action:
                 - cognito-idp:ListUsers
-              Resource: !GetAtt CardDesignerUserPool.Arn
+              Resource:
+                - !GetAtt CardDesignerNativeUserPool.Arn
+                - !GetAtt CardDesignerUserPool.Arn
             - Effect: Allow
               Action:
                 - s3:CreateBucket
@@ -354,6 +512,14 @@ Resources:
           Properties:
             ApiId: !Ref CardDesignerApi
             Path: /public/sets
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        CheckUsername:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /usernames/availability
             Method: GET
             Auth:
               Authorizer: NONE
@@ -478,10 +644,13 @@ Outputs:
     Value: !Sub "https://${CardDesignerApi}.execute-api.${AWS::Region}.amazonaws.com"
   UserPoolId:
     Description: Cognito user pool id for frontend authentication.
-    Value: !Ref CardDesignerUserPool
+    Value: !Ref CardDesignerNativeUserPool
   UserPoolClientId:
     Description: Public Cognito app client id for the browser app.
-    Value: !Ref CardDesignerUserPoolClient
+    Value: !Ref CardDesignerNativeUserPoolClient
+  LegacyUserPoolId:
+    Description: Previous email-username pool retained for first-login migration.
+    Value: !Ref CardDesignerUserPool
   TableName:
     Description: DynamoDB card designs table name.
     Value: !Ref CardDesignsTable
@@ -494,6 +663,9 @@ Outputs:
   UserSettingsTableName:
     Description: DynamoDB user settings table name.
     Value: !Ref UserSettingsTable
+  UsersTableName:
+    Description: DynamoDB user records table name.
+    Value: !Ref UsersTable
   UserSettingsKeyId:
     Description: KMS key id for user settings encryption.
     Value: !Ref UserSettingsKey

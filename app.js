@@ -55,10 +55,21 @@ const elements = {
   signInPanel: document.querySelector("#signInPanel"),
   homeFeatureMessage: document.querySelector("#homeFeatureMessage"),
   signedInPanel: document.querySelector("#signedInPanel"),
-  emailInput: document.querySelector("#emailInput"),
+  usernameInput: document.querySelector("#usernameInput"),
   passwordInput: document.querySelector("#passwordInput"),
+  cancelSignInButton: document.querySelector("#cancelSignInButton"),
+  openSignUpButton: document.querySelector("#openSignUpButton"),
+  signUpDialog: document.querySelector("#signUpDialog"),
+  signUpForm: document.querySelector("#signUpForm"),
+  signUpEmailInput: document.querySelector("#signUpEmailInput"),
+  signUpUsernameInput: document.querySelector("#signUpUsernameInput"),
+  signUpPasswordInput: document.querySelector("#signUpPasswordInput"),
+  usernameAvailabilityStatus: document.querySelector("#usernameAvailabilityStatus"),
+  confirmationFields: document.querySelector("#confirmationFields"),
   confirmationInput: document.querySelector("#confirmationInput"),
   signUpButton: document.querySelector("#signUpButton"),
+  cancelSignUpButton: document.querySelector("#cancelSignUpButton"),
+  signUpStatus: document.querySelector("#signUpStatus"),
   signInButton: document.querySelector("#signInButton"),
   confirmButton: document.querySelector("#confirmButton"),
   authStatus: document.querySelector("#authStatus"),
@@ -210,47 +221,6 @@ async function cognitoRequest(target, payload) {
   return data;
 }
 
-/** Returns the entered email and password after validating both fields. */
-function getCredentials() {
-  const email = elements.emailInput.value.trim();
-  const password = elements.passwordInput.value;
-  if (!email || !password) throw new Error("Enter an email and password first.");
-  return { email, password };
-}
-
-/** Starts Cognito sign-up with the entered account details. */
-async function signUp() {
-  try {
-    const { email, password } = getCredentials();
-    await cognitoRequest("SignUp", {
-      ClientId: backendConfig.userPoolClientId,
-      Username: email,
-      Password: password,
-      UserAttributes: [{ Name: "email", Value: email }],
-    });
-    setAuthStatus("Check your email for a confirmation code.");
-  } catch (error) {
-    setAuthStatus(error.message);
-  }
-}
-
-/** Confirms a pending Cognito account with the emailed code. */
-async function confirmAccount() {
-  try {
-    const email = elements.emailInput.value.trim();
-    const code = elements.confirmationInput.value.trim();
-    if (!email || !code) throw new Error("Enter email and confirmation code.");
-    await cognitoRequest("ConfirmSignUp", {
-      ClientId: backendConfig.userPoolClientId,
-      Username: email,
-      ConfirmationCode: code,
-    });
-    setAuthStatus("Account confirmed. You can sign in now.");
-  } catch (error) {
-    setAuthStatus(error.message);
-  }
-}
-
 /** Decodes a JWT payload without validating its signature. */
 function getJwtPayload(token) {
   if (!token) return null;
@@ -359,30 +329,17 @@ const setSharing = createSetSharingController({
   refreshAfterResponse: async () => {},
 });
 
-/** Signs in, persists the browser session, and checks account notifications. */
-async function signIn() {
-  try {
-    const { email, password } = getCredentials();
-    const data = await cognitoRequest("InitiateAuth", {
-      ClientId: backendConfig.userPoolClientId,
-      AuthFlow: "USER_PASSWORD_AUTH",
-      AuthParameters: { USERNAME: email, PASSWORD: password },
-    });
-    state.idToken = data.AuthenticationResult.IdToken;
-    state.refreshToken = data.AuthenticationResult.RefreshToken || state.refreshToken;
-    state.email = email;
-    sessionStorage.setItem("cardDesignerIdToken", state.idToken);
-    sessionStorage.setItem("cardDesignerRefreshToken", state.refreshToken);
-    sessionStorage.setItem("cardDesignerEmail", state.email);
-    elements.passwordInput.value = "";
-    renderAccountUi();
-    setAuthStatus(`Signed in as ${email}`);
+const accountAuth = new AccountAuthController({
+  backendConfig,
+  state,
+  elements,
+  renderAuthUi: renderAccountUi,
+  setAuthStatus,
+  onSignedIn: async () => {
     await setSharing.checkSetShareResponses();
     await setSharing.checkIncomingSetShares();
-  } catch (error) {
-    setAuthStatus(error.message);
-  }
-}
+  },
+});
 
 /** Opens or closes the signed-in account menu. */
 function toggleAccountMenu() {
@@ -479,9 +436,7 @@ async function saveImageGenerationSettings() {
 
 /** Registers the home-page event handlers. */
 function attachEvents() {
-  elements.signUpButton.addEventListener("click", signUp);
-  elements.signInButton.addEventListener("click", signIn);
-  elements.confirmButton.addEventListener("click", confirmAccount);
+  accountAuth.attachEvents();
   elements.accountMenuButton.addEventListener("click", toggleAccountMenu);
   elements.currentUserLabel.addEventListener("pointerdown", startCurrentUserTooltipPress);
   elements.currentUserLabel.addEventListener("pointerup", cancelCurrentUserTooltipPress);

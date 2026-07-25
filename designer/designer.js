@@ -231,8 +231,17 @@ const elements = {
   viewAllCardHistoryButton: document.querySelector("#viewAllCardHistoryButton"),
   cardHistoryDialog: document.querySelector("#cardHistoryDialog"),
   cardHistorySubtitle: document.querySelector("#cardHistorySubtitle"),
-  emailInput: document.querySelector("#emailInput"),
+  usernameInput: document.querySelector("#usernameInput"),
   passwordInput: document.querySelector("#passwordInput"),
+  cancelSignInButton: document.querySelector("#cancelSignInButton"),
+  openSignUpButton: document.querySelector("#openSignUpButton"),
+  signUpDialog: document.querySelector("#signUpDialog"),
+  signUpForm: document.querySelector("#signUpForm"),
+  signUpEmailInput: document.querySelector("#signUpEmailInput"),
+  signUpUsernameInput: document.querySelector("#signUpUsernameInput"),
+  signUpPasswordInput: document.querySelector("#signUpPasswordInput"),
+  usernameAvailabilityStatus: document.querySelector("#usernameAvailabilityStatus"),
+  confirmationFields: document.querySelector("#confirmationFields"),
   signInPanel: document.querySelector("#signInPanel"),
   signedInPanel: document.querySelector("#signedInPanel"),
   aiSettingsPanel: document.querySelector("#aiSettingsPanel"),
@@ -278,6 +287,8 @@ const elements = {
   saveStatus: document.querySelector("#saveStatus"),
   savedCardsInput: document.querySelector("#savedCardsInput"),
   signUpButton: document.querySelector("#signUpButton"),
+  cancelSignUpButton: document.querySelector("#cancelSignUpButton"),
+  signUpStatus: document.querySelector("#signUpStatus"),
   confirmButton: document.querySelector("#confirmButton"),
   signInButton: document.querySelector("#signInButton"),
   signOutButton: document.querySelector("#signOutButton"),
@@ -324,6 +335,21 @@ const setSharing = createSetSharingController({
     await Promise.all([refreshSavedCards(), refreshCardSets()]);
     renderSavedCards();
     renderCardSets();
+  },
+});
+
+const accountAuth = new AccountAuthController({
+  backendConfig,
+  state,
+  elements,
+  renderAuthUi: updateAccountUi,
+  setAuthStatus,
+  onSignedIn: async () => {
+    setSaveStatus("Loading saved designs...");
+    await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets()]);
+    if (!isNewCardRequest) await restoreLastLoadedCardSelection();
+    await setSharing.checkSetShareResponses();
+    await setSharing.checkIncomingSetShares();
   },
 });
 
@@ -1497,50 +1523,6 @@ async function cognitoRequest(target, payload) {
   return data;
 }
 
-/** Reads and validates the account credential fields. */
-function getCredentials() {
-  const email = elements.emailInput.value.trim();
-  const password = elements.passwordInput.value;
-  if (!email || !password) {
-    throw new Error("Enter an email and password first.");
-  }
-  return { email, password };
-}
-
-/** Starts Cognito sign-up for the entered account. */
-async function signUp() {
-  try {
-    const { email, password } = getCredentials();
-    await cognitoRequest("SignUp", {
-      ClientId: backendConfig.userPoolClientId,
-      Username: email,
-      Password: password,
-      UserAttributes: [{ Name: "email", Value: email }],
-    });
-    setAuthStatus("Check your email for a confirmation code.");
-  } catch (error) {
-    setAuthStatus(error.message);
-  }
-}
-
-/** Confirms a pending Cognito account with the emailed code. */
-async function confirmAccount() {
-  try {
-    const email = elements.emailInput.value.trim();
-    const code = elements.confirmationInput.value.trim();
-    if (!email || !code) throw new Error("Enter email and confirmation code.");
-
-    await cognitoRequest("ConfirmSignUp", {
-      ClientId: backendConfig.userPoolClientId,
-      Username: email,
-      ConfirmationCode: code,
-    });
-    setAuthStatus("Account confirmed. You can sign in now.");
-  } catch (error) {
-    setAuthStatus(error.message);
-  }
-}
-
 /** Returns cached settings status for the selected image provider. */
 function getSelectedProviderStatus() {
   const provider = elements.imageProviderInput.value || "openai";
@@ -1670,38 +1652,6 @@ async function saveImageGenerationSettings() {
     elements.imageGenerationStatus.textContent = formatImageGenerationStatus(data);
   } catch (error) {
     elements.imageGenerationStatus.textContent = error.message;
-  }
-}
-
-/** Signs in and refreshes saved cards and sets. */
-async function signIn() {
-  try {
-    const { email, password } = getCredentials();
-    const data = await cognitoRequest("InitiateAuth", {
-      ClientId: backendConfig.userPoolClientId,
-      AuthFlow: "USER_PASSWORD_AUTH",
-      AuthParameters: {
-        USERNAME: email,
-        PASSWORD: password,
-      },
-    });
-
-    state.idToken = data.AuthenticationResult.IdToken;
-    state.refreshToken = data.AuthenticationResult.RefreshToken || state.refreshToken;
-    state.email = email;
-    sessionStorage.setItem("cardDesignerIdToken", state.idToken);
-    sessionStorage.setItem("cardDesignerRefreshToken", state.refreshToken);
-    sessionStorage.setItem("cardDesignerEmail", state.email);
-    elements.passwordInput.value = "";
-    updateAccountUi();
-    setAuthStatus(`Signed in as ${email}`);
-    setSaveStatus("Loading saved designs...");
-    await Promise.all([refreshSavedCards(), refreshCardSets(), refreshImageGenerationSettings()]);
-    if (!isNewCardRequest) await restoreLastLoadedCardSelection();
-    await setSharing.checkSetShareResponses();
-    await setSharing.checkIncomingSetShares();
-  } catch (error) {
-    setAuthStatus(error.message);
   }
 }
 
@@ -2899,9 +2849,7 @@ function attachEvents() {
   elements.resetCard.addEventListener("click", resetCard);
   elements.homeButton.addEventListener("click", navigateHome);
   elements.exportPng.addEventListener("click", () => exportPng());
-  elements.signUpButton.addEventListener("click", signUp);
-  elements.confirmButton.addEventListener("click", confirmAccount);
-  elements.signInButton.addEventListener("click", signIn);
+  accountAuth.attachEvents();
   elements.imageProviderInput.addEventListener("change", handleImageProviderChange);
   elements.replaceProviderCredentialsButton.addEventListener("click", replaceProviderCredentials);
   elements.saveImageGenerationSettingsButton.addEventListener("click", saveImageGenerationSettings);

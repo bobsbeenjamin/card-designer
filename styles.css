@@ -2056,6 +2056,81 @@ input[type="color"] {
   width: 100%;
 }
 
+.auth-switch-link {
+  background: transparent;
+  border: 0;
+  color: #245c3c;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+  padding: 2px 0;
+  text-align: left;
+  text-decoration: underline;
+}
+
+.auth-switch-link:hover,
+.auth-switch-link:focus-visible {
+  color: #123c26;
+}
+
+.auth-dialog .modal-card {
+  max-width: 460px;
+}
+
+.confirmation-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.confirmation-fields.hidden {
+  display: none;
+}
+
+.username-availability {
+  align-items: center;
+  display: flex;
+  font-size: 0.9rem;
+  font-weight: 800;
+  gap: 8px;
+  margin: -4px 0 2px;
+  min-height: 22px;
+}
+
+.username-availability::before {
+  align-items: center;
+  border-radius: 50%;
+  color: #ffffff;
+  display: none;
+  font-size: 0.78rem;
+  font-weight: 1000;
+  height: 20px;
+  justify-content: center;
+  line-height: 1;
+  width: 20px;
+}
+
+.username-availability.available {
+  color: #16733a;
+}
+
+.username-availability.available::before {
+  background: #198849;
+  content: "\2713";
+  display: inline-flex;
+}
+
+.username-availability.unavailable,
+.username-availability.too_short {
+  color: #a62424;
+}
+
+.username-availability.unavailable::before,
+.username-availability.too_short::before {
+  background: #c73232;
+  content: "\00d7";
+  display: inline-flex;
+}
+
 .home-feature-message {
   color: var(--muted);
   font-weight: 800;

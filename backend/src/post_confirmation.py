@@ -1,13 +1,16 @@
 import hashlib
 import os
+import time
 
 import boto3
 from botocore.exceptions import ClientError
 
 
 SETS_TABLE_NAME = os.environ["SETS_TABLE_NAME"]
+USERS_TABLE_NAME = os.environ["USERS_TABLE_NAME"]
 USER_BUCKET_PREFIX = os.environ["USER_BUCKET_PREFIX"]
 SETS_TABLE = boto3.resource("dynamodb").Table(SETS_TABLE_NAME)
+USERS_TABLE = boto3.resource("dynamodb").Table(USERS_TABLE_NAME)
 S3 = boto3.client("s3")
 DEFAULT_SET = {
     "code": "DEFAULT",
@@ -56,17 +59,31 @@ def ensure_user_bucket(user_id):
     return bucket_name
 
 
-def handler(event, _context):
-    """Handle Lambda events for the card designer backend."""
-    user_id = (
-        event.get("request", {})
-        .get("userAttributes", {})
-        .get("sub")
-    )
+def provision_user(event, username):
+    """Create the app records and private bucket for a confirmed user."""
+    attributes = event.get("request", {}).get("userAttributes", {})
+    user_id = attributes.get("sub")
     if not user_id:
         return event
 
     ensure_user_bucket(user_id)
+
+    email = str(attributes.get("email") or "").strip()
+    username = str(username or email).strip()
+    if email and username:
+        USERS_TABLE.put_item(
+            Item={
+                "normalizedUsername": username.casefold(),
+                "username": username,
+                "email": email,
+                "userId": user_id,
+                "createdAt": int(time.time()),
+            },
+            ConditionExpression=(
+                "attribute_not_exists(normalizedUsername) OR email = :email"
+            ),
+            ExpressionAttributeValues={":email": email},
+        )
 
     try:
         SETS_TABLE.put_item(
@@ -77,3 +94,9 @@ def handler(event, _context):
         pass
 
     return event
+
+
+def handler(event, _context):
+    """Provision users confirmed in the legacy email-username pool."""
+    attributes = event.get("request", {}).get("userAttributes", {})
+    return provision_user(event, attributes.get("email"))

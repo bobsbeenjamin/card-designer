@@ -22,10 +22,12 @@ TABLE_NAME = os.environ["TABLE_NAME"]
 CARD_HISTORY_TABLE_NAME = os.environ["CARD_HISTORY_TABLE_NAME"]
 SETS_TABLE_NAME = os.environ["SETS_TABLE_NAME"]
 USER_SETTINGS_TABLE_NAME = os.environ["USER_SETTINGS_TABLE_NAME"]
+USERS_TABLE_NAME = os.environ["USERS_TABLE_NAME"]
 USER_BUCKET_PREFIX = os.environ["USER_BUCKET_PREFIX"]
 ART_BUCKET_NAME = os.environ["ART_BUCKET_NAME"]
 USER_SETTINGS_KEY_ID = os.environ["USER_SETTINGS_KEY_ID"]
 USER_POOL_ID = os.environ["USER_POOL_ID"]
+LEGACY_USER_POOL_ID = os.environ.get("LEGACY_USER_POOL_ID", "")
 DYNAMODB = boto3.resource("dynamodb")
 DYNAMODB_CLIENT = boto3.client("dynamodb")
 DYNAMODB_SERIALIZER = TypeSerializer()
@@ -33,6 +35,7 @@ TABLE = DYNAMODB.Table(TABLE_NAME)
 CARD_HISTORY_TABLE = DYNAMODB.Table(CARD_HISTORY_TABLE_NAME)
 SETS_TABLE = DYNAMODB.Table(SETS_TABLE_NAME)
 USER_SETTINGS_TABLE = DYNAMODB.Table(USER_SETTINGS_TABLE_NAME)
+USERS_TABLE = DYNAMODB.Table(USERS_TABLE_NAME)
 S3 = boto3.client("s3")
 KMS = boto3.client("kms")
 BEDROCK = boto3.client("bedrock-runtime")
@@ -131,6 +134,9 @@ def handler(event, _context):
 
         if method == "GET" and route_key == "GET /public/sets":
             return ok(get_public_set(event))
+
+        if method == "GET" and route_key == "GET /usernames/availability":
+            return ok(get_username_availability(event))
 
         user_id = get_user_id(event)
         user_email = get_user_email(event)
@@ -1111,15 +1117,68 @@ def get_jwt_claims(event):
 
 def get_user_id(event):
     """Extract the authenticated Cognito user id from API Gateway claims."""
-    user_id = get_jwt_claims(event).get("sub")
-    if not user_id:
+    claims = get_jwt_claims(event)
+    cognito_user_id = str(claims.get("sub") or "").strip()
+    if not cognito_user_id:
         raise PermissionError()
-    return user_id
+    username = str(claims.get("cognito:username") or "").strip()
+    if username:
+        result = USERS_TABLE.get_item(
+            Key={"normalizedUsername": normalize_username(username)},
+            ProjectionExpression="userId",
+        )
+        persistent_user_id = str(result.get("Item", {}).get("userId") or "").strip()
+        if persistent_user_id:
+            return persistent_user_id
+    return cognito_user_id
 
 
 def get_user_email(event):
     """Extract the authenticated user's email from API Gateway claims."""
     return str(get_jwt_claims(event).get("email") or "").strip()
+
+
+def normalize_username(value):
+    """Return the case-insensitive DynamoDB key used for usernames."""
+    return str(value or "").strip().casefold()
+
+
+def get_username_availability(event):
+    """Report whether an optional sign-up username can be registered."""
+    query = event.get("queryStringParameters") or {}
+    username = str(query.get("username") or "").strip()
+    if len(username) < 3:
+        return {"available": False, "reason": "too_short"}
+    result = USERS_TABLE.get_item(
+        Key={"normalizedUsername": normalize_username(username)},
+        ProjectionExpression="normalizedUsername, reservationExpiresAt",
+    )
+    item = result.get("Item")
+    unavailable = bool(
+        item and int(item.get("reservationExpiresAt") or (time.time() + 1)) > time.time()
+    )
+    if not unavailable:
+        escaped_username = username.lower().replace("\\", "\\\\").replace('"', '\\"')
+        unavailable = bool(
+            COGNITO.list_users(
+                UserPoolId=USER_POOL_ID,
+                Filter=f'username = "{escaped_username}"',
+                Limit=1,
+            ).get("Users", [])
+        )
+    if not unavailable and LEGACY_USER_POOL_ID and "@" in username:
+        escaped_username = username.lower().replace("\\", "\\\\").replace('"', '\\"')
+        unavailable = bool(
+            COGNITO.list_users(
+                UserPoolId=LEGACY_USER_POOL_ID,
+                Filter=f'email = "{escaped_username}"',
+                Limit=1,
+            ).get("Users", [])
+        )
+    return {
+        "available": not unavailable,
+        "reason": "unavailable" if unavailable else "available",
+    }
 
 
 def get_api_base_url(event):

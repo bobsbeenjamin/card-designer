@@ -59,7 +59,21 @@ const elements = {
   closeExportSetButton: document.querySelector("#closeExportSetButton"),
   closeExportSetXButton: document.querySelector("#closeExportSetXButton"),
   confirmExportSetButton: document.querySelector("#confirmExportSetButton"),
-  emailInput: document.querySelector("#emailInput"),
+  usernameInput: document.querySelector("#usernameInput"),
+  cancelSignInButton: document.querySelector("#cancelSignInButton"),
+  openSignUpButton: document.querySelector("#openSignUpButton"),
+  signUpDialog: document.querySelector("#signUpDialog"),
+  signUpForm: document.querySelector("#signUpForm"),
+  signUpEmailInput: document.querySelector("#signUpEmailInput"),
+  signUpUsernameInput: document.querySelector("#signUpUsernameInput"),
+  signUpPasswordInput: document.querySelector("#signUpPasswordInput"),
+  usernameAvailabilityStatus: document.querySelector("#usernameAvailabilityStatus"),
+  confirmationFields: document.querySelector("#confirmationFields"),
+  confirmationInput: document.querySelector("#confirmationInput"),
+  confirmButton: document.querySelector("#confirmButton"),
+  signUpButton: document.querySelector("#signUpButton"),
+  cancelSignUpButton: document.querySelector("#cancelSignUpButton"),
+  signUpStatus: document.querySelector("#signUpStatus"),
   exportFormatInput: document.querySelector("#exportFormatInput"),
   exportSetDialog: document.querySelector("#exportSetDialog"),
   exportSetForm: document.querySelector("#exportSetForm"),
@@ -130,6 +144,19 @@ const setSharing = createSetSharingController({
   showToast,
   refreshAfterResponse: refreshSetsAndCards,
   skipIfDialogOpen: true,
+});
+
+const accountAuth = new AccountAuthController({
+  backendConfig,
+  state,
+  elements,
+  renderAuthUi,
+  setAuthStatus,
+  onSignedIn: async () => {
+    await refreshSetsAndCards();
+    await setSharing.checkSetShareResponses();
+    await setSharing.checkIncomingSetShares();
+  },
 });
 
 function getStoredIdToken() {
@@ -282,35 +309,6 @@ async function apiFetch(path, options = {}) {
   }
 
   return data;
-}
-
-/** Signs in and loads the user's sets and cards. */
-async function signIn() {
-  try {
-    const email = elements.emailInput.value.trim();
-    const password = elements.passwordInput.value;
-    if (!email || !password) throw new Error("Enter an email and password first.");
-
-    const data = await cognitoRequest("InitiateAuth", {
-      ClientId: backendConfig.userPoolClientId,
-      AuthFlow: "USER_PASSWORD_AUTH",
-      AuthParameters: { USERNAME: email, PASSWORD: password },
-    });
-    state.idToken = data.AuthenticationResult.IdToken;
-    state.refreshToken = data.AuthenticationResult.RefreshToken || state.refreshToken;
-    state.email = email;
-    sessionStorage.setItem("cardDesignerIdToken", state.idToken);
-    sessionStorage.setItem("cardDesignerRefreshToken", state.refreshToken);
-    sessionStorage.setItem("cardDesignerEmail", state.email);
-    elements.passwordInput.value = "";
-    renderAuthUi();
-    setAuthStatus(`Signed in as ${email}`);
-    await refreshSetsAndCards();
-    await setSharing.checkSetShareResponses();
-    await setSharing.checkIncomingSetShares();
-  } catch (error) {
-    setAuthStatus(error.message);
-  }
 }
 
 function normalizeCollectorNumber(value) {
@@ -1476,7 +1474,7 @@ async function refreshSetsAndCards(renderInitialView = true, cacheBust = "") {
 
 /** Registers page event handlers. */
 function attachEvents() {
-  elements.signInButton.addEventListener("click", signIn);
+  accountAuth.attachEvents();
   setSharing.attachEvents();
   elements.closeExportSetButton.addEventListener("click", closeExportSetDialog);
   elements.closeExportSetXButton.addEventListener("click", closeExportSetDialog);

@@ -5,9 +5,23 @@ This backend keeps AWS credentials out of the public web app.
 Browser -> API Gateway HTTP API -> Lambda -> DynamoDB
 
 Authentication is handled by Cognito. The browser sends a Cognito JWT in the
-`Authorization` header; Lambda reads the authenticated user's `sub` claim and
-uses it as the DynamoDB partition key. That means one user's card ids cannot be
-used to read another user's cards unless your authorizer is bypassed.
+`Authorization` header. New accounts use Cognito's native, case-insensitive
+username. Lambda resolves the native identity to the persistent `userId` stored
+in DynamoDB, which preserves the original partition key for migrated users.
+
+User records are stored in the stack's `card-designer-<environment>-users`
+table. `normalizedUsername` is the case-insensitive primary key; each record
+also contains `username`, `email`, and `userId`. New records are written by the
+Cognito post-confirmation trigger. If signup omits a username, the email address
+is passed to Cognito as the native username. A pre-sign-up trigger reserves the
+same case-insensitive name in DynamoDB for the application user record.
+
+The original email-as-username pool remains in the stack as a migration source
+because Cognito sign-in options can't be changed on an existing pool. On an
+existing user's first sign-in, the new pool's user-migration trigger validates
+the password against the original pool and creates the native Cognito account.
+The original DynamoDB `userId` is retained so cards, sets, history, settings,
+and private storage remain associated with the user.
 
 ## Deploy
 
@@ -54,10 +68,12 @@ Prod cards:   card-designer-prod-card-designs
 Prod history: card-designer-prod-card-history
 ```
 
-## Current Stack Outputs
+## Pre-migration stack values
 
-These values are not secrets. They are safe for frontend configuration, but AWS
-access keys should never be committed.
+These existing pool values become the legacy migration source after deployment.
+Use the new `UserPoolId` and `UserPoolClientId` stack outputs for frontend
+configuration. These identifiers are not secrets, but AWS access keys should
+never be committed.
 
 ```text
 DevStackName:     card-designer-backend-dev
@@ -78,8 +94,11 @@ Region:           us-west-2
 ```
 ## API
 
-All routes require `Authorization: Bearer <cognito-jwt>`.
+The username availability route is public. Sign-in goes directly from the
+browser to Cognito. All other non-public routes require
+`Authorization: Bearer <cognito-jwt>`.
 
+- `GET /usernames/availability?username=<username>`
 - `GET /cards`
 - `POST /cards`
 - `GET /cards/{cardId}`
@@ -92,6 +111,29 @@ All routes require `Authorization: Bearer <cognito-jwt>`.
 - `POST /art/generate`
 - `GET /frame`
 - `POST /frame`
+
+## Existing user migration
+
+Before switching the frontend configuration to the new stack outputs, populate
+the user table from the legacy pool:
+
+```bash
+python backend/scripts/backfill_users.py \
+  --user-pool-id <user-pool-id> \
+  --table-name card-designer-<environment>-users
+```
+
+The backfill is safe to rerun. Existing accounts receive their email address as
+their native username. Passwords aren't copied by the script; Cognito migrates
+each password securely when the user first signs in to the new pool.
+
+Migration order:
+
+1. Deploy the backend stack, which retains the old pool and creates the native
+   username pool.
+2. Run the backfill against `LegacyUserPoolId` and `UsersTableName`.
+3. Update `config.js` with the new `UserPoolId` and `UserPoolClientId` outputs.
+4. Deploy the frontend.
 
 ## Card History
 
