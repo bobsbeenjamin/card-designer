@@ -455,7 +455,6 @@ function attachEvents() {
   });
   elements.closeImageProviderButton.addEventListener("click", closeImageProviderDialog);
   elements.closeImageProviderXButton.addEventListener("click", closeImageProviderDialog);
-  elements.myFriendsButton.addEventListener("click", () => window.alert("Coming Soon"));
   setSharing.attachEvents();
   document.addEventListener("click", (event) => {
     if (!elements.signedInPanel.contains(event.target)) closeAccountMenu();

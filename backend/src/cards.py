@@ -24,6 +24,7 @@ SETS_TABLE_NAME = os.environ["SETS_TABLE_NAME"]
 USER_SETTINGS_TABLE_NAME = os.environ["USER_SETTINGS_TABLE_NAME"]
 USERS_TABLE_NAME = os.environ["USERS_TABLE_NAME"]
 USER_BUCKET_PREFIX = os.environ["USER_BUCKET_PREFIX"]
+FRIENDS_TABLE_NAME = os.environ["FRIENDS_TABLE_NAME"]
 ART_BUCKET_NAME = os.environ["ART_BUCKET_NAME"]
 USER_SETTINGS_KEY_ID = os.environ["USER_SETTINGS_KEY_ID"]
 USER_POOL_ID = os.environ["USER_POOL_ID"]
@@ -36,6 +37,7 @@ CARD_HISTORY_TABLE = DYNAMODB.Table(CARD_HISTORY_TABLE_NAME)
 SETS_TABLE = DYNAMODB.Table(SETS_TABLE_NAME)
 USER_SETTINGS_TABLE = DYNAMODB.Table(USER_SETTINGS_TABLE_NAME)
 USERS_TABLE = DYNAMODB.Table(USERS_TABLE_NAME)
+FRIENDS_TABLE = DYNAMODB.Table(FRIENDS_TABLE_NAME)
 S3 = boto3.client("s3")
 KMS = boto3.client("kms")
 BEDROCK = boto3.client("bedrock-runtime")
@@ -174,6 +176,20 @@ def handler(event, _context):
 
         if method == "GET" and route_key == "GET /sets":
             return ok(list_sets(user_id))
+
+        if method == "GET" and route_key == "GET /friends":
+            return ok(list_friends(user_id))
+
+        if method == "POST" and route_key == "POST /friends":
+            return ok(add_friend(user_id, read_body(event)), status=201)
+
+        if method == "DELETE" and route_key == "DELETE /friends/{username}":
+            username = event["pathParameters"]["username"]
+            return ok(remove_friend(user_id, username))
+
+        if method == "GET" and route_key == "GET /friends/{username}/sets":
+            username = event["pathParameters"]["username"]
+            return ok(list_friend_sets(user_id, username))
 
         if method == "GET" and route_key == "GET /set-shares":
             return ok(list_pending_set_shares(user_id))
@@ -1141,6 +1157,107 @@ def get_user_email(event):
 def normalize_username(value):
     """Return the case-insensitive DynamoDB key used for usernames."""
     return str(value or "").strip().casefold()
+
+
+def get_user_by_username(username):
+    """Return a registered application user for a case-insensitive username."""
+    normalized_username = normalize_username(username)
+    if not normalized_username:
+        return None
+    item = USERS_TABLE.get_item(
+        Key={"normalizedUsername": normalized_username},
+    ).get("Item")
+    if not item or not item.get("userId"):
+        return None
+    return item
+
+
+def list_friends(user_id):
+    """Return users followed by the signed-in user, including mutual status."""
+    response = FRIENDS_TABLE.query(KeyConditionExpression=Key("userId").eq(user_id))
+    friends = []
+    for relationship in response.get("Items", []):
+        friend_user_id = str(relationship.get("friendUserId") or "")
+        if not friend_user_id:
+            continue
+        follows_back = bool(
+            FRIENDS_TABLE.get_item(
+                Key={"userId": friend_user_id, "friendUserId": user_id},
+                ProjectionExpression="userId",
+            ).get("Item")
+        )
+        friends.append({
+            "username": relationship.get("username") or relationship.get("normalizedUsername") or "",
+            "followsBack": follows_back,
+        })
+    friends.sort(key=lambda friend: normalize_username(friend["username"]))
+    return {"friends": friends}
+
+
+def add_friend(user_id, body):
+    """Follow an existing user without requiring a reciprocal relationship."""
+    username = str(body.get("username") or "").strip()
+    friend = get_user_by_username(username)
+    if not friend:
+        raise ValueError("User not found.")
+    friend_user_id = str(friend["userId"])
+    if friend_user_id == user_id:
+        raise ValueError("You cannot add yourself as a friend.")
+
+    display_username = str(friend.get("username") or username).strip()
+    FRIENDS_TABLE.put_item(
+        Item={
+            "userId": user_id,
+            "friendUserId": friend_user_id,
+            "normalizedUsername": normalize_username(display_username),
+            "username": display_username,
+            "createdAt": int(time.time()),
+        }
+    )
+    return {"friend": {"username": display_username, "followsBack": False}}
+
+
+def remove_friend(user_id, username):
+    """Stop following a user while leaving any reciprocal follow untouched."""
+    friend = get_user_by_username(username)
+    if not friend:
+        raise ValueError("User not found.")
+    FRIENDS_TABLE.delete_item(
+        Key={"userId": user_id, "friendUserId": str(friend["userId"])},
+    )
+    return {"deleted": True}
+
+
+def list_friend_sets(user_id, username):
+    """Return a followed user's accepted sets and their public visibility."""
+    friend = get_user_by_username(username)
+    if not friend:
+        raise ValueError("User not found.")
+    friend_user_id = str(friend["userId"])
+    relationship = FRIENDS_TABLE.get_item(
+        Key={"userId": user_id, "friendUserId": friend_user_id},
+        ProjectionExpression="userId",
+    ).get("Item")
+    if not relationship:
+        raise ValueError("This user is not in your friends list.")
+
+    response = SETS_TABLE.query(KeyConditionExpression=Key("userId").eq(friend_user_id))
+    sets = [
+        public_set_summary(item)
+        for item in response.get("Items", [])
+        if not item.get("pendingShare")
+        and item.get("recordType") not in {
+            "shareResponse",
+            SHARE_REQUEST_RECORD,
+            SHARE_EXPIRATION_NOTICE_RECORD,
+        }
+    ]
+    sets.sort(key=lambda item: item.get("code", ""))
+    return {
+        "username": str(friend.get("username") or username).strip(),
+        "publicUserId": friend_user_id,
+        "sets": sets,
+    }
 
 
 def get_username_availability(event):

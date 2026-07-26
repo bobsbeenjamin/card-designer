@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My Friends - Card Designer</title>
+    <link rel="icon" href="../assets/card-maker-logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../styles.css" />
+    <script src="../config.js"></script>
+  </head>
+  <body class="sets-page friends-page">
+    <main class="sets-shell friends-shell">
+      <header class="sets-page-header friends-header">
+        <div>
+          <p class="eyebrow">Card Designer</p>
+          <div class="friends-title-row">
+            <span class="friends-title-icon" aria-hidden="true"></span>
+            <h1 id="friendsTitle">My Friends</h1>
+          </div>
+          <p id="friendsStatus" class="status-line">Sign in to view your friends.</p>
+        </div>
+        <div class="sets-header-actions">
+          <a class="home-button" href="../" title="Go to the Home Page" aria-label="Go to the Home Page">
+            <span class="home-icon" aria-hidden="true"></span>
+          </a>
+          <a id="friendsCloseButton" class="sets-close-button" href="../" title="Close" aria-label="Close">x</a>
+        </div>
+      </header>
+
+      <section id="signInPanel" class="sets-sign-in">
+        <fieldset>
+          <legend>Account</legend>
+          <label><span>Username</span><input id="usernameInput" type="text" autocomplete="username" /></label>
+          <label><span>Password</span><input id="passwordInput" type="password" autocomplete="current-password" /></label>
+          <div class="action-grid">
+            <button id="signInButton" class="button primary" type="button">Sign In</button>
+            <button id="cancelSignInButton" class="button subtle" type="button">Cancel</button>
+          </div>
+          <button id="openSignUpButton" class="auth-switch-link" type="button">Don't have an account? Click here</button>
+          <p id="authStatus" class="status-line">Signed out</p>
+        </fieldset>
+      </section>
+
+      <dialog id="signUpDialog" class="modal-dialog auth-dialog" aria-labelledby="signUpDialogTitle">
+        <form id="signUpForm" class="modal-card">
+          <h2 id="signUpDialogTitle">Make and Account for Card Designer</h2>
+          <label><span>Email</span><input id="signUpEmailInput" type="email" autocomplete="email" /></label>
+          <label title="If you don't make a username then your email is your username. You can make one later.">
+            <span>Username (optional)</span>
+            <input id="signUpUsernameInput" type="text" autocomplete="username" />
+          </label>
+          <p id="usernameAvailabilityStatus" class="username-availability" aria-live="polite"></p>
+          <label><span>Password</span><input id="signUpPasswordInput" type="password" autocomplete="new-password" /></label>
+          <div id="confirmationFields" class="confirmation-fields hidden">
+            <label><span>Confirmation code</span><input id="confirmationInput" type="text" inputmode="numeric" autocomplete="one-time-code" /></label>
+            <button id="confirmButton" class="button primary" type="button">Confirm Account</button>
+          </div>
+          <p id="signUpStatus" class="status-line"></p>
+          <div class="modal-actions two-up">
+            <button id="signUpButton" class="button primary" type="submit">Sign Up</button>
+            <button id="cancelSignUpButton" class="button subtle" type="button">Cancel</button>
+          </div>
+        </form>
+      </dialog>
+
+      <section id="friendsPageContent" class="friends-content hidden" aria-label="My friends">
+        <div id="friendsList" class="friends-list"></div>
+        <div class="friends-footer">
+          <p id="noFriendsMessage" class="no-friends-message hidden">You don't have any friends</p>
+          <button id="addFriendButton" class="button primary add-friend-button" type="button">
+            <span aria-hidden="true">+</span> Add Friend
+          </button>
+        </div>
+      </section>
+
+      <dialog id="addFriendDialog" class="modal-dialog" aria-labelledby="addFriendTitle">
+        <form id="addFriendForm" class="modal-card">
+          <h2 id="addFriendTitle">Add Friend</h2>
+          <label><span>Username</span><input id="friendUsernameInput" type="text" autocomplete="off" /></label>
+          <p id="addFriendStatus" class="status-line"></p>
+          <div class="modal-actions two-up">
+            <button id="confirmAddFriendButton" class="button primary" type="submit">Add Friend</button>
+            <button id="cancelAddFriendButton" class="button subtle" type="button">Cancel</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog id="removeFriendDialog" class="modal-dialog" aria-labelledby="removeFriendTitle">
+        <form method="dialog" class="modal-card">
+          <h2 id="removeFriendTitle">Remove Friend</h2>
+          <p id="removeFriendMessage"></p>
+          <div class="modal-actions two-up">
+            <button id="confirmRemoveFriendButton" class="button danger" value="yes" type="submit">Yes</button>
+            <button class="button subtle" value="no" type="submit">No</button>
+          </div>
+        </form>
+      </dialog>
+    </main>
+
+    <div id="toastRegion" class="toast-region sets-toast-region" aria-live="polite" aria-atomic="true"></div>
+    <script src="../auth-flow.js"></script>
+    <script src="./friends.js"></script>
+  </body>
+</html>

@@ -59,13 +59,15 @@ The GitHub Pages app URL is `https://bobsbeenjamin.github.io/card-designer`, but
 the CORS origin is only `https://bobsbeenjamin.github.io`.
 
 Dev and prod should be deployed as separate CloudFormation stacks. Each stack
-creates separate DynamoDB tables for current cards and card history:
+creates separate DynamoDB tables for current cards, card history, and friend relationships:
 
 ```text
 Dev cards:    card-designer-dev-card-designs
 Dev history:  card-designer-dev-card-history
+Dev friends:  card-designer-dev-friends
 Prod cards:   card-designer-prod-card-designs
 Prod history: card-designer-prod-card-history
+Prod friends: card-designer-prod-friends
 ```
 
 ## Pre-migration stack values
@@ -111,6 +113,10 @@ browser to Cognito. All other non-public routes require
 - `POST /art/generate`
 - `GET /frame`
 - `POST /frame`
+- `GET /friends`
+- `POST /friends`
+- `DELETE /friends/{username}`
+- `GET /friends/{username}/sets`
 
 ## Existing user migration
 

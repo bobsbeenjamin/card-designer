@@ -31,6 +31,7 @@ Globals:
         SETS_TABLE_NAME: !Ref CardSetsTable
         USER_SETTINGS_TABLE_NAME: !Ref UserSettingsTable
         USERS_TABLE_NAME: !Ref UsersTable
+        FRIENDS_TABLE_NAME: !Ref FriendsTable
         USER_SETTINGS_KEY_ID: !Ref UserSettingsKey
         USER_BUCKET_PREFIX: !Sub "cd-${AWS::AccountId}-${AWS::Region}-${AppEnvironment}"
         ART_BUCKET_NAME: !Ref CardArtBucket
@@ -151,6 +152,24 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: reservationExpiresAt
         Enabled: true
+
+  FriendsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "card-designer-${AppEnvironment}-friends"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: friendUserId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: friendUserId
+          KeyType: RANGE
 
   CardArtBucket:
     Type: AWS::S3::Bucket
@@ -405,6 +424,8 @@ Resources:
             TableName: !Ref UserSettingsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref UsersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FriendsTable
         - Statement:
             - Effect: Allow
               Action:
@@ -528,6 +549,30 @@ Resources:
           Properties:
             ApiId: !Ref CardDesignerApi
             Path: /sets
+            Method: GET
+        ListFriends:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /friends
+            Method: GET
+        AddFriend:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /friends
+            Method: POST
+        RemoveFriend:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /friends/{username}
+            Method: DELETE
+        ListFriendSets:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /friends/{username}/sets
             Method: GET
         ListSetShares:
           Type: HttpApi
@@ -666,6 +711,9 @@ Outputs:
   UsersTableName:
     Description: DynamoDB user records table name.
     Value: !Ref UsersTable
+  FriendsTableName:
+    Description: DynamoDB friend relationships table name.
+    Value: !Ref FriendsTable
   UserSettingsKeyId:
     Description: KMS key id for user settings encryption.
     Value: !Ref UserSettingsKey
