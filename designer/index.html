@@ -3,12 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Card Designer</title>
+    <title>Custom Card Designer</title>
     <link rel="icon" href="../assets/card-maker-logo.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../styles.css" />
   </head>
-  <body>
+  <body class="designer-page">
     <main class="app-shell">
+      <header class="designer-page-header">
+        <div class="designer-brand">
+          <img src="../assets/custom-card-designer-logo.svg" alt="" />
+          <div>
+            <p class="eyebrow">Card Designer</p>
+            <h1>Custom Card Designer</h1>
+          </div>
+        </div>
+      </header>
+
       <aside class="library-panel" aria-label="Account and saved designs">
         <div class="panel-header">
           <h2>My Stuff</h2>
@@ -339,29 +349,6 @@
           </fieldset>
 
           <fieldset>
-            <legend>Printing</legend>
-            <label>
-              <span>Artist name</span>
-              <input id="artistInput" type="text" maxlength="40" />
-            </label>
-            <div class="number-grid">
-              <label>
-                <span>Collector number</span>
-                <input id="collectorInput" type="text" maxlength="16" readonly />
-              </label>
-              <label>
-                <span>Rarity</span>
-                <select id="rarityInput">
-                  <option value="common">Common</option>
-                  <option value="uncommon">Uncommon</option>
-                  <option value="rare">Rare</option>
-                  <option value="mythic">Mythic</option>
-                </select>
-              </label>
-            </div>
-          </fieldset>
-
-          <fieldset>
             <legend>Colors</legend>
             <div class="color-grid">
               <label>
@@ -406,6 +393,29 @@
                 <option value="fill">Fill (stretch)</option>
               </select>
             </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Footer</legend>
+            <label>
+              <span>Artist name</span>
+              <input id="artistInput" type="text" maxlength="40" />
+            </label>
+            <div class="number-grid">
+              <label>
+                <span>Collector number</span>
+                <input id="collectorInput" type="text" maxlength="16" readonly />
+              </label>
+              <label>
+                <span>Rarity</span>
+                <select id="rarityInput">
+                  <option value="common">Common</option>
+                  <option value="uncommon">Uncommon</option>
+                  <option value="rare">Rare</option>
+                  <option value="mythic">Mythic</option>
+                </select>
+              </label>
+            </div>
           </fieldset>
 
           <fieldset id="cardHistoryPanel">
