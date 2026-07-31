@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Template Creator - Card Designer</title>
+    <link rel="icon" href="../assets/template-creator-logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../styles.css" />
+    <script src="../config.js"></script>
+  </head>
+  <body class="designer-page template-creator-page">
+    <main class="app-shell">
+      <header class="designer-page-header template-page-header">
+        <div class="template-title-block">
+          <p class="eyebrow">Card Designer</p>
+          <div class="template-title-row">
+            <img src="../assets/template-creator-logo.svg" alt="" />
+            <h1>Template Creator</h1>
+          </div>
+        </div>
+        <div class="template-header-actions">
+          <button id="saveTemplateButton" class="button primary" type="button" disabled>Save</button>
+          <a id="templateHomeButton" class="home-button" href="../" title="Go to the Home Page" aria-label="Go to the Home Page">
+            <span class="home-icon" aria-hidden="true"></span>
+          </a>
+          <button id="closeTemplateButton" class="sets-close-button" type="button" title="Close" aria-label="Close">x</button>
+        </div>
+      </header>
+
+      <aside class="library-panel" aria-label="Account and sets">
+        <div class="panel-header">
+          <h2>My Stuff</h2>
+        </div>
+
+        <section class="service-panel" aria-label="Account and sets">
+          <fieldset>
+            <legend>Account</legend>
+            <div id="signInPanel" class="account-panel">
+              <label>
+                <span>Username</span>
+                <input id="usernameInput" type="text" autocomplete="username" />
+              </label>
+              <label>
+                <span>Password</span>
+                <input id="passwordInput" type="password" autocomplete="current-password" />
+              </label>
+              <div class="action-grid">
+                <button id="signInButton" class="button primary" type="button">Sign In</button>
+                <button id="cancelSignInButton" class="button subtle" type="button">Cancel</button>
+              </div>
+              <button id="openSignUpButton" class="auth-switch-link" type="button">Don't have an account? Click here</button>
+            </div>
+            <div id="signedInPanel" class="account-menu hidden">
+              <div>
+                <span class="account-kicker">Signed in</span>
+                <strong id="currentUserLabel">Account</strong>
+              </div>
+              <button id="accountMenuButton" class="avatar-button" type="button" aria-label="Account menu" aria-expanded="false">
+                <span class="avatar-face" aria-hidden="true"></span>
+              </button>
+              <div id="accountMenu" class="account-menu-popover hidden">
+                <button id="signOutButton" class="button subtle" type="button">Sign Out</button>
+              </div>
+            </div>
+            <p id="authStatus" class="status-line">Signed out</p>
+          </fieldset>
+
+          <fieldset id="mySetsPanel" class="hidden">
+            <legend>My Sets</legend>
+            <p id="currentTemplateSetLabel" class="status-line">Current set: DEFAULT - Default</p>
+            <a class="button subtle" href="../sets/">View my sets</a>
+          </fieldset>
+
+          <fieldset id="myTemplatesPanel" class="hidden">
+            <legend>My Templates</legend>
+            <label>
+              <span>Template</span>
+              <select id="myTemplatesInput">
+                <option value="">No templates saved for this set</option>
+              </select>
+            </label>
+          </fieldset>
+        </section>
+        <div class="template-pane-footer">
+          <fieldset>
+            <legend>Template Info</legend>
+            <label>
+              <span>Template Name</span>
+              <input id="templateNameInput" type="text" maxlength="80" autocomplete="off" value="Template 1" form="templateForm" />
+            </label>
+            <label>
+              <span>Set</span>
+              <select id="templateSetInput" form="templateForm">
+                <option value="DEFAULT">DEFAULT - Default</option>
+              </select>
+            </label>
+          </fieldset>
+          <p id="templateStatus" class="status-line template-pane-status" aria-live="polite">Sign in to save templates.</p>
+        </div>
+      </aside>
+
+      <section class="workspace" aria-label="Template preview">
+        <div class="preview-toolbar">
+          <div>
+            <p class="eyebrow preview-title">Template Preview</p>
+          </div>
+        </div>
+
+        <div class="preview-stage template-preview-stage">
+          <article id="card" class="card-frame" aria-label="Current card template preview">
+            <img id="cardFrameImage" class="card-frame-background" alt="" />
+            <div class="card-inner">
+              <header id="previewIdentity" class="card-top">
+                <div class="card-title-lines">
+                  <h2 id="cardName"></h2>
+                  <p id="cardType" class="card-type"></p>
+                </div>
+                <div id="cardCost" class="cost-badge"></div>
+              </header>
+
+              <section id="previewArtwork" class="art-window" aria-label="Card artwork">
+                <div class="art-fallback">
+                  <span>ART</span>
+                </div>
+              </section>
+
+              <section id="previewText" class="rules-panel">
+                <p id="cardAbility" class="ability-text"></p>
+                <p id="cardFlavor" class="flavor-text"></p>
+              </section>
+
+              <footer class="card-footer">
+                <div class="card-bottom">
+                  <div id="combatStats" class="stat-pair">
+                    <div id="attackStat">
+                      <span id="attackStatLabel" class="stat-label">ATK</span>
+                      <strong id="cardAttack"></strong>
+                    </div>
+                    <div id="healthStat">
+                      <span id="healthStatLabel" class="stat-label">HP</span>
+                      <strong id="cardHealth"></strong>
+                    </div>
+                  </div>
+                  <div id="loyaltyStat" class="loyalty-stat">
+                    <span id="loyaltyStatLabel" class="stat-label">LOYALTY</span>
+                    <strong id="cardLoyalty"></strong>
+                  </div>
+                </div>
+              </footer>
+            </div>
+            <div id="previewFooter" class="card-meta">
+              <span id="setSymbol" class="set-symbol" aria-label="Rarity symbol"></span>
+              <span id="cardCollector"></span>
+              <span id="cardRarity"></span>
+              <span id="cardArtist"></span>
+            </div>
+            <div id="customFieldPreview" class="custom-field-preview-layer" aria-hidden="true"></div>
+          </article>
+        </div>
+      </section>
+
+      <aside class="control-panel" aria-label="Template design fields">
+        <div class="panel-header">
+          <h2>Design Fields</h2>
+        </div>
+        <form id="templateForm">
+          <div id="templateFields"></div>
+          <fieldset class="custom-fields-section">
+            <legend>Custom Fields</legend>
+            <div id="customFieldsList" class="custom-fields-list"></div>
+            <button id="addCustomFieldButton" class="button subtle custom-field-add-button" type="button">
+              <span class="plus-icon" aria-hidden="true"></span>
+              Add Field
+            </button>
+          </fieldset>
+        </form>
+      </aside>
+    </main>
+
+    <dialog id="signUpDialog" class="modal-dialog auth-dialog" aria-labelledby="signUpDialogTitle">
+      <form id="signUpForm" class="modal-card">
+        <h2 id="signUpDialogTitle">Make an Account for Card Designer</h2>
+        <label><span>Email</span><input id="signUpEmailInput" type="email" autocomplete="email" /></label>
+        <label title="If you don't make a username then your email is your username. You can make one later.">
+          <span>Username (optional)</span>
+          <input id="signUpUsernameInput" type="text" autocomplete="username" />
+        </label>
+        <p id="usernameAvailabilityStatus" class="username-availability" aria-live="polite"></p>
+        <label><span>Password</span><input id="signUpPasswordInput" type="password" autocomplete="new-password" /></label>
+        <div id="confirmationFields" class="confirmation-fields hidden">
+          <label><span>Confirmation code</span><input id="confirmationInput" type="text" inputmode="numeric" autocomplete="one-time-code" /></label>
+          <button id="confirmButton" class="button primary" type="button">Confirm Account</button>
+        </div>
+        <p id="signUpStatus" class="status-line"></p>
+        <div class="modal-actions two-up">
+          <button id="signUpButton" class="button primary" type="submit">Sign Up</button>
+          <button id="cancelSignUpButton" class="button subtle" type="button">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="renameFieldDialog" class="modal-dialog" aria-labelledby="renameFieldTitle">
+      <form id="renameFieldForm" class="modal-card">
+        <h2 id="renameFieldTitle">Rename Field</h2>
+        <label>
+          <span>Field name</span>
+          <input id="renameFieldInput" type="text" maxlength="60" />
+        </label>
+        <p id="renameFieldStatus" class="status-line"></p>
+        <div class="modal-actions two-up">
+          <button class="button primary" type="submit">Rename</button>
+          <button id="cancelRenameFieldButton" class="button subtle" type="button">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="customFieldDialog" class="modal-dialog custom-field-dialog" aria-labelledby="customFieldDialogTitle">
+      <form id="customFieldForm" class="modal-card custom-field-modal-card">
+        <h2 id="customFieldDialogTitle">New Template Field</h2>
+        <label>
+          <span>Name</span>
+          <input id="customFieldNameInput" type="text" maxlength="60" autocomplete="off" required />
+        </label>
+        <label>
+          <span>Data Type</span>
+          <select id="customFieldTypeInput">
+            <option value="text">Text</option>
+            <option value="number">Number</option>
+            <option value="dropdown">Dropdown</option>
+            <option value="symbol">Symbol</option>
+            <option value="art">Art</option>
+          </select>
+        </label>
+
+        <div id="customFieldDropdownOptions" class="custom-field-form-group hidden">
+          <span class="custom-field-group-label">Dropdown Options</span>
+          <div id="customFieldOptionList" class="custom-field-option-list"></div>
+          <button id="addCustomFieldOptionButton" class="button subtle custom-field-option-add" type="button">
+            <span class="plus-icon" aria-hidden="true"></span>
+            Add Option
+          </button>
+        </div>
+
+        <div class="custom-field-form-group">
+          <span class="custom-field-group-label">Position</span>
+          <div class="custom-field-value-grid">
+            <label>
+              <span>X</span>
+              <input id="customFieldXInput" type="number" min="0" step="1" required />
+            </label>
+            <label>
+              <span>Y</span>
+              <input id="customFieldYInput" type="number" min="0" step="1" required />
+            </label>
+          </div>
+          <p id="customFieldPositionHelp" class="custom-field-help"></p>
+        </div>
+
+        <div id="customFieldFontSizeGroup" class="custom-field-form-group">
+          <label>
+            <span>Size (font size in pixels)</span>
+            <input id="customFieldFontSizeInput" type="number" min="1" step="1" required />
+          </label>
+        </div>
+
+        <div id="customFieldImageSizeGroup" class="custom-field-form-group hidden">
+          <span class="custom-field-group-label">Size (pixels)</span>
+          <div class="custom-field-value-grid">
+            <label>
+              <span>Width</span>
+              <input id="customFieldWidthInput" type="number" min="1" step="1" />
+            </label>
+            <label>
+              <span>Height</span>
+              <input id="customFieldHeightInput" type="number" min="1" step="1" />
+            </label>
+          </div>
+        </div>
+
+        <label id="customFieldColorGroup">
+          <span>Color</span>
+          <input id="customFieldColorInput" type="color" value="#202621" />
+        </label>
+        <p id="customFieldStatus" class="status-line" aria-live="polite"></p>
+        <div class="modal-actions two-up">
+          <button id="saveCustomFieldButton" class="button primary" type="submit">Add Field</button>
+          <button id="cancelCustomFieldButton" class="button subtle" type="button">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="templateUnsavedChangesDialog" class="modal-dialog" aria-labelledby="templateUnsavedChangesTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="templateUnsavedChangesTitle">Unsaved changes</h2>
+        <p id="templateUnsavedChangesMessage">Save changes before loading another template?</p>
+        <div class="modal-actions">
+          <button class="button primary" value="save" type="submit">Save Changes</button>
+          <button class="button subtle" value="discard" type="submit">Don't Save</button>
+          <button class="button subtle" value="cancel" type="submit">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="templateNameChangeDialog" class="modal-dialog" aria-labelledby="templateNameChangeTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="templateNameChangeTitle">Do you want to rename this template or save a copy with a new name?</h2>
+        <div class="modal-actions">
+          <button class="button primary" value="rename" type="submit">Rename Template</button>
+          <button class="button subtle" value="copy" type="submit">Save a Copy</button>
+          <button class="button subtle" value="cancel" type="submit">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="templateSetChangeDialog" class="modal-dialog" aria-labelledby="templateSetChangeTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="templateSetChangeTitle">Did you mean to move this template to a new set?</h2>
+        <div class="modal-actions">
+          <button class="button primary" value="yes" type="submit">Yes, Move It</button>
+          <button class="button subtle" value="no" type="submit">No, Keep Its Set</button>
+          <button class="button subtle" value="cancel" type="submit">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="../auth-flow.js"></script>
+    <script src="./card-template.js"></script>
+  </body>
+</html>

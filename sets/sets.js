@@ -124,6 +124,10 @@ const elements = {
   shareCardHistoryInput: document.querySelector("#shareCardHistoryInput"),
   shareCardHistoryLabel: document.querySelector("#shareCardHistoryLabel"),
   reloadSetImagesButton: document.querySelector("#reloadSetImagesButton"),
+  setDetailMenu: document.querySelector("#setDetailMenu"),
+  setDetailMenuButton: document.querySelector("#setDetailMenuButton"),
+  setDetailMenuPopover: document.querySelector("#setDetailMenuPopover"),
+  setDetailTemplatesButton: document.querySelector("#setDetailTemplatesButton"),
   setDetailExportButton: document.querySelector("#setDetailExportButton"),
   setDetailRenameButton: document.querySelector("#setDetailRenameButton"),
   setLibraryContent: document.querySelector("#setLibraryContent"),
@@ -161,6 +165,19 @@ const accountAuth = new AccountAuthController({
 
 function getStoredIdToken() {
   return sessionStorage.getItem("cardDesignerIdToken") || "";
+}
+
+/** Closes the set-detail actions menu and updates its accessibility state. */
+function closeSetDetailMenu() {
+  elements.setDetailMenuPopover.classList.add("hidden");
+  elements.setDetailMenuButton.setAttribute("aria-expanded", "false");
+}
+
+/** Opens or closes the set-detail actions menu. */
+function toggleSetDetailMenu() {
+  const isOpen = !elements.setDetailMenuPopover.classList.contains("hidden");
+  elements.setDetailMenuPopover.classList.toggle("hidden", isOpen);
+  elements.setDetailMenuButton.setAttribute("aria-expanded", String(!isOpen));
 }
 
 /** Returns the refresh token saved for the current browser session. */
@@ -681,7 +698,7 @@ async function getCardRendererWindow() {
 
       frame.addEventListener("load", finishLoading, { once: true });
       frame.addEventListener("error", () => reject(new Error("Card renderer failed to load.")), { once: true });
-      if (!frame.getAttribute("src")) frame.src = "../designer/?render=card";
+      if (!frame.getAttribute("src")) frame.src = "../card-designer/?render=card";
     });
   }
 
@@ -1062,6 +1079,9 @@ function renderSetLibraryList() {
   elements.generateArtButton.classList.add("hidden");
   elements.reloadSetImagesButton.classList.add("hidden");
   elements.setDetailExportButton.classList.add("hidden");
+  elements.setDetailTemplatesButton.classList.add("hidden");
+  elements.setDetailMenu.classList.add("hidden");
+  closeSetDetailMenu();
   elements.setDetailRenameButton.classList.add("hidden");
   elements.setLibraryContent.innerHTML = "";
   const list = document.createElement("div");
@@ -1130,7 +1150,7 @@ function replaceMissingLibraryImage(image, card) {
 
 /** Builds a URL that opens a card in the main designer. */
 function getDesignerCardUrl(cardId) {
-  const designerUrl = new URL("../designer/", window.location.href);
+  const designerUrl = new URL("../card-designer/", window.location.href);
   designerUrl.searchParams.set("card", cardId);
   return designerUrl;
 }
@@ -1389,6 +1409,9 @@ function renderSetCardGrid(setCode) {
   elements.generateArtButton.classList.toggle("hidden", !cardSet);
   elements.reloadSetImagesButton.classList.toggle("hidden", !cardSet);
   elements.setDetailExportButton.classList.toggle("hidden", !cardSet);
+  elements.setDetailTemplatesButton.classList.toggle("hidden", !cardSet);
+  elements.setDetailMenu.classList.toggle("hidden", !cardSet);
+  closeSetDetailMenu();
   elements.setDetailRenameButton.classList.toggle("hidden", !cardSet);
   updateMassEditUi();
   elements.setLibraryContent.innerHTML = "";
@@ -1476,9 +1499,13 @@ async function refreshSetsAndCards(renderInitialView = true, cacheBust = "") {
 function attachEvents() {
   accountAuth.attachEvents();
   setSharing.attachEvents();
+  elements.setDetailMenuButton.addEventListener("click", toggleSetDetailMenu);
   elements.closeExportSetButton.addEventListener("click", closeExportSetDialog);
   elements.closeExportSetXButton.addEventListener("click", closeExportSetDialog);
-  elements.generateArtButton.addEventListener("click", openGenerateArtDialog);
+  elements.generateArtButton.addEventListener("click", () => {
+    closeSetDetailMenu();
+    openGenerateArtDialog();
+  });
   elements.closeGenerateArtButton.addEventListener("click", cancelGenerateArtWorkflow);
   elements.cancelGenerateArtButton.addEventListener("click", cancelGenerateArtWorkflow);
   elements.confirmGenerateArtButton.addEventListener("click", toggleGenerateArtPause);
@@ -1507,6 +1534,21 @@ function attachEvents() {
   elements.setDetailExportButton.addEventListener("click", () => {
     const cardSet = getAvailableSets().find((set) => (set.code || "DEFAULT") === state.currentSetCode);
     if (cardSet) openExportSetDialog(cardSet);
+  });
+  elements.setDetailTemplatesButton.addEventListener("click", () => {
+    if (!state.currentSetCode) return;
+    closeSetDetailMenu();
+    const templatesUrl = new URL("../templates/", window.location.href);
+    templatesUrl.searchParams.set("set", state.currentSetCode);
+    window.location.href = templatesUrl;
+  });
+  document.addEventListener("click", (event) => {
+    if (!elements.setDetailMenu.contains(event.target)) closeSetDetailMenu();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || elements.setDetailMenuPopover.classList.contains("hidden")) return;
+    closeSetDetailMenu();
+    elements.setDetailMenuButton.focus();
   });
   elements.massEditInput.addEventListener("change", () => {
     if (elements.massEditInput.value === "change-color") openMassColorChangeDialog();

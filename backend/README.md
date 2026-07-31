@@ -59,14 +59,17 @@ The GitHub Pages app URL is `https://bobsbeenjamin.github.io/card-designer`, but
 the CORS origin is only `https://bobsbeenjamin.github.io`.
 
 Dev and prod should be deployed as separate CloudFormation stacks. Each stack
-creates separate DynamoDB tables for current cards, card history, and friend relationships:
+creates separate DynamoDB tables for current cards, card history, templates,
+and friend relationships:
 
 ```text
 Dev cards:    card-designer-dev-card-designs
 Dev history:  card-designer-dev-card-history
+Dev templates: card-designer-dev-card-templates
 Dev friends:  card-designer-dev-friends
 Prod cards:   card-designer-prod-card-designs
 Prod history: card-designer-prod-card-history
+Prod templates: card-designer-prod-card-templates
 Prod friends: card-designer-prod-friends
 ```
 
@@ -108,6 +111,10 @@ browser to Cognito. All other non-public routes require
 - `PUT /cards/{cardId}`
 - `PUT /cards/{cardId}/image`
 - `DELETE /cards/{cardId}`
+- `GET /templates?set=<setCode>`
+- `POST /templates`
+- `GET /templates/{templateId}`
+- `PUT /templates/{templateId}`
 - `GET /art`
 - `POST /art`
 - `POST /art/generate`
@@ -117,6 +124,16 @@ browser to Cognito. All other non-public routes require
 - `POST /friends`
 - `DELETE /friends/{username}`
 - `GET /friends/{username}/sets`
+
+Card templates use a composite user/set partition and a case-folded template
+name sort key, so each set can contain multiple templates while enforcing
+case-insensitive name uniqueness. A user/template-id secondary index preserves
+stable URLs when templates are renamed or moved. Each template stores its
+ordered section and field definitions, editable labels, current default values,
+custom field definitions (type, position, size, color, and dropdown options),
+and S3 preview metadata. Preview PNGs use
+`<setCode>/templates/<templateId>.png` in the same user bucket as card previews.
+Deleting a set also deletes all of its templates and preview images.
 
 ## Existing user migration
 

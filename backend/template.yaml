@@ -29,6 +29,7 @@ Globals:
         TABLE_NAME: !Ref CardDesignsTable
         CARD_HISTORY_TABLE_NAME: !Ref CardHistoryTable
         SETS_TABLE_NAME: !Ref CardSetsTable
+        TEMPLATES_TABLE_NAME: !Ref CardTemplatesTable
         USER_SETTINGS_TABLE_NAME: !Ref UserSettingsTable
         USERS_TABLE_NAME: !Ref UsersTable
         FRIENDS_TABLE_NAME: !Ref FriendsTable
@@ -96,6 +97,37 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: expiresAt
         Enabled: true
+
+  CardTemplatesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "card-designer-${AppEnvironment}-card-templates"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: ownerSet
+          AttributeType: S
+        - AttributeName: normalizedName
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: templateId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: ownerSet
+          KeyType: HASH
+        - AttributeName: normalizedName
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: userId-templateId-index
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: templateId
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
 
   UserSettingsKey:
     Type: AWS::KMS::Key
@@ -421,6 +453,8 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref CardSetsTable
         - DynamoDBCrudPolicy:
+            TableName: !Ref CardTemplatesTable
+        - DynamoDBCrudPolicy:
             TableName: !Ref UserSettingsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref UsersTable
@@ -433,6 +467,7 @@ Resources:
               Resource:
                 - !GetAtt CardDesignsTable.Arn
                 - !GetAtt CardHistoryTable.Arn
+                - !GetAtt CardTemplatesTable.Arn
             - Effect: Allow
               Action:
                 - kms:Encrypt
@@ -640,6 +675,30 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /cards
             Method: GET
+        ListTemplates:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /templates
+            Method: GET
+        CreateTemplate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /templates
+            Method: POST
+        GetTemplate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /templates/{templateId}
+            Method: GET
+        SaveTemplate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /templates/{templateId}
+            Method: PUT
         CreateCard:
           Type: HttpApi
           Properties:
@@ -702,6 +761,9 @@ Outputs:
   CardHistoryTableName:
     Description: DynamoDB card history table name.
     Value: !Ref CardHistoryTable
+  CardTemplatesTableName:
+    Description: DynamoDB card templates table name.
+    Value: !Ref CardTemplatesTable
   SetsTableName:
     Description: DynamoDB card sets table name.
     Value: !Ref CardSetsTable

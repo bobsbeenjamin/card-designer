@@ -86,6 +86,64 @@ textarea {
   margin-bottom: 3px;
 }
 
+.template-page-header {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 166px minmax(0, 1fr) 166px;
+}
+
+.template-page-header::before {
+  content: "";
+  width: 166px;
+}
+
+.template-title-block {
+  min-width: 0;
+  text-align: center;
+}
+
+.template-title-row {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.template-title-row img {
+  flex: 0 0 44px;
+  height: 44px;
+  width: 44px;
+}
+
+.template-title-row h1 {
+  margin: 0;
+}
+
+.template-header-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.template-creator-page .library-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.template-pane-footer {
+  display: grid;
+  gap: 14px;
+  margin-top: auto;
+}
+
+.template-pane-status {
+  border-top: 1px solid var(--line);
+  margin: 0;
+  padding-top: 14px;
+}
+
 .designer-page .library-panel,
 .designer-page .workspace {
   min-height: calc(100vh - 77px);
@@ -899,6 +957,237 @@ h1 {
   padding: 24px;
 }
 
+.template-preview-stage {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.template-field {
+  display: grid;
+  gap: 8px;
+}
+
+.template-field-heading {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.template-field-label {
+  color: #48504a;
+  font-size: 0.86rem;
+  font-weight: 800;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.template-field-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.template-field-action {
+  align-items: center;
+  background: #f5f8f4;
+  border: 1px solid #c6d1c7;
+  border-radius: 6px;
+  color: #1d2b24;
+  cursor: pointer;
+  display: inline-flex;
+  height: 30px;
+  justify-content: center;
+  padding: 0;
+  width: 30px;
+}
+
+.template-field-action:hover,
+.template-field-action:focus-visible {
+  background: #e9efe9;
+  border-color: #8fa095;
+}
+
+.template-field-action.delete {
+  background: #fff5f4;
+  border-color: #e0b5b0;
+  color: #b42318;
+}
+
+.template-field-action svg,
+.template-field-action .trash-icon {
+  display: block;
+  height: 16px;
+  width: 16px;
+}
+
+.template-field-action svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.template-field-action .trash-icon {
+  background: currentColor;
+  mask: url("assets/trash-icon.svg") center / contain no-repeat;
+  -webkit-mask: url("assets/trash-icon.svg") center / contain no-repeat;
+}
+
+.template-field input,
+.template-field select,
+.template-field textarea {
+  width: 100%;
+}
+
+.template-empty-section {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-style: italic;
+  margin: 0;
+}
+
+.custom-fields-list {
+  display: grid;
+  gap: 10px;
+}
+
+.custom-field-summary {
+  background: #fbfcfa;
+  border: 1px solid #d8ddd5;
+  border-radius: 8px;
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+}
+
+.custom-field-type {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.custom-field-add-button,
+.custom-field-option-add {
+  gap: 8px;
+}
+
+.custom-field-add-button {
+  width: 100%;
+}
+
+.plus-icon {
+  display: inline-block;
+  height: 16px;
+  position: relative;
+  width: 16px;
+}
+
+.plus-icon::before,
+.plus-icon::after {
+  background: currentColor;
+  border-radius: 1px;
+  content: "";
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.plus-icon::before {
+  height: 2px;
+  width: 14px;
+}
+
+.plus-icon::after {
+  height: 14px;
+  width: 2px;
+}
+
+.custom-field-dialog {
+  width: min(520px, calc(100vw - 36px));
+}
+
+.custom-field-modal-card {
+  max-height: min(88vh, 820px);
+  overflow-y: auto;
+}
+
+.custom-field-form-group {
+  display: grid;
+  gap: 10px;
+}
+
+.custom-field-group-label {
+  color: #48504a;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.custom-field-value-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.custom-field-help {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.custom-field-option-list {
+  display: grid;
+  gap: 8px;
+}
+
+.custom-field-option-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 30px;
+}
+
+.custom-field-preview-layer {
+  border-radius: inherit;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  z-index: 3;
+}
+
+.custom-field-preview-item {
+  font-family: inherit;
+  line-height: 1.1;
+  max-width: 100%;
+  overflow: hidden;
+  position: absolute;
+}
+
+.custom-field-preview-item.text-value {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-field-preview-item.image-value {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px dashed currentColor;
+  display: flex;
+  font-size: 10px;
+  font-weight: 850;
+  justify-content: center;
+  overflow-wrap: anywhere;
+  padding: 4px;
+  text-align: center;
+}
+
+.custom-field-preview-item.symbol-value {
+  border-radius: 50%;
+}
+
 .panel-header {
   align-items: center;
   display: flex;
@@ -1624,6 +1913,18 @@ input[type="color"] {
     padding: 14px 18px;
   }
 
+  .template-page-header {
+    grid-template-columns: 1fr;
+  }
+
+  .template-page-header::before {
+    display: none;
+  }
+
+  .template-header-actions {
+    justify-content: flex-start;
+  }
+
   .designer-brand img {
     flex-basis: 40px;
     height: 40px;
@@ -1771,6 +2072,14 @@ input[type="color"] {
   flex-wrap: wrap;
   gap: 10px;
   justify-content: flex-end;
+}
+
+.set-detail-menu {
+  position: relative;
+}
+
+.set-detail-menu .home-account-menu {
+  min-width: 180px;
 }
 
 .mass-edit-control {
@@ -2189,7 +2498,7 @@ input[type="color"] {
   display: grid;
   gap: 28px;
   flex: 1 1 auto;
-  grid-template-columns: repeat(2, minmax(220px, 320px));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 320px));
   justify-content: center;
   padding: 24px 24px 76px;
 }
@@ -2240,6 +2549,10 @@ input[type="color"] {
 
 .new-card-icon {
   position: relative;
+}
+
+.template-creator-icon {
+  object-fit: contain;
 }
 
 .new-card-icon::before,

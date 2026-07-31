@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Template Creator logo</title>
+  <desc id="desc">A card blueprint with editable layout guides and a gold drafting pen.</desc>
+  <defs>
+    <linearGradient id="tile" x1="12" y1="8" x2="84" y2="90" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#345143"/>
+      <stop offset="1" stop-color="#17241e"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="31" y1="18" x2="68" y2="79" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fffdf6"/>
+      <stop offset="1" stop-color="#eadfbe"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="88" height="88" rx="22" fill="url(#tile)"/>
+  <rect x="25" y="16" width="47" height="64" rx="7" fill="url(#paper)" stroke="#fff7df" stroke-width="3"/>
+  <path d="M34 16v64M47 16v64M60 16v64M25 30h47M25 44h47M25 58h47" stroke="#bcc7b6" stroke-width="1" opacity=".72"/>
+  <rect x="32" y="23" width="25" height="6" rx="3" fill="#263a31"/>
+  <rect x="32" y="35" width="33" height="19" rx="3" fill="#9eb5a5" stroke="#587062" stroke-width="2"/>
+  <rect x="32" y="61" width="22" height="4" rx="2" fill="#7d887e"/>
+  <rect x="32" y="69" width="31" height="3" rx="1.5" fill="#b4aa91"/>
+
+  <path d="M21 25v-7h7M76 25v-7h-7M21 71v7h7M76 71v7h-7" fill="none" stroke="#d69d42" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="21" cy="18" r="2.5" fill="#fff7df" stroke="#d69d42" stroke-width="2"/>
+  <circle cx="76" cy="18" r="2.5" fill="#fff7df" stroke="#d69d42" stroke-width="2"/>
+  <circle cx="21" cy="78" r="2.5" fill="#fff7df" stroke="#d69d42" stroke-width="2"/>
+  <circle cx="76" cy="78" r="2.5" fill="#fff7df" stroke="#d69d42" stroke-width="2"/>
+
+  <path d="m69 55 9 9-13 13-11 3 3-11Z" fill="#d69d42" stroke="#fff7df" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m57 69 8 8M69 55l4-4 9 9-4 4" fill="none" stroke="#fff7df" stroke-width="2" stroke-linejoin="round"/>
+</svg>

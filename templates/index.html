@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Set Templates - Card Designer</title>
+    <link rel="icon" href="../assets/template-creator-logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../styles.css" />
+    <script src="../config.js"></script>
+  </head>
+  <body class="sets-page templates-page">
+    <main class="sets-shell">
+      <header class="sets-page-header">
+        <div>
+          <p class="eyebrow">Card Designer</p>
+          <h1 id="templatesTitle">Set Templates</h1>
+          <p id="templatesStatus" class="status-line">Sign in to view templates.</p>
+        </div>
+        <div class="sets-header-actions">
+          <a class="home-button" href="../" title="Go to the Home Page" aria-label="Go to the Home Page">
+            <span class="home-icon" aria-hidden="true"></span>
+          </a>
+          <a id="templatesCloseButton" class="sets-close-button" href="../sets/" title="Close" aria-label="Close">x</a>
+        </div>
+      </header>
+
+      <section id="signInPanel" class="sets-sign-in">
+        <fieldset>
+          <legend>Account</legend>
+          <label><span>Username</span><input id="usernameInput" type="text" autocomplete="username" /></label>
+          <label><span>Password</span><input id="passwordInput" type="password" autocomplete="current-password" /></label>
+          <div class="action-grid">
+            <button id="signInButton" class="button primary" type="button">Sign In</button>
+            <button id="cancelSignInButton" class="button subtle" type="button">Cancel</button>
+          </div>
+          <button id="openSignUpButton" class="auth-switch-link" type="button">Don't have an account? Click here</button>
+          <p id="authStatus" class="status-line">Signed out</p>
+        </fieldset>
+      </section>
+
+      <dialog id="signUpDialog" class="modal-dialog auth-dialog" aria-labelledby="signUpDialogTitle">
+        <form id="signUpForm" class="modal-card">
+          <h2 id="signUpDialogTitle">Make an Account for Card Designer</h2>
+          <label><span>Email</span><input id="signUpEmailInput" type="email" autocomplete="email" /></label>
+          <label>
+            <span>Username (optional)</span>
+            <input id="signUpUsernameInput" type="text" autocomplete="username" />
+          </label>
+          <p id="usernameAvailabilityStatus" class="username-availability" aria-live="polite"></p>
+          <label><span>Password</span><input id="signUpPasswordInput" type="password" autocomplete="new-password" /></label>
+          <div id="confirmationFields" class="confirmation-fields hidden">
+            <label><span>Confirmation code</span><input id="confirmationInput" type="text" inputmode="numeric" autocomplete="one-time-code" /></label>
+            <button id="confirmButton" class="button primary" type="button">Confirm Account</button>
+          </div>
+          <p id="signUpStatus" class="status-line"></p>
+          <div class="modal-actions two-up">
+            <button id="signUpButton" class="button primary" type="submit">Sign Up</button>
+            <button id="cancelSignUpButton" class="button subtle" type="button">Cancel</button>
+          </div>
+        </form>
+      </dialog>
+
+      <section id="templatesPageContent" class="sets-content hidden" aria-label="Set templates">
+        <div id="templateGrid" class="card-library-grid"></div>
+      </section>
+    </main>
+
+    <script src="../auth-flow.js"></script>
+    <script src="./templates.js"></script>
+  </body>
+</html>

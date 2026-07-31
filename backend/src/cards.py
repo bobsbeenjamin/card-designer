@@ -21,6 +21,7 @@ from botocore.exceptions import ClientError
 TABLE_NAME = os.environ["TABLE_NAME"]
 CARD_HISTORY_TABLE_NAME = os.environ["CARD_HISTORY_TABLE_NAME"]
 SETS_TABLE_NAME = os.environ["SETS_TABLE_NAME"]
+TEMPLATES_TABLE_NAME = os.environ["TEMPLATES_TABLE_NAME"]
 USER_SETTINGS_TABLE_NAME = os.environ["USER_SETTINGS_TABLE_NAME"]
 USERS_TABLE_NAME = os.environ["USERS_TABLE_NAME"]
 USER_BUCKET_PREFIX = os.environ["USER_BUCKET_PREFIX"]
@@ -35,6 +36,7 @@ DYNAMODB_SERIALIZER = TypeSerializer()
 TABLE = DYNAMODB.Table(TABLE_NAME)
 CARD_HISTORY_TABLE = DYNAMODB.Table(CARD_HISTORY_TABLE_NAME)
 SETS_TABLE = DYNAMODB.Table(SETS_TABLE_NAME)
+TEMPLATES_TABLE = DYNAMODB.Table(TEMPLATES_TABLE_NAME)
 USER_SETTINGS_TABLE = DYNAMODB.Table(USER_SETTINGS_TABLE_NAME)
 USERS_TABLE = DYNAMODB.Table(USERS_TABLE_NAME)
 FRIENDS_TABLE = DYNAMODB.Table(FRIENDS_TABLE_NAME)
@@ -44,15 +46,34 @@ BEDROCK = boto3.client("bedrock-runtime")
 COGNITO = boto3.client("cognito-idp")
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_CARD_IMAGE_BYTES = 7 * 1024 * 1024
+MAX_TEMPLATE_IMAGE_BYTES = 7 * 1024 * 1024
 MAX_ART_IMAGE_BYTES = 7 * 1024 * 1024
 SET_SHARE_EXPIRATION_SECONDS = 90 * 24 * 60 * 60
 SHARE_REQUEST_RECORD = "shareRequest"
 SHARE_EXPIRATION_NOTICE_RECORD = "shareExpirationNotice"
+TEMPLATE_IMAGE_FIELD = "templateImagePng"
+TEMPLATE_ID_INDEX = "userId-templateId-index"
+CUSTOM_TEMPLATE_FIELD_TYPES = {"text", "number", "dropdown", "symbol", "art"}
+TEXT_CUSTOM_TEMPLATE_FIELD_TYPES = {"text", "number", "dropdown"}
+IMAGE_CUSTOM_TEMPLATE_FIELD_TYPES = {"symbol", "art"}
+MAX_CUSTOM_TEMPLATE_FIELDS = 50
+MAX_CUSTOM_TEMPLATE_OPTIONS = 50
+
 DEFAULT_SET = {
     "code": "DEFAULT",
     "name": "Default",
     "symbol": "",
     "copyrightInfo": "",
+}
+
+TEMPLATE_FIELDS_BY_SECTION = {
+    "identity": {"name", "type", "subtype"},
+    "numbers": {"cost", "statMode", "attack", "health", "loyalty"},
+    "text": {"ability", "flavor"},
+    "artwork": {"fit"},
+    "colors": {"frame", "accent", "text", "panel"},
+    "cardFrame": {"frameUrl", "frameFit"},
+    "footer": {"artist", "collector", "rarity"},
 }
 
 ALLOWED_FIELDS = {
@@ -75,6 +96,7 @@ ALLOWED_FIELDS = {
     "colors",
     "setCode",
 }
+
 CARD_HISTORY_FIELD_LABELS = {
     "name": "name",
     "artUrl": "art",
@@ -95,6 +117,7 @@ CARD_HISTORY_FIELD_LABELS = {
     "colors": "colors",
     "setCode": "set",
 }
+
 CARD_IMAGE_FIELD = "cardImagePng"
 ART_IMAGE_FIELD = "artImage"
 FRAME_IMAGE_FIELD = "frameImage"
@@ -102,6 +125,7 @@ OPENAI_KEY_SETTING = "openAiApiKey"
 IMAGE_PROVIDER_SETTING = "imageGenerationProvider"
 MIDJOURNEY_SETTING = "midjourneySettings"
 PROVIDER_SETTINGS_PREFIX = "imageProviderSettings#"
+
 PROVIDER_LABELS = {
     "openai": "OpenAI",
     "gemini": "Google Gemini",
@@ -116,10 +140,12 @@ PROVIDER_LABELS = {
     "firefly": "Adobe Firefly-compatible",
     "stability": "Stability AI",
 }
+
 IMAGE_PROVIDERS = set(PROVIDER_LABELS)
 PROVIDER_DEFAULT_ENDPOINTS = {
     "stability": "https://api.stability.ai/v2beta/stable-image/generate/core",
 }
+
 PROVIDER_DEFAULT_MODELS = {
     "openai": "gpt-image-2",
     "gemini": "gemini-3.1-flash-image",
@@ -176,6 +202,20 @@ def handler(event, _context):
 
         if method == "GET" and route_key == "GET /sets":
             return ok(list_sets(user_id))
+
+        if method == "GET" and route_key == "GET /templates":
+            return ok(list_templates(user_id, event))
+
+        if method == "POST" and route_key == "POST /templates":
+            return ok(create_template(user_id, read_body(event)), status=201)
+
+        if method == "GET" and route_key == "GET /templates/{templateId}":
+            template_id = event["pathParameters"]["templateId"]
+            return ok(get_template(user_id, template_id))
+
+        if method == "PUT" and route_key == "PUT /templates/{templateId}":
+            template_id = event["pathParameters"]["templateId"]
+            return ok(save_template(user_id, template_id, read_body(event)))
 
         if method == "GET" and route_key == "GET /friends":
             return ok(list_friends(user_id))
@@ -1506,6 +1546,408 @@ def list_sets(user_id):
     return {"sets": sets}
 
 
+def clean_template_sections(body):
+    """Validate the editable field definition stored for a card template."""
+    sections = body.get("sections")
+    if not isinstance(sections, list):
+        raise ValueError("Template sections are required.")
+    if len(sections) > len(TEMPLATE_FIELDS_BY_SECTION):
+        raise ValueError("Template contains too many sections.")
+
+    cleaned_sections = []
+    seen_sections = set()
+    for section in sections:
+        if not isinstance(section, dict):
+            raise ValueError("Each template section must be an object.")
+        section_id = str(section.get("id") or "").strip()
+        if section_id not in TEMPLATE_FIELDS_BY_SECTION or section_id in seen_sections:
+            raise ValueError("Template contains an invalid section.")
+        seen_sections.add(section_id)
+
+        fields = section.get("fields")
+        if not isinstance(fields, list):
+            raise ValueError("Each template section must contain fields.")
+        if len(fields) > len(TEMPLATE_FIELDS_BY_SECTION[section_id]):
+            raise ValueError("Template section contains too many fields.")
+
+        cleaned_fields = []
+        seen_fields = set()
+        for field in fields:
+            if not isinstance(field, dict):
+                raise ValueError("Each template field must be an object.")
+            field_id = str(field.get("id") or "").strip()
+            if field_id not in TEMPLATE_FIELDS_BY_SECTION[section_id] or field_id in seen_fields:
+                raise ValueError("Template contains an invalid field.")
+            seen_fields.add(field_id)
+
+            label = str(field.get("label") or "").strip()
+            if not label:
+                raise ValueError("Template field names are required.")
+            if len(label) > 60:
+                raise ValueError("Template field names must be 60 characters or fewer.")
+
+            value = field.get("value", "")
+            if isinstance(value, (dict, list)) or value is None:
+                raise ValueError("Template field values must be text.")
+            value = str(value)
+            if len(value) > 5000:
+                raise ValueError("Template field values are too long.")
+            cleaned_fields.append({"id": field_id, "label": label, "value": value})
+
+        cleaned_sections.append({
+            "id": section_id,
+            "label": str(section.get("label") or section_id).strip()[:60] or section_id,
+            "fields": cleaned_fields,
+        })
+
+    return cleaned_sections
+
+
+def clean_custom_template_integer(value, label, minimum=0):
+    """Return one bounded whole-number custom template measurement."""
+    if isinstance(value, bool):
+        raise ValueError(f"Custom field {label} must be a whole number.")
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Custom field {label} must be a whole number.")
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"Custom field {label} must be a whole number.")
+    if number < minimum or number > 5000:
+        raise ValueError(f"Custom field {label} must be between {minimum} and 5000.")
+    return number
+
+
+def clean_template_custom_fields(body):
+    """Validate custom field definitions stored with a card template."""
+    custom_fields = body.get("customFields", [])
+    if not isinstance(custom_fields, list):
+        raise ValueError("Template custom fields must be a list.")
+    if len(custom_fields) > MAX_CUSTOM_TEMPLATE_FIELDS:
+        raise ValueError("A template can contain at most 50 custom fields.")
+
+    cleaned_fields = []
+    seen_names = set()
+    for custom_field in custom_fields:
+        if not isinstance(custom_field, dict):
+            raise ValueError("Each custom template field must be an object.")
+
+        name = " ".join(str(custom_field.get("name") or "").strip().split())
+        if not name:
+            raise ValueError("Custom field names are required.")
+        if len(name) > 60:
+            raise ValueError("Custom field names must be 60 characters or fewer.")
+        normalized_name = name.casefold()
+        if normalized_name in seen_names:
+            raise ValueError("Custom field names must be unique.")
+        seen_names.add(normalized_name)
+
+        data_type = str(custom_field.get("dataType") or "").strip().lower()
+        if data_type not in CUSTOM_TEMPLATE_FIELD_TYPES:
+            raise ValueError("Custom fields contain an invalid data type.")
+
+        position = custom_field.get("position")
+        if not isinstance(position, dict):
+            raise ValueError("Custom field positions must contain x and y coordinates.")
+        cleaned_position = {
+            "x": clean_custom_template_integer(position.get("x"), "x coordinate"),
+            "y": clean_custom_template_integer(position.get("y"), "y coordinate"),
+        }
+
+        size = custom_field.get("size")
+        if not isinstance(size, dict):
+            raise ValueError("Custom field sizes are required.")
+        if data_type in IMAGE_CUSTOM_TEMPLATE_FIELD_TYPES:
+            cleaned_size = {
+                "width": clean_custom_template_integer(size.get("width"), "width", minimum=1),
+                "height": clean_custom_template_integer(size.get("height"), "height", minimum=1),
+            }
+        else:
+            cleaned_size = {
+                "fontSize": clean_custom_template_integer(
+                    size.get("fontSize"),
+                    "font size",
+                    minimum=1,
+                ),
+            }
+
+        color = ""
+        if data_type in TEXT_CUSTOM_TEMPLATE_FIELD_TYPES:
+            color = str(custom_field.get("color") or "").strip().lower()
+            if (
+                len(color) != 7
+                or not color.startswith("#")
+                or any(character not in "0123456789abcdef" for character in color[1:])
+            ):
+                raise ValueError("Custom text field colors must be six-digit hex colors.")
+
+        options = []
+        if data_type == "dropdown":
+            raw_options = custom_field.get("options")
+            if not isinstance(raw_options, list) or not raw_options:
+                raise ValueError("Dropdown custom fields need at least one option.")
+            if len(raw_options) > MAX_CUSTOM_TEMPLATE_OPTIONS:
+                raise ValueError("A custom dropdown can contain at most 50 options.")
+            seen_options = set()
+            for raw_option in raw_options:
+                if not isinstance(raw_option, str):
+                    raise ValueError("Custom dropdown options must be text.")
+                option = raw_option.strip()
+                if not option:
+                    raise ValueError("Custom dropdown options cannot be empty.")
+                if len(option) > 80:
+                    raise ValueError("Custom dropdown options must be 80 characters or fewer.")
+                normalized_option = option.casefold()
+                if normalized_option in seen_options:
+                    raise ValueError("Custom dropdown options must be unique.")
+                seen_options.add(normalized_option)
+                options.append(option)
+
+        cleaned_fields.append({
+            "name": name,
+            "dataType": data_type,
+            "position": cleaned_position,
+            "size": cleaned_size,
+            "color": color,
+            "options": options,
+        })
+
+    return cleaned_fields
+
+
+def normalize_template_name(value):
+    """Return the case-insensitive uniqueness key for a template name."""
+    return " ".join(str(value or "").strip().split()).casefold()
+
+
+def get_template_owner_set(user_id, set_code):
+    """Build the template partition key for one user's set."""
+    return f"{user_id}#{normalize_set_code(set_code)}"
+
+
+def get_template_key(user_id, set_code, name):
+    """Build the primary DynamoDB key for a named template."""
+    return {
+        "ownerSet": get_template_owner_set(user_id, set_code),
+        "normalizedName": normalize_template_name(name),
+    }
+
+
+def get_template_item_by_id(user_id, template_id):
+    """Return a template through its stable user-scoped id index."""
+    normalized_template_id = str(template_id or "").strip()
+    if not normalized_template_id:
+        raise ValueError("Template id is required.")
+    response = TEMPLATES_TABLE.query(
+        IndexName=TEMPLATE_ID_INDEX,
+        KeyConditionExpression=Key("userId").eq(user_id) & Key("templateId").eq(normalized_template_id),
+        Limit=1,
+    )
+    items = response.get("Items", [])
+    return items[0] if items else None
+
+
+def get_template_image_key(template):
+    """Return the S3 key below the set's templates subfolder."""
+    set_code = safe_s3_key_part(
+        normalize_set_code(template.get("setCode")),
+        DEFAULT_SET["code"],
+    )
+    template_id = safe_s3_key_part(template.get("templateId"), "template")
+    return f"{set_code}/templates/{template_id}.png"
+
+
+def decode_template_image(body):
+    """Decode the rendered template preview PNG sent by the browser."""
+    image_value = str(body.get(TEMPLATE_IMAGE_FIELD) or "")
+    if not image_value:
+        raise ValueError("Template preview image is required.")
+    prefix = "data:image/png;base64,"
+    if not image_value.startswith(prefix):
+        raise ValueError("Template preview must be a PNG data URL.")
+    try:
+        image_bytes = base64.b64decode(image_value[len(prefix):], validate=True)
+    except binascii.Error:
+        raise ValueError("Template preview could not be decoded.")
+    if len(image_bytes) > MAX_TEMPLATE_IMAGE_BYTES:
+        raise ValueError("Template preview is larger than 7 MB.")
+    return image_bytes
+
+
+def put_template_image(user_id, template, image_bytes):
+    """Store a template preview in the user's existing card-preview bucket."""
+    bucket_name = ensure_user_bucket(user_id)
+    image_key = get_template_image_key(template)
+    S3.put_object(
+        Bucket=bucket_name,
+        Key=image_key,
+        Body=image_bytes,
+        CacheControl="no-cache, no-store, must-revalidate",
+        ContentType="image/png",
+        ServerSideEncryption="AES256",
+    )
+    template["imageBucket"] = bucket_name
+    template["imageKey"] = image_key
+
+
+def delete_template_image(template):
+    """Delete a stored template preview when present."""
+    bucket_name = template.get("imageBucket")
+    image_key = template.get("imageKey") or get_template_image_key(template)
+    if bucket_name and image_key:
+        S3.delete_object(Bucket=bucket_name, Key=image_key)
+
+
+def add_template_image_url(template):
+    """Attach a short-lived preview URL to one template response."""
+    if template and template.get("imageBucket") and template.get("imageKey"):
+        template["imageUrl"] = get_card_signed_image_url(template)
+    return template
+
+
+def clean_template_record(user_id, body, template_id=None, created_at=None):
+    """Validate template identity, set relationship, fields, and preview."""
+    name = " ".join(str(body.get("name") or "").strip().split())
+    if not name:
+        raise ValueError("Template name is required.")
+    if len(name) > 80:
+        raise ValueError("Template names must be 80 characters or fewer.")
+    normalized_name = normalize_template_name(name)
+    set_code = normalize_set_code(body.get("setCode"))
+    validate_card_set(user_id, set_code)
+    now = int(time.time())
+    return {
+        "ownerSet": get_template_owner_set(user_id, set_code),
+        "normalizedName": normalized_name,
+        "userId": user_id,
+        "templateId": template_id or str(uuid.uuid4()),
+        "setCode": set_code,
+        "name": name,
+        "sections": clean_template_sections(body),
+        "customFields": clean_template_custom_fields(body),
+        "createdAt": created_at or now,
+        "updatedAt": now,
+    }
+
+
+def template_summary(template):
+    """Return the fields used by a set's template gallery."""
+    summary = {
+        "templateId": template.get("templateId", ""),
+        "setCode": template.get("setCode", DEFAULT_SET["code"]),
+        "name": template.get("name", "Untitled Template"),
+        "updatedAt": template.get("updatedAt", 0),
+        "imageBucket": template.get("imageBucket", ""),
+        "imageKey": template.get("imageKey", ""),
+    }
+    return add_template_image_url(summary)
+
+
+def list_templates(user_id, event):
+    """Return all templates for the requested user-owned set."""
+    params = event.get("queryStringParameters") or {}
+    set_code = normalize_set_code(params.get("set") or params.get("setCode"))
+    validate_card_set(user_id, set_code)
+    response = TEMPLATES_TABLE.query(
+        KeyConditionExpression=Key("ownerSet").eq(get_template_owner_set(user_id, set_code))
+    )
+    templates = [template_summary(item) for item in response.get("Items", [])]
+    templates.sort(key=lambda item: item.get("name", "").casefold())
+    return {"templates": templates}
+
+
+def get_template(user_id, template_id):
+    """Return one full template by stable id."""
+    item = get_template_item_by_id(user_id, template_id)
+    if not item:
+        raise ValueError("Template not found.")
+    return {"template": add_template_image_url(item)}
+
+
+def create_template(user_id, body):
+    """Create a uniquely named template and its S3 preview."""
+    image_bytes = decode_template_image(body)
+    item = clean_template_record(user_id, body)
+    key = get_template_key(user_id, item["setCode"], item["name"])
+    if TEMPLATES_TABLE.get_item(Key=key).get("Item"):
+        raise ValueError("A template with this name already exists in the selected set.")
+
+    put_template_image(user_id, item, image_bytes)
+    try:
+        TEMPLATES_TABLE.put_item(
+            Item=item,
+            ConditionExpression="attribute_not_exists(ownerSet) AND attribute_not_exists(normalizedName)",
+        )
+    except TEMPLATES_TABLE.meta.client.exceptions.ConditionalCheckFailedException:
+        delete_template_image(item)
+        raise ValueError("A template with this name already exists in the selected set.")
+    return {"template": add_template_image_url(item)}
+
+
+def save_template(user_id, template_id, body):
+    """Update, rename, or move an existing template while preserving its id."""
+    existing_item = get_template_item_by_id(user_id, template_id)
+    if not existing_item:
+        raise ValueError("Template not found.")
+
+    image_bytes = decode_template_image(body)
+    item = clean_template_record(
+        user_id,
+        body,
+        template_id=existing_item["templateId"],
+        created_at=existing_item.get("createdAt"),
+    )
+    old_key = {
+        "ownerSet": existing_item["ownerSet"],
+        "normalizedName": existing_item["normalizedName"],
+    }
+    new_key = {
+        "ownerSet": item["ownerSet"],
+        "normalizedName": item["normalizedName"],
+    }
+    duplicate = TEMPLATES_TABLE.get_item(Key=new_key).get("Item")
+    if duplicate and duplicate.get("templateId") != template_id:
+        raise ValueError("A template with this name already exists in the selected set.")
+
+    put_template_image(user_id, item, image_bytes)
+    if old_key == new_key:
+        TEMPLATES_TABLE.put_item(Item=item)
+    else:
+        try:
+            DYNAMODB_CLIENT.transact_write_items(
+                TransactItems=[
+                    {
+                        "Delete": {
+                            "TableName": TEMPLATES_TABLE_NAME,
+                            "Key": serialize_dynamodb_item(old_key),
+                            "ConditionExpression": "attribute_exists(ownerSet) AND attribute_exists(normalizedName)",
+                        }
+                    },
+                    {
+                        "Put": {
+                            "TableName": TEMPLATES_TABLE_NAME,
+                            "Item": serialize_dynamodb_item(item),
+                            "ConditionExpression": "attribute_not_exists(ownerSet) AND attribute_not_exists(normalizedName)",
+                        }
+                    },
+                ]
+            )
+        except ClientError as exc:
+            if item.get("imageKey") != existing_item.get("imageKey"):
+                delete_template_image(item)
+            if exc.response.get("Error", {}).get("Code") == "TransactionCanceledException":
+                raise ValueError("A template with this name already exists in the selected set.")
+            raise
+
+    if (
+        existing_item.get("imageBucket")
+        and existing_item.get("imageKey")
+        and existing_item.get("imageKey") != item.get("imageKey")
+    ):
+        delete_template_image(existing_item)
+    return {"template": add_template_image_url(item)}
+
+
 def clean_set(body):
     """Validate and normalize a card-set request body."""
     code = normalize_set_code(body.get("code"))
@@ -1552,6 +1994,25 @@ def clear_set_cards_and_assets(user_id, set_code):
     return deleted_cards
 
 
+def clear_set_templates_and_assets(user_id, set_code):
+    """Delete every saved template and preview that belongs to a set."""
+    owner_set = get_template_owner_set(user_id, set_code)
+    response = TEMPLATES_TABLE.query(
+        KeyConditionExpression=Key("ownerSet").eq(owner_set)
+    )
+    deleted_templates = 0
+    for template in response.get("Items", []):
+        delete_template_image(template)
+        TEMPLATES_TABLE.delete_item(
+            Key={
+                "ownerSet": template["ownerSet"],
+                "normalizedName": template["normalizedName"],
+            }
+        )
+        deleted_templates += 1
+    return deleted_templates
+
+
 def delete_set(user_id, set_code):
     """Delete a non-default set and every card/image in that set."""
     normalized_set_code = normalize_set_code(set_code)
@@ -1561,10 +2022,16 @@ def delete_set(user_id, set_code):
         raise ValueError("Card set does not exist.")
 
     deleted_cards = clear_set_cards_and_assets(user_id, normalized_set_code)
+    deleted_templates = clear_set_templates_and_assets(user_id, normalized_set_code)
 
     SETS_TABLE.delete_item(Key={"userId": user_id, "code": normalized_set_code})
     sync_user_bucket_public_policy(user_id)
-    return {"deleted": True, "setCode": normalized_set_code, "deletedCards": deleted_cards}
+    return {
+        "deleted": True,
+        "setCode": normalized_set_code,
+        "deletedCards": deleted_cards,
+        "deletedTemplates": deleted_templates,
+    }
 
 
 def save_set(user_id, body):
