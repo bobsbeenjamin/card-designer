@@ -539,6 +539,12 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /art/generate
             Method: POST
+        GenerateTemplateBackground:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /templates/background/generate
+            Method: POST
         GetOpenAiKey:
           Type: HttpApi
           Properties:

@@ -20,6 +20,10 @@ const state = {
   editingCustomFieldName: "",
   templateNavigationPending: false,
   allowPageExit: false,
+  framePreviewObjectUrl: "",
+  framePreviewSourceUrl: "",
+  framePreviewLoadToken: 0,
+  backgroundGenerating: false,
   dirty: false,
 };
 
@@ -91,6 +95,12 @@ const elements = {
   renameFieldInput: document.querySelector("#renameFieldInput"),
   renameFieldStatus: document.querySelector("#renameFieldStatus"),
   cancelRenameFieldButton: document.querySelector("#cancelRenameFieldButton"),
+  generateTemplateBackgroundDialog: document.querySelector("#generateTemplateBackgroundDialog"),
+  generateTemplateBackgroundForm: document.querySelector("#generateTemplateBackgroundForm"),
+  generateTemplateBackgroundPrompt: document.querySelector("#generateTemplateBackgroundPrompt"),
+  generateTemplateBackgroundStatus: document.querySelector("#generateTemplateBackgroundStatus"),
+  confirmGenerateTemplateBackgroundButton: document.querySelector("#confirmGenerateTemplateBackgroundButton"),
+  cancelGenerateTemplateBackgroundButton: document.querySelector("#cancelGenerateTemplateBackgroundButton"),
   templateNameChangeDialog: document.querySelector("#templateNameChangeDialog"),
   templateSetChangeDialog: document.querySelector("#templateSetChangeDialog"),
   usernameInput: document.querySelector("#usernameInput"),
@@ -296,6 +306,10 @@ function renderAuthUi() {
   elements.mySetsPanel.classList.toggle("hidden", !signedIn);
   elements.myTemplatesPanel.classList.toggle("hidden", !signedIn);
   elements.saveTemplateButton.disabled = !signedIn;
+  const generateBackgroundButton = elements.templateFields.querySelector(
+    "[data-template-action='generate-background']",
+  );
+  if (generateBackgroundButton) generateBackgroundButton.disabled = !signedIn || state.backgroundGenerating;
   elements.currentUserLabel.textContent = state.email || getJwtPayload(state.idToken).email || "Account";
   if (!signedIn) closeAccountMenu();
 }
@@ -450,6 +464,27 @@ function renderTemplateFields() {
       heading.append(label, actions);
       wrapper.append(heading, createFieldInput(field));
       fieldset.append(wrapper);
+    }
+    if (section.id === "cardFrame") {
+      const generateRow = document.createElement("div");
+      generateRow.className = "generate-image-row";
+      const generateButton = document.createElement("button");
+      generateButton.className = "button primary";
+      generateButton.type = "button";
+      generateButton.dataset.templateAction = "generate-background";
+      generateButton.title = "Generate Background Image or Pattern";
+      generateButton.setAttribute("aria-label", "Generate Background Image or Pattern");
+      generateButton.textContent = "Generate Background";
+      generateButton.disabled = state.backgroundGenerating
+        || !state.idToken
+        || isJwtExpired(state.idToken);
+      const spinner = document.createElement("span");
+      spinner.className = "inline-spinner hidden";
+      spinner.dataset.templateBackgroundSpinner = "";
+      spinner.setAttribute("aria-label", "Generating background image");
+      spinner.setAttribute("role", "status");
+      generateRow.append(generateButton, spinner);
+      fieldset.append(generateRow);
     }
     elements.templateFields.append(fieldset);
   }
@@ -777,6 +812,156 @@ function normalizeSavedSections(savedSections) {
   return normalized;
 }
 
+function revokeTemplateFramePreviewUrl() {
+  if (state.framePreviewObjectUrl) {
+    URL.revokeObjectURL(state.framePreviewObjectUrl);
+    state.framePreviewObjectUrl = "";
+  }
+}
+
+function getAbsoluteTemplateImageUrl(source) {
+  const imageUrl = String(source || "").trim();
+  if (!imageUrl || imageUrl.startsWith("data:") || imageUrl.startsWith("blob:")) return imageUrl;
+  if (imageUrl.startsWith("/")) return `${backendConfig.apiUrl}${imageUrl}`;
+  try {
+    return new URL(imageUrl, window.location.href).href;
+  } catch (error) {
+    return imageUrl;
+  }
+}
+
+function clearTemplateFramePreview() {
+  state.framePreviewLoadToken += 1;
+  state.framePreviewSourceUrl = "";
+  revokeTemplateFramePreviewUrl();
+  elements.cardFrameImage.removeAttribute("src");
+}
+
+async function setTemplateFramePreview(source) {
+  const sourceUrl = String(source || "").trim();
+  if (!sourceUrl) {
+    clearTemplateFramePreview();
+    return;
+  }
+  if (sourceUrl.startsWith("data:") || sourceUrl.startsWith("blob:")) {
+    state.framePreviewLoadToken += 1;
+    state.framePreviewSourceUrl = sourceUrl;
+    revokeTemplateFramePreviewUrl();
+    elements.cardFrameImage.src = sourceUrl;
+    await elements.cardFrameImage.decode().catch(() => {});
+    return;
+  }
+
+  const loadToken = ++state.framePreviewLoadToken;
+  const blob = await fetchImageBlob(getAbsoluteTemplateImageUrl(sourceUrl));
+  if (!blob.type.startsWith("image/")) throw new Error("Template background did not return an image.");
+  if (loadToken !== state.framePreviewLoadToken) return;
+  const objectUrl = URL.createObjectURL(blob);
+  revokeTemplateFramePreviewUrl();
+  state.framePreviewObjectUrl = objectUrl;
+  state.framePreviewSourceUrl = sourceUrl;
+  elements.cardFrameImage.src = objectUrl;
+  await elements.cardFrameImage.decode().catch(() => {});
+}
+
+function greatestCommonDivisor(first, second) {
+  let left = Math.abs(Math.round(first));
+  let right = Math.abs(Math.round(second));
+  while (right) {
+    [left, right] = [right, left % right];
+  }
+  return left || 1;
+}
+
+function getTemplateCardAspectRatio() {
+  const rootStyle = getComputedStyle(document.documentElement);
+  const configuredRatio = rootStyle.getPropertyValue("--card-ratio").trim()
+    || getComputedStyle(elements.card).aspectRatio;
+  const configuredMatch = configuredRatio.match(/^([\d.]+)\s*\/\s*([\d.]+)$/);
+  if (configuredMatch) {
+    const width = Math.max(1, Math.round(Number(configuredMatch[1]) * 1000));
+    const height = Math.max(1, Math.round(Number(configuredMatch[2]) * 1000));
+    const divisor = greatestCommonDivisor(width, height);
+    return `${width / divisor}:${height / divisor}`;
+  }
+
+  const bounds = elements.card.getBoundingClientRect();
+  const width = Math.max(1, Math.round(bounds.width));
+  const height = Math.max(1, Math.round(bounds.height));
+  const divisor = greatestCommonDivisor(width, height);
+  return `${width / divisor}:${height / divisor}`;
+}
+
+function getGenerateBackgroundControls() {
+  return {
+    button: elements.templateFields.querySelector("[data-template-action='generate-background']"),
+    spinner: elements.templateFields.querySelector("[data-template-background-spinner]"),
+  };
+}
+
+function setGenerateBackgroundBusy(busy) {
+  state.backgroundGenerating = busy;
+  const { button, spinner } = getGenerateBackgroundControls();
+  const signedIn = Boolean(state.idToken) && !isJwtExpired(state.idToken);
+  if (button) button.disabled = busy || !signedIn;
+  if (spinner) spinner.classList.toggle("hidden", !busy);
+  elements.confirmGenerateTemplateBackgroundButton.disabled = busy;
+  elements.cancelGenerateTemplateBackgroundButton.disabled = busy;
+}
+
+function openGenerateTemplateBackgroundDialog() {
+  if (!getField("frameUrl")) {
+    setTemplateStatus("The Image URL field is required to generate a background.");
+    return;
+  }
+  elements.generateTemplateBackgroundForm.reset();
+  elements.generateTemplateBackgroundStatus.textContent = "";
+  elements.generateTemplateBackgroundDialog.showModal();
+  elements.generateTemplateBackgroundPrompt.focus();
+}
+
+function closeGenerateTemplateBackgroundDialog() {
+  if (!state.backgroundGenerating) elements.generateTemplateBackgroundDialog.close();
+}
+
+async function generateTemplateBackground() {
+  if (!elements.generateTemplateBackgroundForm.reportValidity()) return;
+  const prompt = elements.generateTemplateBackgroundPrompt.value.trim();
+  if (!prompt) return;
+
+  setGenerateBackgroundBusy(true);
+  elements.generateTemplateBackgroundStatus.textContent = "Generating and saving background...";
+  try {
+    const data = await apiFetch("/templates/background/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        prompt,
+        aspectRatio: getTemplateCardAspectRatio(),
+        setCode: elements.templateSetInput.value || "DEFAULT",
+        templateName: elements.templateNameInput.value.trim() || "Untitled Template",
+        templateId: state.currentTemplateId,
+        existingFrameUrl: getFieldValue("frameUrl"),
+      }),
+    });
+    const frameUrl = getAbsoluteTemplateImageUrl(data.frameUrl);
+    if (!frameUrl) throw new Error("The image provider did not return a saved background.");
+
+    const frameField = getField("frameUrl");
+    frameField.value = frameUrl;
+    const frameInput = elements.templateFields.querySelector("[data-field-id='frameUrl']");
+    if (frameInput) frameInput.value = frameUrl;
+    await setTemplateFramePreview(frameUrl);
+    updateCardPreview();
+    markDirty();
+    elements.generateTemplateBackgroundDialog.close();
+    setTemplateStatus("Background generated and stored. Save the template to keep its Image URL.");
+  } catch (error) {
+    elements.generateTemplateBackgroundStatus.textContent = error.message;
+  } finally {
+    setGenerateBackgroundBusy(false);
+  }
+}
+
 function updateCardPreview() {
   const type = getFieldValue("type", state.defaults.type);
   const subtype = getFieldValue("subtype", state.defaults.subtype);
@@ -822,8 +1007,8 @@ function updateCardPreview() {
   elements.loyaltyStatLabel.textContent = getFieldLabel("loyalty", "Loyalty").toUpperCase();
 
   const frameUrl = getFieldValue("frameUrl").trim();
-  if (frameUrl) elements.cardFrameImage.src = frameUrl;
-  else elements.cardFrameImage.removeAttribute("src");
+  if (!frameUrl) clearTemplateFramePreview();
+  else if (state.framePreviewSourceUrl !== frameUrl) elements.cardFrameImage.src = getAbsoluteTemplateImageUrl(frameUrl);
   elements.cardFrameImage.style.objectFit = getFieldValue("frameFit", state.defaults.frameFit || "fill");
 
   document.documentElement.style.setProperty("--frame", getFieldValue("frame", state.defaults.frame || "#263a31"));
@@ -1043,6 +1228,12 @@ async function loadTemplateById(templateId) {
   try {
     const data = await apiFetch(`/templates/${encodeURIComponent(templateId)}`);
     setLoadedTemplate(data.template);
+    let backgroundLoadError = "";
+    try {
+      await setTemplateFramePreview(getFieldValue("frameUrl"));
+    } catch (error) {
+      backgroundLoadError = error.message;
+    }
     const url = new URL(window.location.href);
     url.searchParams.set("template", data.template.templateId);
     url.searchParams.delete("set");
@@ -1055,7 +1246,9 @@ async function loadTemplateById(templateId) {
       setTemplateStatus(`${data.template.name} loaded, but the template list could not be refreshed.`);
       return true;
     }
-    setTemplateStatus(`${data.template.name} loaded.`);
+    setTemplateStatus(backgroundLoadError
+      ? `${data.template.name} loaded. ${backgroundLoadError}`
+      : `${data.template.name} loaded.`);
     return true;
   } catch (error) {
     setTemplateStatus(error.message);
@@ -1426,6 +1619,11 @@ function handleFieldInput(event) {
 }
 
 function handleFieldAction(event) {
+  const templateAction = event.target.closest("[data-template-action]");
+  if (templateAction?.dataset.templateAction === "generate-background") {
+    openGenerateTemplateBackgroundDialog();
+    return;
+  }
   const button = event.target.closest("[data-action][data-field-id]");
   if (!button) return;
   if (button.dataset.action === "rename") openRenameField(button.dataset.fieldId);
@@ -1482,6 +1680,14 @@ function attachEvents() {
   elements.templateForm.addEventListener("submit", (event) => event.preventDefault());
   elements.templateFields.addEventListener("input", handleFieldInput);
   elements.templateFields.addEventListener("click", handleFieldAction);
+  elements.generateTemplateBackgroundForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    generateTemplateBackground();
+  });
+  elements.cancelGenerateTemplateBackgroundButton.addEventListener("click", closeGenerateTemplateBackgroundDialog);
+  elements.generateTemplateBackgroundDialog.addEventListener("cancel", (event) => {
+    if (state.backgroundGenerating) event.preventDefault();
+  });
   elements.renameFieldForm.addEventListener("submit", (event) => {
     event.preventDefault();
     renameField();
@@ -1498,6 +1704,7 @@ function attachEvents() {
   });
   document.addEventListener("click", handleTemplatePageLink);
   window.addEventListener("beforeunload", warnBeforeUnloadingTemplatePage);
+  window.addEventListener("pagehide", revokeTemplateFramePreviewUrl);
 }
 
 async function loadDefaults() {

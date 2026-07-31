@@ -214,6 +214,22 @@
       </form>
     </dialog>
 
+    <dialog id="generateTemplateBackgroundDialog" class="modal-dialog" aria-labelledby="generateTemplateBackgroundTitle">
+      <form id="generateTemplateBackgroundForm" class="modal-card">
+        <h2 id="generateTemplateBackgroundTitle">Generate Background Image or Pattern</h2>
+        <p>Enter a prompt to generate a background image or pattern for this template</p>
+        <label>
+          <span>Prompt</span>
+          <textarea id="generateTemplateBackgroundPrompt" rows="4" maxlength="2000" required></textarea>
+        </label>
+        <p id="generateTemplateBackgroundStatus" class="status-line" aria-live="polite"></p>
+        <div class="modal-actions two-up">
+          <button id="confirmGenerateTemplateBackgroundButton" class="button primary" type="submit">Generate Image</button>
+          <button id="cancelGenerateTemplateBackgroundButton" class="button subtle" type="button">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="customFieldDialog" class="modal-dialog custom-field-dialog" aria-labelledby="customFieldDialogTitle">
       <form id="customFieldForm" class="modal-card custom-field-modal-card">
         <h2 id="customFieldDialogTitle">New Template Field</h2>

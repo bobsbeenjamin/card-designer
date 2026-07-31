@@ -113,6 +113,7 @@ browser to Cognito. All other non-public routes require
 - `DELETE /cards/{cardId}`
 - `GET /templates?set=<setCode>`
 - `POST /templates`
+- `POST /templates/background/generate`
 - `GET /templates/{templateId}`
 - `PUT /templates/{templateId}`
 - `GET /art`
@@ -133,7 +134,11 @@ ordered section and field definitions, editable labels, current default values,
 custom field definitions (type, position, size, color, and dropdown options),
 and S3 preview metadata. Preview PNGs use
 `<setCode>/templates/<templateId>.png` in the same user bucket as card previews.
-Deleting a set also deletes all of its templates and preview images.
+Generated template backgrounds use
+`<userHash>/<setCode>/templates/<templateId>.png` in the existing private
+card-art bucket. Regeneration overwrites the stable object and returns a
+versioned URL to break browser caches. Deleting a set also deletes all of its
+templates, preview images, and app-managed template backgrounds.
 
 ## Existing user migration
 

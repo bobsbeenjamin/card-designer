@@ -188,6 +188,9 @@ def handler(event, _context):
         if method == "POST" and route_key == "POST /art/generate":
             return ok(generate_art(user_id, read_body(event)), status=201)
 
+        if method == "POST" and route_key == "POST /templates/background/generate":
+            return ok(generate_template_background(user_id, read_body(event)), status=201)
+
         if method == "GET" and route_key == "GET /settings/openai-key":
             return ok(get_openai_key_status(user_id))
 
@@ -1061,6 +1064,91 @@ def generate_art(user_id, body):
     return {"artKey": art_key, "artUrl": get_saved_art_url(art_key), "prompt": prompt, "provider": provider}
 
 
+def normalize_template_aspect_ratio(value):
+    """Validate and reduce a browser-calculated template card aspect ratio."""
+    parts = str(value or "").strip().split(":")
+    if len(parts) != 2:
+        raise ValueError("Template card aspect ratio is required.")
+    try:
+        width, height = (int(part) for part in parts)
+    except ValueError:
+        raise ValueError("Template card aspect ratio is invalid.")
+    if width < 1 or height < 1 or width > 100000 or height > 100000:
+        raise ValueError("Template card aspect ratio is invalid.")
+
+    left, right = width, height
+    while right:
+        left, right = right, left % right
+    divisor = left or 1
+    return f"{width // divisor}:{height // divisor}"
+
+
+def build_template_background_prompt(body):
+    """Append the template card aspect ratio to the user's background prompt."""
+    prompt = str(body.get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("Enter a prompt for the template background.")
+    if len(prompt) > 2000:
+        raise ValueError("Template background prompts must be 2000 characters or fewer.")
+    aspect_ratio = normalize_template_aspect_ratio(body.get("aspectRatio"))
+    return f"{prompt.rstrip('; ')}; aspect ratio {aspect_ratio}"
+
+
+def get_template_background_key(user_id, set_code, body):
+    """Build a stable frame-bucket key for a template background."""
+    user_prefix = get_art_user_prefix(user_id)
+    existing_key = get_saved_frame_key_from_url(body.get("existingFrameUrl"))
+    existing_parts = existing_key.split("/")
+    owned_template_key = (
+        existing_key.startswith(f"{user_prefix}/")
+        and len(existing_parts) == 4
+        and existing_parts[-2] == "templates"
+    )
+
+    storage_id = ""
+    old_key = existing_key if owned_template_key else ""
+    if owned_template_key:
+        storage_id = os.path.splitext(existing_parts[-1])[0]
+    if not storage_id and str(body.get("templateId") or "").strip():
+        template = get_template_item_by_id(user_id, body.get("templateId"))
+        if template:
+            storage_id = template["templateId"]
+    if not storage_id:
+        storage_id = str(uuid.uuid4())
+
+    set_part = safe_s3_key_part(normalize_set_code(set_code), DEFAULT_SET["code"])
+    storage_part = safe_s3_key_part(storage_id, "template-background")
+    return f"{user_prefix}/{set_part}/templates/{storage_part}.png", old_key
+
+
+def generate_template_background(user_id, body):
+    """Generate, store, and cache-bust a template frame background."""
+    set_code = normalize_set_code(body.get("setCode"))
+    validate_card_set(user_id, set_code)
+    prompt = build_template_background_prompt(body)
+    image_bytes, provider = generate_provider_image(user_id, body, prompt)
+    if len(image_bytes) > MAX_ART_IMAGE_BYTES:
+        raise ValueError("Generated template background is larger than 7 MB.")
+
+    frame_key, old_frame_key = get_template_background_key(user_id, set_code, body)
+    S3.put_object(
+        Bucket=ART_BUCKET_NAME,
+        Key=frame_key,
+        Body=image_bytes,
+        CacheControl="no-cache, no-store, must-revalidate",
+        ContentType="image/png",
+        ServerSideEncryption="AES256",
+    )
+    if old_frame_key and old_frame_key != frame_key:
+        S3.delete_object(Bucket=ART_BUCKET_NAME, Key=old_frame_key)
+    return {
+        "frameKey": frame_key,
+        "frameUrl": get_saved_frame_url(frame_key),
+        "prompt": prompt,
+        "provider": provider,
+    }
+
+
 def get_saved_art(user_id, event):
     """Return saved artwork from the private art bucket."""
     art_key = unquote_plus((event.get("queryStringParameters") or {}).get("key", "")).strip()
@@ -1090,8 +1178,15 @@ def get_saved_art(user_id, event):
 def get_saved_frame(user_id, event):
     """Return a saved card frame background from the private art bucket."""
     frame_key = unquote_plus((event.get("queryStringParameters") or {}).get("key", "")).strip()
-    user_prefix = f"{get_art_user_prefix(user_id)}/frames/"
-    if not frame_key.startswith(user_prefix):
+    user_prefix = get_art_user_prefix(user_id)
+    key_parts = frame_key.split("/")
+    is_card_frame = frame_key.startswith(f"{user_prefix}/frames/")
+    is_template_background = (
+        frame_key.startswith(f"{user_prefix}/")
+        and len(key_parts) == 4
+        and key_parts[-2] == "templates"
+    )
+    if not is_card_frame and not is_template_background:
         raise PermissionError()
     try:
         response = S3.get_object(Bucket=ART_BUCKET_NAME, Key=frame_key)
@@ -1798,6 +1893,23 @@ def delete_template_image(template):
         S3.delete_object(Bucket=bucket_name, Key=image_key)
 
 
+def delete_template_background(user_id, template):
+    """Delete an app-managed frame background referenced by a template."""
+    frame_url = ""
+    for section in template.get("sections") or []:
+        for field in section.get("fields") or []:
+            if field.get("id") == "frameUrl":
+                frame_url = field.get("value")
+                break
+        if frame_url:
+            break
+    frame_key = get_saved_frame_key_from_url(frame_url)
+    expected_prefix = f"{get_art_user_prefix(user_id)}/"
+    parts = frame_key.split("/")
+    if frame_key.startswith(expected_prefix) and len(parts) == 4 and parts[-2] == "templates":
+        S3.delete_object(Bucket=ART_BUCKET_NAME, Key=frame_key)
+
+
 def add_template_image_url(template):
     """Attach a short-lived preview URL to one template response."""
     if template and template.get("imageBucket") and template.get("imageKey"):
@@ -2003,6 +2115,7 @@ def clear_set_templates_and_assets(user_id, set_code):
     deleted_templates = 0
     for template in response.get("Items", []):
         delete_template_image(template)
+        delete_template_background(user_id, template)
         TEMPLATES_TABLE.delete_item(
             Key={
                 "ownerSet": template["ownerSet"],
