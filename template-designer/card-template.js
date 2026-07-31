@@ -143,7 +143,14 @@ const fieldSections = [
     id: "numbers",
     label: "Numbers",
     fields: [
-      { id: "cost", label: "Cost", type: "number", min: 0, max: 99 },
+      {
+        id: "cost",
+        label: "Cost",
+        type: "number",
+        min: 0,
+        max: 99,
+        mustBeNumber: true,
+      },
       {
         id: "statMode",
         label: "Stat mode",
@@ -214,7 +221,13 @@ const fieldSections = [
     label: "Footer",
     fields: [
       { id: "artist", label: "Artist name", type: "text", maxLength: 40 },
-      { id: "collector", label: "Collector number", type: "text", maxLength: 16 },
+      {
+        id: "collector",
+        label: "Collector number",
+        type: "text",
+        maxLength: 16,
+        canEdit: false,
+      },
       {
         id: "rarity",
         label: "Rarity",
@@ -406,9 +419,11 @@ function createFieldInput(field) {
     if (field.min !== undefined) input.min = field.min;
     if (field.max !== undefined) input.max = field.max;
     if (field.maxLength) input.maxLength = field.maxLength;
+    if (field.id === "cost" && field.type === "text") input.maxLength = 36;
   }
 
   input.value = field.value;
+  if (field.id === "collector") input.readOnly = !field.canEdit;
   input.dataset.fieldId = field.id;
   input.setAttribute("aria-label", field.label);
   return input;
@@ -416,7 +431,7 @@ function createFieldInput(field) {
 
 function createFieldAction(field, action, title) {
   const button = document.createElement("button");
-  button.className = `template-field-action ${action === "delete" ? "delete" : ""}`.trim();
+  button.className = `template-field-action ${action.startsWith("delete") ? "delete" : ""}`.trim();
   button.type = "button";
   button.dataset.action = action;
   button.dataset.fieldId = field.id;
@@ -430,6 +445,84 @@ function createFieldAction(field, action, title) {
   return button;
 }
 
+function createFieldCheckbox(field, property, labelText) {
+  const label = document.createElement("label");
+  label.className = "template-field-setting";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = Boolean(field[property]);
+  checkbox.dataset.templateFieldSetting = property;
+  checkbox.dataset.configFieldId = field.id;
+  const text = document.createElement("span");
+  text.textContent = labelText;
+  label.append(checkbox, text);
+  return label;
+}
+
+function createSelectOptionEditor(field) {
+  const editor = document.createElement("div");
+  editor.className = "template-option-editor";
+
+  const list = document.createElement("div");
+  list.className = "template-option-list";
+  for (const option of field.options || []) {
+    const row = document.createElement("div");
+    row.className = "template-option-row";
+    const label = document.createElement("span");
+    label.textContent = option.label;
+    row.append(label);
+
+    const deleteButton = createFieldAction(
+      { id: field.id, label: option.label },
+      "delete-option",
+      "Delete dropdown item",
+    );
+    deleteButton.dataset.optionValue = option.value;
+    row.append(deleteButton);
+    list.append(row);
+  }
+
+  const addRow = document.createElement("div");
+  addRow.className = "template-option-add-row";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = 60;
+  input.placeholder = "New dropdown item";
+  input.dataset.optionInputFor = field.id;
+  input.setAttribute("aria-label", `New ${field.label} dropdown item`);
+  const addButton = document.createElement("button");
+  addButton.className = "button subtle";
+  addButton.type = "button";
+  addButton.dataset.templateAction = "add-option";
+  addButton.dataset.configFieldId = field.id;
+  addButton.innerHTML = '<span class="plus-icon" aria-hidden="true"></span><span>Add item</span>';
+  addRow.append(input, addButton);
+  editor.append(list, addRow);
+  return editor;
+}
+
+function createGenerateBackgroundRow() {
+  const generateRow = document.createElement("div");
+  generateRow.className = "generate-image-row";
+  const generateButton = document.createElement("button");
+  generateButton.className = "button primary";
+  generateButton.type = "button";
+  generateButton.dataset.templateAction = "generate-background";
+  generateButton.title = "Generate Background Image or Pattern";
+  generateButton.setAttribute("aria-label", "Generate Background Image or Pattern");
+  generateButton.textContent = "Generate Background";
+  generateButton.disabled = state.backgroundGenerating
+    || !state.idToken
+    || isJwtExpired(state.idToken);
+  const spinner = document.createElement("span");
+  spinner.className = "inline-spinner hidden";
+  spinner.dataset.templateBackgroundSpinner = "";
+  spinner.setAttribute("aria-label", "Generating background image");
+  spinner.setAttribute("role", "status");
+  generateRow.append(generateButton, spinner);
+  return generateRow;
+}
+
 function renderTemplateFields() {
   elements.templateFields.replaceChildren();
   for (const section of state.sections) {
@@ -437,6 +530,8 @@ function renderTemplateFields() {
     const legend = document.createElement("legend");
     legend.textContent = section.label;
     fieldset.append(legend);
+
+    if (section.id === "cardFrame") fieldset.append(createGenerateBackgroundRow());
 
     if (!section.fields.length) {
       const empty = document.createElement("p");
@@ -463,28 +558,16 @@ function renderTemplateFields() {
       );
       heading.append(label, actions);
       wrapper.append(heading, createFieldInput(field));
+      if (field.id === "cost") {
+        wrapper.append(createFieldCheckbox(field, "mustBeNumber", "Must be number"));
+      }
+      if (field.id === "collector") {
+        wrapper.append(createFieldCheckbox(field, "canEdit", "Can edit"));
+      }
+      if (field.id === "statMode" || field.id === "rarity") {
+        wrapper.append(createSelectOptionEditor(field));
+      }
       fieldset.append(wrapper);
-    }
-    if (section.id === "cardFrame") {
-      const generateRow = document.createElement("div");
-      generateRow.className = "generate-image-row";
-      const generateButton = document.createElement("button");
-      generateButton.className = "button primary";
-      generateButton.type = "button";
-      generateButton.dataset.templateAction = "generate-background";
-      generateButton.title = "Generate Background Image or Pattern";
-      generateButton.setAttribute("aria-label", "Generate Background Image or Pattern");
-      generateButton.textContent = "Generate Background";
-      generateButton.disabled = state.backgroundGenerating
-        || !state.idToken
-        || isJwtExpired(state.idToken);
-      const spinner = document.createElement("span");
-      spinner.className = "inline-spinner hidden";
-      spinner.dataset.templateBackgroundSpinner = "";
-      spinner.setAttribute("aria-label", "Generating background image");
-      spinner.setAttribute("role", "status");
-      generateRow.append(generateButton, spinner);
-      fieldset.append(generateRow);
     }
     elements.templateFields.append(fieldset);
   }
@@ -784,6 +867,42 @@ function renderCustomFieldPreview() {
   }
 }
 
+function normalizeSavedSelectOptions(savedOptions, defaultOptions) {
+  if (!Array.isArray(savedOptions)) {
+    return (defaultOptions || []).map((option) => ({ ...option }));
+  }
+  const options = [];
+  const seenValues = new Set();
+  for (const savedOption of savedOptions.slice(0, 50)) {
+    const value = String(savedOption?.value || "").trim().slice(0, 80);
+    const label = String(savedOption?.label || "").trim().slice(0, 60);
+    const normalizedValue = value.toLowerCase();
+    if (!value || !label || seenValues.has(normalizedValue)) continue;
+    seenValues.add(normalizedValue);
+    const option = { value, label };
+    const fieldId = String(savedOption?.fieldId || "").trim();
+    if (fieldId) option.fieldId = fieldId;
+    options.push(option);
+  }
+  return options;
+}
+
+function normalizeSavedDynamicStatField(savedField) {
+  const fieldId = String(savedField?.id || "").trim();
+  if (!savedField?.dynamicStat || !fieldId.startsWith("stat_")) return null;
+  const label = String(savedField.label || "").trim().slice(0, 60);
+  if (!label) return null;
+  return {
+    id: fieldId,
+    label,
+    type: "number",
+    min: 0,
+    max: 99,
+    value: String(savedField.value ?? "0"),
+    dynamicStat: true,
+  };
+}
+
 function normalizeSavedSections(savedSections) {
   const defaultsBySection = new Map(createDefaultSections().map((section) => [section.id, section]));
   if (!Array.isArray(savedSections)) return [...defaultsBySection.values()];
@@ -796,12 +915,38 @@ function normalizeSavedSections(savedSections) {
     const fields = [];
     for (const savedField of Array.isArray(savedSection.fields) ? savedSection.fields : []) {
       const defaultField = fieldsById.get(savedField?.id);
-      if (!defaultField || fields.some((field) => field.id === defaultField.id)) continue;
-      fields.push({
+      if (!defaultField) {
+        if (defaultSection.id !== "numbers") continue;
+        const dynamicField = normalizeSavedDynamicStatField(savedField);
+        if (dynamicField && !fields.some((field) => field.id === dynamicField.id)) {
+          fields.push(dynamicField);
+        }
+        continue;
+      }
+      if (fields.some((field) => field.id === defaultField.id)) continue;
+      const normalizedField = {
         ...defaultField,
         label: String(savedField.label || defaultField.label).slice(0, 60),
         value: String(savedField.value ?? defaultField.value),
-      });
+      };
+      if (defaultField.id === "cost") {
+        normalizedField.mustBeNumber = typeof savedField.mustBeNumber === "boolean"
+          ? savedField.mustBeNumber
+          : true;
+        normalizedField.type = normalizedField.mustBeNumber ? "number" : "text";
+      }
+      if (defaultField.id === "collector") {
+        normalizedField.canEdit = typeof savedField.canEdit === "boolean"
+          ? savedField.canEdit
+          : false;
+      }
+      if (defaultField.id === "statMode" || defaultField.id === "rarity") {
+        normalizedField.options = normalizeSavedSelectOptions(savedField.options, defaultField.options);
+        if (!normalizedField.options.some((option) => option.value === normalizedField.value)) {
+          normalizedField.value = normalizedField.options[0]?.value || "";
+        }
+      }
+      fields.push(normalizedField);
     }
     normalized.push({ id: defaultSection.id, label: defaultSection.label, fields });
   }
@@ -992,19 +1137,26 @@ function updateCardPreview() {
   const artFit = getFieldValue("fit", state.defaults.fit || "cover");
   elements.previewArtwork.style.backgroundSize = artFit === "fill" ? "100% 100%" : artFit;
 
-  const showLoyalty = statMode === "loyalty" && hasLoyalty;
-  elements.card.classList.toggle("is-loyalty", showLoyalty);
-  elements.card.classList.toggle("is-statless", !showLoyalty && !hasAttack && !hasHealth);
-  elements.combatStats.classList.toggle("hidden", showLoyalty || (!hasAttack && !hasHealth));
+  const statModeField = getField("statMode");
+  const selectedStatOption = statModeField?.options?.find((option) => option.value === statMode);
+  const customStatField = selectedStatOption?.fieldId ? getField(selectedStatOption.fieldId) : null;
+  const showSingleStat = Boolean(customStatField) || (statMode === "loyalty" && hasLoyalty);
+  elements.card.classList.toggle("is-loyalty", showSingleStat);
+  elements.card.classList.toggle("is-statless", !showSingleStat && !hasAttack && !hasHealth);
+  elements.combatStats.classList.toggle("hidden", showSingleStat || (!hasAttack && !hasHealth));
   elements.attackStat.classList.toggle("hidden", !hasAttack);
   elements.healthStat.classList.toggle("hidden", !hasHealth);
-  elements.loyaltyStat.classList.toggle("hidden", !showLoyalty);
+  elements.loyaltyStat.classList.toggle("hidden", !showSingleStat);
   elements.cardAttack.textContent = getFieldValue("attack", state.defaults.attack || "0");
   elements.cardHealth.textContent = getFieldValue("health", state.defaults.health || "0");
-  elements.cardLoyalty.textContent = getFieldValue("loyalty", state.defaults.loyalty || "0");
+  elements.cardLoyalty.textContent = customStatField
+    ? customStatField.value
+    : getFieldValue("loyalty", state.defaults.loyalty || "0");
   elements.attackStatLabel.textContent = getFieldLabel("attack", "Attack").toUpperCase();
   elements.healthStatLabel.textContent = getFieldLabel("health", "Health").toUpperCase();
-  elements.loyaltyStatLabel.textContent = getFieldLabel("loyalty", "Loyalty").toUpperCase();
+  elements.loyaltyStatLabel.textContent = customStatField
+    ? customStatField.label.toUpperCase()
+    : getFieldLabel("loyalty", "Loyalty").toUpperCase();
 
   const frameUrl = getFieldValue("frameUrl").trim();
   if (!frameUrl) clearTemplateFramePreview();
@@ -1019,7 +1171,11 @@ function updateCardPreview() {
 
   elements.setSymbol.classList.toggle("hidden", !getField("rarity"));
   elements.cardCollector.textContent = getField("collector") ? getFieldValue("collector") || "1/1" : "";
-  elements.cardRarity.textContent = getField("rarity") ? state.rarityInfo.labels[rarity] || rarity : "";
+  const rarityField = getField("rarity");
+  const selectedRarity = rarityField?.options?.find((option) => option.value === rarity);
+  elements.cardRarity.textContent = rarityField
+    ? selectedRarity?.label || state.rarityInfo.labels[rarity] || rarity
+    : "";
   elements.cardArtist.textContent = getField("artist")
     ? `${getFieldLabel("artist", "Artist name")}: ${getFieldValue("artist") || "Unknown"}`
     : "";
@@ -1052,6 +1208,21 @@ function closeRenameField() {
   elements.renameFieldDialog.close();
 }
 
+function syncBuiltInStatModeLabels(fieldId) {
+  const statMode = getField("statMode");
+  if (!statMode) return;
+  if (fieldId === "attack" || fieldId === "health") {
+    const combatOption = statMode.options?.find((option) => option.value === "combat");
+    if (combatOption) {
+      combatOption.label = `${getFieldLabel("attack", "Attack")} / ${getFieldLabel("health", "Health")}`;
+    }
+  }
+  if (fieldId === "loyalty") {
+    const loyaltyOption = statMode.options?.find((option) => option.value === "loyalty");
+    if (loyaltyOption) loyaltyOption.label = getFieldLabel("loyalty", "Loyalty");
+  }
+}
+
 function renameField() {
   const field = getField(state.renameFieldId);
   const label = elements.renameFieldInput.value.trim();
@@ -1061,7 +1232,114 @@ function renameField() {
     return;
   }
   field.label = label.slice(0, 60);
+  syncBuiltInStatModeLabels(field.id);
+  if (field.dynamicStat) {
+    const statMode = getField("statMode");
+    const option = statMode?.options?.find((item) => item.fieldId === field.id);
+    if (option) option.label = field.label;
+  }
   closeRenameField();
+  renderTemplateFields();
+  updateCardPreview();
+  markDirty();
+}
+
+function makeUniqueTemplateOptionValue(label, options) {
+  const base = String(label || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48) || "item";
+  const usedValues = new Set((options || []).map((option) => option.value.toLowerCase()));
+  let value = base;
+  let suffix = 2;
+  while (usedValues.has(value.toLowerCase())) {
+    value = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  return value;
+}
+
+function getTemplateOptionInput(fieldId) {
+  return [...elements.templateFields.querySelectorAll("[data-option-input-for]")]
+    .find((input) => input.dataset.optionInputFor === fieldId);
+}
+
+function addTemplateSelectOption(fieldId) {
+  const field = getField(fieldId);
+  const input = getTemplateOptionInput(fieldId);
+  const label = input?.value.trim().replace(/\s+/g, " ");
+  if (!field || !input || !label) {
+    input?.focus();
+    return;
+  }
+  if ((field.options || []).some((option) => option.label.toLowerCase() === label.toLowerCase())) {
+    setTemplateStatus(`${label} is already in the ${field.label} dropdown.`);
+    input.select();
+    return;
+  }
+  if ((field.options || []).length >= 50) {
+    setTemplateStatus(`${field.label} can contain at most 50 dropdown items.`);
+    return;
+  }
+
+  const value = makeUniqueTemplateOptionValue(label, field.options);
+  const option = { value, label };
+  if (fieldId === "statMode") {
+    const numbersSection = state.sections.find((section) => section.id === "numbers");
+    if (!numbersSection) return;
+    option.fieldId = `stat_${value}`;
+    numbersSection.fields.push({
+      id: option.fieldId,
+      label,
+      type: "number",
+      min: 0,
+      max: 99,
+      value: "0",
+      dynamicStat: true,
+    });
+  }
+  field.options = [...(field.options || []), option];
+  renderTemplateFields();
+  updateCardPreview();
+  markDirty();
+  setTemplateStatus(`${label} added to ${field.label}. Save to keep this change.`);
+}
+
+function deleteTemplateSelectOption(fieldId, optionValue) {
+  const field = getField(fieldId);
+  const option = field?.options?.find((item) => item.value === optionValue);
+  if (!field || !option) return;
+  field.options = field.options.filter((item) => item.value !== optionValue);
+  if (fieldId === "statMode") {
+    const numbersSection = state.sections.find((section) => section.id === "numbers");
+    if (numbersSection) {
+      const relatedFieldIds = option.fieldId
+        ? new Set([option.fieldId])
+        : new Set(option.value === "combat" ? ["attack", "health"] : [option.value]);
+      numbersSection.fields = numbersSection.fields.filter((item) => !relatedFieldIds.has(item.id));
+    }
+  }
+  if (field.value === optionValue) field.value = field.options[0]?.value || "";
+  renderTemplateFields();
+  updateCardPreview();
+  markDirty();
+  setTemplateStatus(`${option.label} removed from ${field.label}. Save to keep this change.`);
+}
+
+function handleTemplateFieldSetting(event) {
+  const property = event.target.dataset.templateFieldSetting;
+  const field = getField(event.target.dataset.configFieldId);
+  if (!property || !field) return;
+  field[property] = event.target.checked;
+  if (field.id === "cost" && property === "mustBeNumber") {
+    field.type = field.mustBeNumber ? "number" : "text";
+    if (field.mustBeNumber && field.value && !Number.isFinite(Number(field.value))) {
+      field.value = "0";
+    }
+  }
   renderTemplateFields();
   updateCardPreview();
   markDirty();
@@ -1072,6 +1350,16 @@ function deleteField(fieldId) {
     const fieldIndex = section.fields.findIndex((field) => field.id === fieldId);
     if (fieldIndex < 0) continue;
     const [deletedField] = section.fields.splice(fieldIndex, 1);
+    if (deletedField.id === "statMode") {
+      section.fields = section.fields.filter((field) => !field.dynamicStat);
+    } else if (deletedField.dynamicStat) {
+      const statMode = getField("statMode");
+      const deletedOption = statMode?.options?.find((option) => option.fieldId === deletedField.id);
+      if (statMode && deletedOption) {
+        statMode.options = statMode.options.filter((option) => option.fieldId !== deletedField.id);
+        if (statMode.value === deletedOption.value) statMode.value = statMode.options[0]?.value || "";
+      }
+    }
     renderTemplateFields();
     updateCardPreview();
     markDirty();
@@ -1575,7 +1863,24 @@ async function saveTemplate() {
         sections: state.sections.map((section) => ({
           id: section.id,
           label: section.label,
-          fields: section.fields.map(({ id, label, value }) => ({ id, label, value })),
+          fields: section.fields.map((field) => {
+            const savedField = {
+              id: field.id,
+              label: field.label,
+              value: field.value,
+            };
+            if (field.id === "cost") savedField.mustBeNumber = Boolean(field.mustBeNumber);
+            if (field.id === "collector") savedField.canEdit = Boolean(field.canEdit);
+            if (field.id === "statMode" || field.id === "rarity") {
+              savedField.options = (field.options || []).map((option) => ({
+                value: option.value,
+                label: option.label,
+                ...(option.fieldId ? { fieldId: option.fieldId } : {}),
+              }));
+            }
+            if (field.dynamicStat) savedField.dynamicStat = true;
+            return savedField;
+          }),
         })),
         customFields: state.customFields.map((field) => ({
           name: field.name,
@@ -1624,10 +1929,17 @@ function handleFieldAction(event) {
     openGenerateTemplateBackgroundDialog();
     return;
   }
+  if (templateAction?.dataset.templateAction === "add-option") {
+    addTemplateSelectOption(templateAction.dataset.configFieldId);
+    return;
+  }
   const button = event.target.closest("[data-action][data-field-id]");
   if (!button) return;
   if (button.dataset.action === "rename") openRenameField(button.dataset.fieldId);
   if (button.dataset.action === "delete") deleteField(button.dataset.fieldId);
+  if (button.dataset.action === "delete-option") {
+    deleteTemplateSelectOption(button.dataset.fieldId, button.dataset.optionValue);
+  }
 }
 
 function closeTemplatePage() {
@@ -1679,7 +1991,13 @@ function attachEvents() {
   elements.templateSetInput.addEventListener("change", handleTemplateSetChange);
   elements.templateForm.addEventListener("submit", (event) => event.preventDefault());
   elements.templateFields.addEventListener("input", handleFieldInput);
+  elements.templateFields.addEventListener("change", handleTemplateFieldSetting);
   elements.templateFields.addEventListener("click", handleFieldAction);
+  elements.templateFields.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || !event.target.matches("[data-option-input-for]")) return;
+    event.preventDefault();
+    addTemplateSelectOption(event.target.dataset.optionInputFor);
+  });
   elements.generateTemplateBackgroundForm.addEventListener("submit", (event) => {
     event.preventDefault();
     generateTemplateBackground();

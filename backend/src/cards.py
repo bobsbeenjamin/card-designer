@@ -58,6 +58,8 @@ TEXT_CUSTOM_TEMPLATE_FIELD_TYPES = {"text", "number", "dropdown"}
 IMAGE_CUSTOM_TEMPLATE_FIELD_TYPES = {"symbol", "art"}
 MAX_CUSTOM_TEMPLATE_FIELDS = 50
 MAX_CUSTOM_TEMPLATE_OPTIONS = 50
+MAX_DYNAMIC_STAT_FIELDS = 50
+MAX_TEMPLATE_SELECT_OPTIONS = 50
 
 DEFAULT_SET = {
     "code": "DEFAULT",
@@ -1662,7 +1664,10 @@ def clean_template_sections(body):
         fields = section.get("fields")
         if not isinstance(fields, list):
             raise ValueError("Each template section must contain fields.")
-        if len(fields) > len(TEMPLATE_FIELDS_BY_SECTION[section_id]):
+        maximum_fields = len(TEMPLATE_FIELDS_BY_SECTION[section_id])
+        if section_id == "numbers":
+            maximum_fields += MAX_DYNAMIC_STAT_FIELDS
+        if len(fields) > maximum_fields:
             raise ValueError("Template section contains too many fields.")
 
         cleaned_fields = []
@@ -1671,7 +1676,17 @@ def clean_template_sections(body):
             if not isinstance(field, dict):
                 raise ValueError("Each template field must be an object.")
             field_id = str(field.get("id") or "").strip()
-            if field_id not in TEMPLATE_FIELDS_BY_SECTION[section_id] or field_id in seen_fields:
+            is_dynamic_stat = (
+                section_id == "numbers"
+                and bool(field.get("dynamicStat"))
+                and field_id.startswith("stat_")
+                and len(field_id) <= 80
+                and all(character.isalnum() or character in {"_", "-"} for character in field_id)
+            )
+            if (
+                (field_id not in TEMPLATE_FIELDS_BY_SECTION[section_id] and not is_dynamic_stat)
+                or field_id in seen_fields
+            ):
                 raise ValueError("Template contains an invalid field.")
             seen_fields.add(field_id)
 
@@ -1687,7 +1702,46 @@ def clean_template_sections(body):
             value = str(value)
             if len(value) > 5000:
                 raise ValueError("Template field values are too long.")
-            cleaned_fields.append({"id": field_id, "label": label, "value": value})
+            cleaned_field = {"id": field_id, "label": label, "value": value}
+
+            if field_id == "cost":
+                must_be_number = field.get("mustBeNumber", True)
+                if not isinstance(must_be_number, bool):
+                    raise ValueError("Cost Must be number must be true or false.")
+                cleaned_field["mustBeNumber"] = must_be_number
+
+            if field_id == "collector":
+                can_edit = field.get("canEdit", False)
+                if not isinstance(can_edit, bool):
+                    raise ValueError("Collector number Can edit must be true or false.")
+                cleaned_field["canEdit"] = can_edit
+
+            if field_id in {"statMode", "rarity"}:
+                cleaned_field["options"] = clean_template_select_options(
+                    field.get("options"),
+                    field_id,
+                )
+
+            if is_dynamic_stat:
+                cleaned_field["dynamicStat"] = True
+            cleaned_fields.append(cleaned_field)
+
+        if section_id == "numbers":
+            field_ids = {field["id"] for field in cleaned_fields}
+            stat_mode_field = next(
+                (field for field in cleaned_fields if field["id"] == "statMode"),
+                None,
+            )
+            option_field_ids = {
+                option.get("fieldId")
+                for option in (stat_mode_field or {}).get("options", [])
+                if option.get("fieldId")
+            }
+            dynamic_field_ids = {
+                field["id"] for field in cleaned_fields if field.get("dynamicStat")
+            }
+            if not option_field_ids.issubset(field_ids) or dynamic_field_ids != option_field_ids:
+                raise ValueError("Each custom Stat mode item must have a matching Numbers field.")
 
         cleaned_sections.append({
             "id": section_id,
@@ -1696,6 +1750,52 @@ def clean_template_sections(body):
         })
 
     return cleaned_sections
+
+
+def clean_template_select_options(value, field_id):
+    """Validate editable Stat mode and Rarity dropdown items."""
+    if not isinstance(value, list):
+        raise ValueError("Template dropdown options must be a list.")
+    if len(value) > MAX_TEMPLATE_SELECT_OPTIONS:
+        raise ValueError("A template dropdown can contain at most 50 options.")
+
+    cleaned_options = []
+    seen_values = set()
+    seen_labels = set()
+    seen_field_ids = set()
+    for option in value:
+        if not isinstance(option, dict):
+            raise ValueError("Each template dropdown option must be an object.")
+        option_value = str(option.get("value") or "").strip()
+        label = " ".join(str(option.get("label") or "").strip().split())
+        if not option_value or len(option_value) > 80 or not label or len(label) > 60:
+            raise ValueError("Template dropdown options require a valid value and label.")
+        normalized_value = option_value.casefold()
+        normalized_label = label.casefold()
+        if normalized_value in seen_values or normalized_label in seen_labels:
+            raise ValueError("Template dropdown options must be unique.")
+        seen_values.add(normalized_value)
+        seen_labels.add(normalized_label)
+        cleaned_option = {"value": option_value, "label": label}
+
+        option_field_id = str(option.get("fieldId") or "").strip()
+        if field_id == "statMode" and option_value not in {"combat", "loyalty"}:
+            if (
+                not option_field_id.startswith("stat_")
+                or len(option_field_id) > 80
+                or not all(
+                    character.isalnum() or character in {"_", "-"}
+                    for character in option_field_id
+                )
+                or option_field_id in seen_field_ids
+            ):
+                raise ValueError("Custom Stat mode items require a unique Numbers field.")
+            seen_field_ids.add(option_field_id)
+            cleaned_option["fieldId"] = option_field_id
+        elif option_field_id:
+            raise ValueError("This template dropdown option cannot reference a field.")
+        cleaned_options.append(cleaned_option)
+    return cleaned_options
 
 
 def clean_custom_template_integer(value, label, minimum=0):

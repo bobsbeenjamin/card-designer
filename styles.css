@@ -1040,6 +1040,66 @@ h1 {
   width: 100%;
 }
 
+.template-field input[readonly] {
+  background: #eef1ec;
+  color: #667068;
+  cursor: default;
+}
+
+.template-field-setting {
+  align-items: center;
+  color: #48504a;
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 750;
+  gap: 8px;
+  justify-self: start;
+}
+
+.template-field-setting input {
+  height: 17px;
+  margin: 0;
+  width: 17px;
+}
+
+.template-option-editor,
+.template-option-list {
+  display: grid;
+  gap: 8px;
+}
+
+.template-option-row {
+  align-items: center;
+  background: #fbfcfa;
+  border: 1px solid #d8ddd5;
+  border-radius: 7px;
+  display: grid;
+  font-size: 0.8rem;
+  font-weight: 750;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 36px;
+  padding: 3px 3px 3px 10px;
+}
+
+.template-option-add-row {
+  align-items: stretch;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.template-option-add-row .button {
+  gap: 7px;
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.template-option-add-row .plus-icon {
+  height: 14px;
+  width: 14px;
+}
+
 .template-empty-section {
   color: var(--muted);
   font-size: 0.82rem;
