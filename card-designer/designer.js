@@ -14,6 +14,7 @@ const lastLoadedCardStoragePrefix = "cardDesignerLastLoaded";
 const cardHistoryFieldLabels = {
   name: "Name",
   artUrl: "Art",
+  artFit: "Art fit",
   frameUrl: "Card frame",
   frameFit: "Background fit",
   cost: "Cost",
@@ -30,6 +31,10 @@ const cardHistoryFieldLabels = {
   rarity: "Rarity",
   colors: "Colors",
   setCode: "Set",
+  templateId: "Template",
+  templateName: "Template name",
+  templateSections: "Template fields",
+  templateCustomFields: "Custom template fields",
 };
 
 const imageProviderLabels = {
@@ -154,6 +159,14 @@ const state = {
   cardHistoryStatus: "Load a saved card to view history.",
   savedCards: [],
   savedSets: [],
+  templates: [],
+  currentTemplateId: "",
+  currentTemplateName: "",
+  templateSections: [],
+  templateCustomFields: [],
+  customFieldObjectUrls: [],
+  customFieldPreviewToken: 0,
+  customFieldImageLoad: Promise.resolve(),
   artObjectUrl: "",
   artUrl: "",
   pendingArtUpload: null,
@@ -176,6 +189,7 @@ const state = {
 const elements = {
   card: document.querySelector("#card"),
   cardFrameImage: document.querySelector("#cardFrameImage"),
+  cardCustomFieldPreview: document.querySelector("#cardCustomFieldPreview"),
   cardRenderFrame: document.querySelector("#cardRenderFrame"),
   previewStage: document.querySelector(".preview-stage"),
   previousCardButton: document.querySelector("#previousCardButton"),
@@ -189,6 +203,8 @@ const elements = {
   cardAttack: document.querySelector("#cardAttack"),
   cardHealth: document.querySelector("#cardHealth"),
   cardLoyalty: document.querySelector("#cardLoyalty"),
+  combatStats: document.querySelector("#combatStats"),
+  loyaltyStat: document.querySelector("#loyaltyStat"),
   cardAbility: document.querySelector("#cardAbility"),
   cardFlavor: document.querySelector("#cardFlavor"),
   cardArtist: document.querySelector("#cardArtist"),
@@ -257,6 +273,9 @@ const elements = {
   saveImageGenerationSettingsButton: document.querySelector("#saveImageGenerationSettingsButton"),
   imageGenerationStatus: document.querySelector("#imageGenerationStatus"),
   mySetsPanel: document.querySelector("#mySetsPanel"),
+  templatesPanel: document.querySelector("#templatesPanel"),
+  viewSetTemplatesButton: document.querySelector("#viewSetTemplatesButton"),
+  cardTemplatesInput: document.querySelector("#cardTemplatesInput"),
   cardSetsInput: document.querySelector("#cardSetsInput"),
   addSetButton: document.querySelector("#addSetButton"),
   makeSetPublicButton: document.querySelector("#makeSetPublicButton"),
@@ -286,6 +305,9 @@ const elements = {
   authStatus: document.querySelector("#authStatus"),
   saveStatus: document.querySelector("#saveStatus"),
   savedCardsInput: document.querySelector("#savedCardsInput"),
+  templateStatInputs: document.querySelector("#templateStatInputs"),
+  templateCustomFieldsPanel: document.querySelector("#templateCustomFieldsPanel"),
+  templateCustomFields: document.querySelector("#templateCustomFields"),
   signUpButton: document.querySelector("#signUpButton"),
   cancelSignUpButton: document.querySelector("#cancelSignUpButton"),
   signUpStatus: document.querySelector("#signUpStatus"),
@@ -300,7 +322,15 @@ const elements = {
   homeButton: document.querySelector("#homeButton"),
   exportPng: document.querySelector("#exportPng"),
   duplicateSaveDialog: document.querySelector("#duplicateSaveDialog"),
+  duplicateSaveForm: document.querySelector("#duplicateSaveForm"),
   duplicateSaveMessage: document.querySelector("#duplicateSaveMessage"),
+  duplicateUpdateButton: document.querySelector("#duplicateUpdateButton"),
+  duplicateSaveAsButton: document.querySelector("#duplicateSaveAsButton"),
+  duplicateCancelButton: document.querySelector("#duplicateCancelButton"),
+  duplicateNewNameFields: document.querySelector("#duplicateNewNameFields"),
+  duplicateNewNameInput: document.querySelector("#duplicateNewNameInput"),
+  duplicateNewNameStatus: document.querySelector("#duplicateNewNameStatus"),
+  duplicateConfirmNewNameButton: document.querySelector("#duplicateConfirmNewNameButton"),
   unsavedChangesDialog: document.querySelector("#unsavedChangesDialog"),
   unsavedChangesMessage: document.querySelector("#unsavedChangesMessage"),
   deleteSetDialog: document.querySelector("#deleteSetDialog"),
@@ -346,7 +376,7 @@ const accountAuth = new AccountAuthController({
   setAuthStatus,
   onSignedIn: async () => {
     setSaveStatus("Loading saved designs...");
-    await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets()]);
+    await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets(), refreshCardTemplates()]);
     if (!isNewCardRequest) await restoreLastLoadedCardSelection();
     await setSharing.checkSetShareResponses();
     await setSharing.checkIncomingSetShares();
@@ -515,6 +545,7 @@ function updateAccountUi() {
   elements.signedInPanel.classList.toggle("hidden", !signedIn);
   elements.aiSettingsPanel.classList.toggle("hidden", !signedIn);
   elements.mySetsPanel.classList.toggle("hidden", !signedIn);
+  elements.templatesPanel.classList.toggle("hidden", !signedIn);
   elements.currentUserLabel.textContent = state.email || "Account";
   if (!signedIn) {
     closeAccountMenu();
@@ -526,6 +557,8 @@ function updateAccountUi() {
     elements.imageProviderInput.value = getStoredImageProvider() || "openai";
     syncImageProviderSettingsUi();
     elements.imageGenerationStatus.textContent = "No image provider configured";
+    state.templates = [];
+    renderCardTemplates();
   }
 }
 
@@ -553,7 +586,7 @@ async function loadCardTypes() {
 
 function syncTypeMode() {
   const isCustom = elements.typeInput.value === "__custom";
-  elements.customTypeLabel.classList.toggle("hidden", !isCustom);
+  elements.customTypeLabel.classList.toggle("hidden", !isCustom || !hasTemplateField("type"));
 }
 
 /** Returns either the selected standard type or the custom type text. */
@@ -563,6 +596,296 @@ function getSelectedType() {
   }
 
   return elements.typeInput.value.trim();
+}
+
+const defaultDesignerFieldLabels = {
+  name: "Name",
+  type: "Type",
+  subtype: "Subtype",
+  cost: "Cost",
+  statMode: "Stat mode",
+  attack: "Attack",
+  health: "Health",
+  loyalty: "Loyalty",
+  ability: "Rules",
+  flavor: "Flavor",
+  fit: "Art fit",
+  frame: "Frame",
+  accent: "Accent",
+  text: "Text",
+  panel: "Panel",
+  frameUrl: "Image URL",
+  frameFit: "Background fit",
+  artist: "Artist name",
+  collector: "Collector number",
+  rarity: "Rarity",
+};
+
+function getTemplateField(fieldId, sections = state.templateSections) {
+  for (const section of sections || []) {
+    const field = (section.fields || []).find((item) => item.id === fieldId);
+    if (field) return field;
+  }
+  return null;
+}
+
+function hasTemplateField(fieldId) {
+  return !state.currentTemplateId || Boolean(getTemplateField(fieldId));
+}
+
+function getStandardTemplateInput(fieldId) {
+  return {
+    name: elements.nameInput,
+    type: elements.typeInput,
+    subtype: elements.subtypeInput,
+    cost: elements.costInput,
+    statMode: elements.statModeInput,
+    attack: elements.attackInput,
+    health: elements.healthInput,
+    loyalty: elements.loyaltyInput,
+    ability: elements.abilityInput,
+    flavor: elements.flavorInput,
+    fit: elements.fitInput,
+    frame: elements.frameColor,
+    accent: elements.accentColor,
+    text: elements.textColor,
+    panel: elements.panelColor,
+    frameUrl: elements.frameUrlInput,
+    frameFit: elements.frameFitInput,
+    artist: elements.artistInput,
+    collector: elements.collectorInput,
+    rarity: elements.rarityInput,
+  }[fieldId] || null;
+}
+
+function getStandardTemplateLabel(fieldId) {
+  return getStandardTemplateInput(fieldId)?.closest("label")?.querySelector("span") || null;
+}
+
+function setSelectItems(select, options, selectedValue = "") {
+  select.replaceChildren();
+  for (const item of options || []) {
+    const option = document.createElement("option");
+    option.value = item.value;
+    option.textContent = item.label;
+    select.append(option);
+  }
+  select.value = [...select.options].some((option) => option.value === selectedValue)
+    ? selectedValue
+    : select.options[0]?.value || "";
+}
+
+function resetTemplateDrivenControls() {
+  state.currentTemplateId = "";
+  state.currentTemplateName = "";
+  state.templateSections = [];
+  state.templateCustomFields = [];
+  for (const [fieldId, labelText] of Object.entries(defaultDesignerFieldLabels)) {
+    const input = getStandardTemplateInput(fieldId);
+    const label = input?.closest("label");
+    if (label) label.classList.remove("hidden");
+    const labelTextElement = getStandardTemplateLabel(fieldId);
+    if (labelTextElement) labelTextElement.textContent = labelText;
+  }
+  elements.frameInput.closest("label")?.classList.remove("hidden");
+  elements.costInput.type = "number";
+  elements.costInput.min = "0";
+  elements.costInput.max = "99";
+  elements.collectorInput.readOnly = true;
+  setSelectItems(elements.statModeInput, [
+    { value: "combat", label: "Attack / Health" },
+    { value: "loyalty", label: "Loyalty" },
+  ], defaults.statMode || "combat");
+  setSelectItems(
+    elements.rarityInput,
+    Object.entries(rarityLabels).map(([value, label]) => ({ value, label })),
+    defaults.rarity || "common",
+  );
+  document.querySelectorAll("[data-card-section]").forEach((section) => section.classList.remove("hidden"));
+  elements.templateStatInputs.replaceChildren();
+  elements.templateCustomFields.replaceChildren();
+  elements.templateCustomFieldsPanel.classList.add("hidden");
+  elements.cardCustomFieldPreview.replaceChildren();
+}
+
+function getTemplateFieldValue(fieldId, fallback = "") {
+  return getTemplateField(fieldId)?.value ?? fallback;
+}
+
+function renderTemplateStatInputs() {
+  elements.templateStatInputs.replaceChildren();
+  const numbersSection = state.templateSections.find((section) => section.id === "numbers");
+  for (const field of numbersSection?.fields || []) {
+    if (!field.dynamicStat) continue;
+    const label = document.createElement("label");
+    const labelText = document.createElement("span");
+    labelText.textContent = field.label;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "0";
+    input.max = "99";
+    input.value = field.value ?? "0";
+    input.dataset.templateStatId = field.id;
+    label.append(labelText, input);
+    elements.templateStatInputs.append(label);
+  }
+}
+
+function createTemplateCustomFieldInput(field) {
+  let input;
+  if (field.dataType === "dropdown") {
+    input = document.createElement("select");
+    setSelectItems(
+      input,
+      (field.options || []).map((option) => ({ value: option, label: option })),
+      field.value || field.options?.[0] || "",
+    );
+  } else {
+    input = document.createElement("input");
+    input.type = field.dataType === "number" ? "number" : "text";
+    if (field.dataType === "symbol" || field.dataType === "art") {
+      input.type = "url";
+      input.inputMode = "url";
+      input.placeholder = "Image URL";
+    }
+    input.value = field.value || "";
+  }
+  input.dataset.templateCustomName = field.name;
+  input.setAttribute("aria-label", field.name);
+  return input;
+}
+
+function renderTemplateCustomFieldInputs() {
+  elements.templateCustomFields.replaceChildren();
+  elements.templateCustomFieldsPanel.classList.toggle("hidden", !state.templateCustomFields.length);
+  for (const field of state.templateCustomFields) {
+    const label = document.createElement("label");
+    const labelText = document.createElement("span");
+    labelText.textContent = field.name;
+    label.append(labelText, createTemplateCustomFieldInput(field));
+    elements.templateCustomFields.append(label);
+  }
+}
+
+function renderCardCustomFields() {
+  state.customFieldPreviewToken += 1;
+  for (const objectUrl of state.customFieldObjectUrls) URL.revokeObjectURL(objectUrl);
+  state.customFieldObjectUrls = [];
+  const previewToken = state.customFieldPreviewToken;
+  const imageLoads = [];
+  elements.cardCustomFieldPreview.replaceChildren();
+  for (const field of state.templateCustomFields) {
+    const item = document.createElement("div");
+    const isImage = field.dataType === "symbol" || field.dataType === "art";
+    item.className = `custom-field-preview-item ${isImage ? "image-value" : "text-value"} ${field.dataType === "symbol" ? "symbol-value" : ""}`.trim();
+    item.style.left = `${field.position.x}px`;
+    item.style.top = `${field.position.y}px`;
+    if (isImage) {
+      item.style.width = `${field.size.width}px`;
+      item.style.height = `${field.size.height}px`;
+      if (field.value) {
+        const image = document.createElement("img");
+        image.alt = field.name;
+        imageLoads.push(loadTemplateCustomFieldImage(image, field.value, previewToken));
+        item.replaceChildren(image);
+      } else {
+        item.textContent = field.name;
+      }
+    } else {
+      item.style.color = field.color;
+      item.style.fontSize = `${field.size.fontSize}px`;
+      item.textContent = field.value || "";
+    }
+    elements.cardCustomFieldPreview.append(item);
+  }
+  state.customFieldImageLoad = Promise.allSettled(imageLoads);
+}
+
+async function loadTemplateCustomFieldImage(image, source, previewToken) {
+  try {
+    if (source.startsWith("data:") || source.startsWith("blob:")) {
+      image.src = source;
+      return;
+    }
+    const blob = await fetchCardImageBlob(source);
+    if (previewToken !== state.customFieldPreviewToken || !image.isConnected) return;
+    const objectUrl = URL.createObjectURL(blob);
+    state.customFieldObjectUrls.push(objectUrl);
+    image.src = objectUrl;
+  } catch (error) {
+    image.replaceWith(document.createTextNode("Image unavailable"));
+  }
+}
+
+function syncTemplateValuesFromControls() {
+  if (!state.currentTemplateId) return;
+  for (const section of state.templateSections) {
+    for (const field of section.fields || []) {
+      const standardInput = getStandardTemplateInput(field.id);
+      const dynamicInput = elements.templateStatInputs.querySelector(`[data-template-stat-id="${field.id}"]`);
+      if (field.id === "type") field.value = getSelectedType();
+      else if (standardInput) field.value = standardInput.value;
+      else if (dynamicInput) field.value = dynamicInput.value;
+    }
+  }
+  for (const field of state.templateCustomFields) {
+    const input = [...elements.templateCustomFields.querySelectorAll("[data-template-custom-name]")]
+      .find((item) => item.dataset.templateCustomName === field.name);
+    if (input) field.value = input.value;
+  }
+}
+
+function configureTemplateDrivenControls() {
+  for (const [fieldId, defaultLabel] of Object.entries(defaultDesignerFieldLabels)) {
+    const field = getTemplateField(fieldId);
+    const input = getStandardTemplateInput(fieldId);
+    const label = input?.closest("label");
+    if (label) label.classList.toggle("hidden", !field);
+    const labelText = getStandardTemplateLabel(fieldId);
+    if (labelText) labelText.textContent = field?.label || defaultLabel;
+  }
+  elements.frameInput.closest("label")?.classList.toggle("hidden", !getTemplateField("frameUrl"));
+
+  const costField = getTemplateField("cost");
+  if (costField) {
+    elements.costInput.type = costField.mustBeNumber === false ? "text" : "number";
+    if (elements.costInput.type === "number") {
+      elements.costInput.min = "0";
+      elements.costInput.max = "99";
+    } else {
+      elements.costInput.removeAttribute("min");
+      elements.costInput.removeAttribute("max");
+    }
+  }
+  const collectorField = getTemplateField("collector");
+  if (collectorField) elements.collectorInput.readOnly = !collectorField.canEdit;
+
+  const statModeField = getTemplateField("statMode");
+  if (statModeField) {
+    const statOptions = Array.isArray(statModeField.options) ? statModeField.options : [
+      { value: "combat", label: "Attack / Health" },
+      { value: "loyalty", label: "Loyalty" },
+    ];
+    statModeField.options = statOptions;
+    setSelectItems(elements.statModeInput, statOptions, statModeField.value);
+  }
+  const rarityField = getTemplateField("rarity");
+  if (rarityField) {
+    const rarityOptions = Array.isArray(rarityField.options)
+      ? rarityField.options
+      : Object.entries(rarityLabels).map(([value, label]) => ({ value, label }));
+    rarityField.options = rarityOptions;
+    setSelectItems(elements.rarityInput, rarityOptions, rarityField.value);
+  }
+
+  for (const section of document.querySelectorAll("[data-card-section]")) {
+    const sectionId = section.dataset.cardSection;
+    const templateSection = state.templateSections.find((item) => item.id === sectionId);
+    const preservePerCardControls = sectionId === "identity" || sectionId === "artwork";
+    section.classList.toggle("hidden", !preservePerCardControls && !(templateSection?.fields || []).length);
+  }
+  renderTemplateStatInputs();
+  renderTemplateCustomFieldInputs();
 }
 
 function isStatlessType(typeValue) {
@@ -762,7 +1085,8 @@ function formatPreviewCollectorNumber() {
 
 /** Keeps new unsaved cards assigned to the next set slot. */
 function syncCollectorInputForCurrentSet() {
-  if (!state.currentCardId) {
+  const collectorIsEditable = state.currentTemplateId && getTemplateField("collector")?.canEdit;
+  if (!state.currentCardId && !collectorIsEditable) {
     elements.collectorInput.value = getNextCollectorNumber(elements.setInput.value || "DEFAULT");
   }
 }
@@ -770,43 +1094,79 @@ function syncCollectorInputForCurrentSet() {
 /** Copies form state into the live card preview. */
 function syncCard() {
   syncTypeMode();
+  syncTemplateValuesFromControls();
   const subtype = elements.subtypeInput.value.trim();
   const typeValue = getSelectedType();
-  const typeLine = subtype ? `${typeValue || "Card"} - ${subtype}` : typeValue;
-  const isStatless = isStatlessType(typeValue);
-  if (!isStatless && !["combat", "loyalty"].includes(elements.statModeInput.value)) {
-    elements.statModeInput.value = "combat";
-  }
-  const isLoyalty = !isStatless && elements.statModeInput.value === "loyalty";
+  const typeParts = [hasTemplateField("type") ? typeValue : "", hasTemplateField("subtype") ? subtype : ""];
+  const typeLine = typeParts.filter(Boolean).join(" - ");
+  const statModeField = getTemplateField("statMode");
+  const hasCombatStats = hasTemplateField("attack") || hasTemplateField("health");
+  const activeStatMode = statModeField
+    ? elements.statModeInput.value
+    : (hasCombatStats ? "combat" : (hasTemplateField("loyalty") ? "loyalty" : "none"));
+  const selectedStatOption = statModeField?.options?.find(
+    (option) => option.value === activeStatMode,
+  );
+  const customStatField = selectedStatOption?.fieldId ? getTemplateField(selectedStatOption.fieldId) : null;
+  const isTypeStatless = !state.currentTemplateId && isStatlessType(typeValue);
+  const isLoyalty = !isTypeStatless && activeStatMode === "loyalty" && hasTemplateField("loyalty");
+  const showCustomStat = !isTypeStatless && Boolean(customStatField);
+  const showSingleStat = isLoyalty || showCustomStat;
+  const isStatless = isTypeStatless || (state.currentTemplateId && !showSingleStat && !hasCombatStats);
   const rarity = elements.rarityInput.value;
   syncCollectorInputForCurrentSet();
 
   updateText(elements.cardName, elements.nameInput.value, "Untitled Card");
+  elements.cardName.classList.toggle("hidden", !hasTemplateField("name"));
   fitCardName();
   updateText(elements.cardType, typeLine, "Card");
+  elements.cardType.classList.toggle("hidden", !hasTemplateField("type") && !hasTemplateField("subtype"));
   elements.cardCost.textContent = formatCost(elements.costInput.value);
+  elements.cardCost.classList.toggle("hidden", !hasTemplateField("cost"));
   updateText(elements.cardAttack, elements.attackInput.value, "0");
   updateText(elements.cardHealth, elements.healthInput.value, "0");
-  updateText(elements.cardLoyalty, elements.loyaltyInput.value, "0");
+  updateText(elements.cardLoyalty, customStatField?.value ?? elements.loyaltyInput.value, "0");
+  elements.cardAttack.closest("div").classList.toggle("hidden", !hasTemplateField("attack"));
+  elements.cardHealth.closest("div").classList.toggle("hidden", !hasTemplateField("health"));
+  elements.cardAttack.previousElementSibling.textContent = getTemplateField("attack")?.label?.toUpperCase() || "ATK";
+  elements.cardHealth.previousElementSibling.textContent = getTemplateField("health")?.label?.toUpperCase() || "HP";
+  elements.cardLoyalty.previousElementSibling.textContent = (
+    customStatField?.label || getTemplateField("loyalty")?.label || "Loyalty"
+  ).toUpperCase();
   updateRulesText(elements.cardAbility, elements.abilityInput.value, "");
   updateMultilineText(elements.cardFlavor, elements.flavorInput.value, "");
+  elements.cardAbility.classList.toggle("hidden", !hasTemplateField("ability"));
+  elements.cardFlavor.classList.toggle("hidden", !hasTemplateField("flavor"));
+  elements.rulesPanel.classList.toggle("hidden", !hasTemplateField("ability") && !hasTemplateField("flavor"));
   elements.cardFlavor.classList.toggle(
     "has-separator",
-    Boolean(elements.abilityInput.value.trim() && elements.flavorInput.value.trim()),
+    Boolean(
+      hasTemplateField("ability")
+      && hasTemplateField("flavor")
+      && elements.abilityInput.value.trim()
+      && elements.flavorInput.value.trim()
+    ),
   );
+  const artistLabel = getTemplateField("artist")?.label || "Art";
   updateText(
     elements.cardArtist,
-    elements.artistInput.value ? `Art: ${elements.artistInput.value}` : "",
-    "Art: Unknown",
+    elements.artistInput.value ? `${artistLabel}: ${elements.artistInput.value}` : "",
+    `${artistLabel}: Unknown`,
   );
   updateText(elements.cardCollector, formatPreviewCollectorNumber(), "1/1");
-  updateText(elements.cardRarity, getRarityLabel(rarity), getRarityLabel("common"));
+  const rarityOption = getTemplateField("rarity")?.options?.find((option) => option.value === rarity);
+  updateText(elements.cardRarity, rarityOption?.label || getRarityLabel(rarity), getRarityLabel("common"));
+  elements.cardArtist.classList.toggle("hidden", !hasTemplateField("artist"));
+  elements.cardCollector.classList.toggle("hidden", !hasTemplateField("collector"));
+  elements.cardRarity.classList.toggle("hidden", !hasTemplateField("rarity"));
 
-  elements.card.classList.toggle("is-loyalty", isLoyalty);
+  elements.card.classList.toggle("is-loyalty", showSingleStat);
   elements.card.classList.toggle("is-statless", isStatless);
-  elements.statModeInput.closest("label").classList.toggle("hidden", isStatless);
-  elements.combatInputs.classList.toggle("hidden", isStatless || isLoyalty);
+  elements.statModeInput.closest("label").classList.toggle("hidden", isStatless || !hasTemplateField("statMode"));
+  elements.combatInputs.classList.toggle("hidden", isStatless || showSingleStat || !hasCombatStats);
   elements.loyaltyInputs.classList.toggle("hidden", isStatless || !isLoyalty);
+  elements.combatStats.classList.toggle("hidden", isStatless || showSingleStat || !hasCombatStats);
+  elements.loyaltyStat.classList.toggle("hidden", isStatless || !showSingleStat);
   updateArtFit();
   updateFrameFit();
   document.documentElement.style.setProperty("--frame", elements.frameColor.value);
@@ -814,6 +1174,7 @@ function syncCard() {
   document.documentElement.style.setProperty("--card-text", elements.textColor.value);
   document.documentElement.style.setProperty("--panel", elements.panelColor.value);
   document.documentElement.style.setProperty("--rarity-color", getRarityColor(rarity));
+  renderCardCustomFields();
   fitRulesText();
 }
 
@@ -1113,6 +1474,7 @@ async function generateImage() {
 function resetCard() {
   state.currentCardId = "";
   clearCardHistory();
+  resetTemplateDrivenControls();
   elements.nameInput.value = defaults.name;
   setTypeControl(defaults.type);
   elements.setInput.value = "DEFAULT";
@@ -1141,6 +1503,7 @@ function resetCard() {
   elements.frameUrlInput.value = "";
   state.pendingFrameUpload = null;
   clearFrame();
+  renderCardTemplates();
   syncCard();
   updateCurrentCardSnapshot();
 }
@@ -1233,22 +1596,26 @@ function collectCardData() {
 
   const typeValue = getSelectedType();
   const isStatless = isStatlessType(typeValue);
-  const statMode = ["combat", "loyalty"].includes(elements.statModeInput.value)
-    ? elements.statModeInput.value
-    : "combat";
+  const cardIsStatless = isStatless && !state.currentTemplateId;
+  const statMode = elements.statModeInput.value || "combat";
+  const costField = getTemplateField("cost");
+  syncTemplateValuesFromControls();
 
-  return {
+  const card = {
     name: elements.nameInput.value.trim() || "Untitled Card",
     artUrl,
+    artFit: elements.fitInput.value || "cover",
     frameUrl,
     frameFit: elements.frameFitInput.value || "fill",
-    cost: Number(elements.costInput.value || 0),
+    cost: state.currentTemplateId && costField?.mustBeNumber === false
+      ? elements.costInput.value
+      : Number(elements.costInput.value || 0),
     type: typeValue,
     sub_type: elements.subtypeInput.value.trim(),
-    statMode: isStatless ? "none" : statMode,
-    attack: !isStatless && statMode === "combat" ? Number(elements.attackInput.value || 0) : null,
-    health: !isStatless && statMode === "combat" ? Number(elements.healthInput.value || 0) : null,
-    loyalty: !isStatless && statMode === "loyalty" ? Number(elements.loyaltyInput.value || 0) : null,
+    statMode: cardIsStatless ? "none" : statMode,
+    attack: !cardIsStatless && statMode === "combat" ? Number(elements.attackInput.value || 0) : null,
+    health: !cardIsStatless && statMode === "combat" ? Number(elements.healthInput.value || 0) : null,
+    loyalty: !cardIsStatless && statMode === "loyalty" ? Number(elements.loyaltyInput.value || 0) : null,
     setCode: elements.setInput.value || "DEFAULT",
     abilities: elements.abilityInput.value,
     flavorText: elements.flavorInput.value,
@@ -1262,28 +1629,40 @@ function collectCardData() {
       panel: elements.panelColor.value,
     },
   };
+  if (state.currentTemplateId) {
+    card.templateId = state.currentTemplateId;
+    card.templateName = state.currentTemplateName;
+    card.templateSections = structuredClone(state.templateSections);
+    card.templateCustomFields = structuredClone(state.templateCustomFields);
+  }
+  return card;
 }
 
 /** Normalizes card fields so dirty checking ignores backend/default shape differences. */
 function normalizeCardForSnapshot(card) {
   const typeValue = String(card.type || defaults.type || "").trim();
   const isStatless = isStatlessType(typeValue);
-  const statMode = isStatless
+  const hasTemplate = Boolean(card.templateId);
+  const statMode = isStatless && !hasTemplate
     ? "none"
-    : (["combat", "loyalty"].includes(card.statMode) ? card.statMode : "combat");
+    : String(card.statMode || "combat");
+  const costField = getTemplateField("cost", card.templateSections || []);
 
   return {
     name: String(card.name || "Untitled Card").trim() || "Untitled Card",
     artUrl: String(card.artUrl || "").trim(),
+    artFit: ["cover", "contain", "fill"].includes(card.artFit) ? card.artFit : defaults.fit,
     frameUrl: String(card.frameUrl || "").trim(),
     frameFit: ["cover", "contain", "fill"].includes(card.frameFit) ? card.frameFit : defaults.frameFit,
-    cost: Number(card.cost || 0),
+    cost: hasTemplate && costField?.mustBeNumber === false
+      ? String(card.cost ?? "")
+      : Number(card.cost || 0),
     type: typeValue,
     sub_type: String(card.sub_type || card.subtype || "").trim(),
     statMode,
-    attack: !isStatless && statMode === "combat" ? Number(card.attack || 0) : null,
-    health: !isStatless && statMode === "combat" ? Number(card.health || 0) : null,
-    loyalty: !isStatless && statMode === "loyalty" ? Number(card.loyalty || 0) : null,
+    attack: (!isStatless || hasTemplate) && statMode === "combat" ? Number(card.attack || 0) : null,
+    health: (!isStatless || hasTemplate) && statMode === "combat" ? Number(card.health || 0) : null,
+    loyalty: (!isStatless || hasTemplate) && statMode === "loyalty" ? Number(card.loyalty || 0) : null,
     setCode: card.setCode || "DEFAULT",
     abilities: String(card.abilities || ""),
     flavorText: String(card.flavorText || ""),
@@ -1296,6 +1675,10 @@ function normalizeCardForSnapshot(card) {
       text: card.colors?.text || defaults.text,
       panel: card.colors?.panel || defaults.panel,
     },
+    templateId: String(card.templateId || ""),
+    templateName: String(card.templateName || ""),
+    templateSections: card.templateId ? card.templateSections || [] : [],
+    templateCustomFields: card.templateId ? card.templateCustomFields || [] : [],
   };
 }
 
@@ -1316,6 +1699,14 @@ function hasUnsavedCardChanges() {
 
 /** Loads a saved card record into the editor controls and preview. */
 function applyCardData(card) {
+  resetTemplateDrivenControls();
+  if (card.templateId && Array.isArray(card.templateSections)) {
+    state.currentTemplateId = card.templateId;
+    state.currentTemplateName = card.templateName || "";
+    state.templateSections = structuredClone(card.templateSections);
+    state.templateCustomFields = structuredClone(card.templateCustomFields || []);
+    configureTemplateDrivenControls();
+  }
   state.currentCardId = card.cardId || "";
   elements.nameInput.value = card.name || defaults.name;
   setTypeControl(card.type || defaults.type);
@@ -1337,6 +1728,7 @@ function applyCardData(card) {
   elements.accentColor.value = card.colors?.accent || defaults.accent;
   elements.textColor.value = card.colors?.text || defaults.text;
   elements.panelColor.value = card.colors?.panel || defaults.panel;
+  elements.fitInput.value = ["cover", "contain", "fill"].includes(card.artFit) ? card.artFit : defaults.fit;
   elements.frameFitInput.value = ["cover", "contain", "fill"].includes(card.frameFit) ? card.frameFit : defaults.frameFit;
 
   elements.artInput.value = "";
@@ -1356,6 +1748,7 @@ function applyCardData(card) {
   }
 
   syncCard();
+  renderCardTemplates(state.currentTemplateId);
   updateCurrentCardSnapshot();
   if (state.currentCardId) rememberLastLoadedCardSelection(card.setCode || "DEFAULT", state.currentCardId);
 }
@@ -1828,6 +2221,7 @@ async function saveSet() {
     elements.cardSetsInput.value = savedSetCode;
     elements.setInput.value = savedSetCode;
     renderSavedCards();
+    await refreshCardTemplates(savedSetCode);
     closeSetDialog();
     setSaveStatus(`Set ${savedSetCode} saved`);
   } catch (error) {
@@ -2186,6 +2580,7 @@ async function loadCardFromLibrary(cardId) {
     closeSetLibrary();
     const data = await apiFetch(`/cards/${cardId}`);
     applyCardData(data.card);
+    await refreshCardTemplates(data.card.setCode || "DEFAULT");
     clearNewCardRequest();
     await refreshCardHistory(data.card.cardId, 3);
     setSaveStatus("Loaded design");
@@ -2202,6 +2597,7 @@ async function restoreLastLoadedCardSelection() {
   elements.cardSetsInput.value = setCode;
   elements.setInput.value = setCode;
   renderSavedCards();
+  await refreshCardTemplates(setCode);
   updateMakeSetPublicButton();
 
   const cardExists = selection.cardId && state.savedCards.some((card) => card.cardId === selection.cardId);
@@ -2219,6 +2615,7 @@ async function loadRequestedCardFromUrl() {
   try {
     const data = await apiFetch(`/cards/${encodeURIComponent(cardId)}`);
     applyCardData(data.card);
+    await refreshCardTemplates(data.card.setCode || "DEFAULT");
     await refreshCardHistory(data.card.cardId, 3);
     setSaveStatus("Loaded design");
     url.searchParams.delete("card");
@@ -2264,27 +2661,215 @@ function renderSavedCards() {
   }
 }
 
+function renderCardTemplates(selectedTemplateId = state.currentTemplateId) {
+  elements.cardTemplatesInput.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = state.templates.length ? "Choose a template" : "No templates in this set";
+  elements.cardTemplatesInput.append(placeholder);
+  for (const template of state.templates) {
+    const option = document.createElement("option");
+    option.value = template.templateId;
+    option.textContent = template.name || "Untitled Template";
+    elements.cardTemplatesInput.append(option);
+  }
+  elements.cardTemplatesInput.value = state.templates.some(
+    (template) => template.templateId === selectedTemplateId,
+  ) ? selectedTemplateId : "";
+  elements.cardTemplatesInput.disabled = !state.idToken || !state.templates.length;
+}
+
+async function refreshCardTemplates(setCode = elements.cardSetsInput.value || "DEFAULT") {
+  if (!state.idToken) {
+    state.templates = [];
+    renderCardTemplates();
+    return;
+  }
+  try {
+    const data = await apiFetch(`/templates?set=${encodeURIComponent(setCode)}`);
+    state.templates = data.templates || [];
+    renderCardTemplates();
+  } catch (error) {
+    state.templates = [];
+    renderCardTemplates();
+    setSaveStatus(error.message);
+  }
+}
+
+function openTemplatesForSelectedSet() {
+  const setCode = elements.cardSetsInput.value || "DEFAULT";
+  const url = new URL("../templates/", window.location.href);
+  url.searchParams.set("set", setCode);
+  window.location.href = url.toString();
+}
+
+function setTemplateStandardValues() {
+  for (const section of state.templateSections) {
+    for (const field of section.fields || []) {
+      const input = getStandardTemplateInput(field.id);
+      if (!input) continue;
+      if (field.id === "type") setTypeControl(field.value || defaults.type);
+      else input.value = field.value ?? "";
+    }
+  }
+  if (getTemplateField("collector") && !elements.collectorInput.value) {
+    elements.collectorInput.value = getNextCollectorNumber(elements.setInput.value || "DEFAULT");
+  }
+}
+
+async function applyTemplateData(template) {
+  resetCard();
+  state.currentTemplateId = template.templateId || "";
+  state.currentTemplateName = template.name || "";
+  state.templateSections = structuredClone(template.sections || []);
+  state.templateCustomFields = (template.customFields || []).map((field) => ({
+    ...structuredClone(field),
+    value: field.dataType === "dropdown" ? field.options?.[0] || "" : "",
+  }));
+  elements.setInput.value = template.setCode || elements.cardSetsInput.value || "DEFAULT";
+  elements.cardSetsInput.value = elements.setInput.value;
+  configureTemplateDrivenControls();
+  setTemplateStandardValues();
+  renderTemplateStatInputs();
+  renderTemplateCustomFieldInputs();
+  elements.artInput.value = "";
+  elements.artUrlInput.value = "";
+  state.pendingArtUpload = null;
+  clearArt();
+  elements.frameInput.value = "";
+  state.pendingFrameUpload = null;
+  const frameUrl = getTemplateFieldValue("frameUrl").trim();
+  elements.frameUrlInput.value = frameUrl;
+  if (frameUrl) await setFrameSource(frameUrl);
+  else clearFrame();
+  renderSavedCards();
+  renderCardTemplates(state.currentTemplateId);
+  syncCard();
+  updateCurrentCardSnapshot();
+  setSaveStatus(`${state.currentTemplateName || "Template"} loaded. Enter card details and save normally.`);
+}
+
+async function loadSelectedTemplate(templateId = elements.cardTemplatesInput.value) {
+  if (!templateId) return;
+  const data = await apiFetch(`/templates/${encodeURIComponent(templateId)}`);
+  await applyTemplateData(data.template);
+}
+
+async function handleTemplateSelectionChange() {
+  const templateId = elements.cardTemplatesInput.value;
+  if (!templateId || templateId === state.currentTemplateId) return;
+  if (hasUnsavedCardChanges()) {
+    const shouldSave = await promptSaveUnsavedChanges("loading the selected template");
+    if (shouldSave) {
+      const saved = state.currentCardId
+        ? await saveCard(state.currentCardId)
+        : await saveNewCard();
+      if (!saved) {
+        renderCardTemplates(state.currentTemplateId);
+        return;
+      }
+    }
+  }
+  try {
+    await loadSelectedTemplate(templateId);
+  } catch (error) {
+    renderCardTemplates(state.currentTemplateId);
+    setSaveStatus(error.message);
+  }
+}
+
 function normalizeCardName(name) {
   return String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function findSavedCardByName(name) {
   const normalizedName = normalizeCardName(name);
-  return state.savedCards.find((card) => normalizeCardName(card.name) === normalizedName);
+  const setCode = elements.setInput.value || "DEFAULT";
+  return state.savedCards.find(
+    (card) => (card.setCode || "DEFAULT") === setCode
+      && normalizeCardName(card.name) === normalizedName,
+  );
 }
 
-/** Asks how to handle saving a card with a duplicate name. */
-function promptDuplicateSave(cardName, existingCard) {
-  if (!elements.duplicateSaveDialog) return Promise.resolve("save-new");
+/** Offers to update the existing card or save the page as a new, uniquely named card. */
+function promptDuplicateSave(cardName, existingCard, saveWithNewName) {
+  if (!elements.duplicateSaveDialog) return Promise.resolve("cancel");
 
-  elements.duplicateSaveMessage.textContent = `"${cardName}" already exists in your saved cards.`;
+  elements.duplicateSaveMessage.textContent = `"${cardName}" already exists in the selected set.`;
+  elements.duplicateNewNameFields.classList.add("hidden");
+  elements.duplicateNewNameInput.value = "";
+  elements.duplicateNewNameStatus.textContent = "";
+  elements.duplicateConfirmNewNameButton.disabled = false;
 
   return new Promise((resolve) => {
+    let isSaving = false;
+    const finish = (choice) => {
+      if (elements.duplicateSaveDialog.open) elements.duplicateSaveDialog.close(choice);
+    };
+    const handleUpdate = () => finish("update");
+    const handleCancel = () => finish("cancel");
+    const handleSaveAs = () => {
+      elements.duplicateNewNameFields.classList.remove("hidden");
+      elements.duplicateNewNameStatus.textContent = "";
+      elements.duplicateNewNameInput.focus();
+    };
+    const handleSaveNew = async (event) => {
+      event.preventDefault();
+      const newName = elements.duplicateNewNameInput.value.trim();
+      if (!newName) {
+        elements.duplicateNewNameStatus.textContent = "Enter a name for the new card.";
+        elements.duplicateNewNameInput.focus();
+        return;
+      }
+
+      if (findSavedCardByName(newName)) {
+        elements.duplicateNewNameStatus.textContent = `"${newName}" already exists in the selected set. Choose another name.`;
+        elements.duplicateNewNameInput.select();
+        return;
+      }
+
+      isSaving = true;
+      elements.duplicateUpdateButton.disabled = true;
+      elements.duplicateSaveAsButton.disabled = true;
+      elements.duplicateCancelButton.disabled = true;
+      elements.duplicateConfirmNewNameButton.disabled = true;
+      elements.duplicateNewNameStatus.textContent = "Saving new card...";
+      const result = await saveWithNewName(newName);
+      isSaving = false;
+      elements.duplicateUpdateButton.disabled = false;
+      elements.duplicateSaveAsButton.disabled = false;
+      elements.duplicateCancelButton.disabled = false;
+      elements.duplicateConfirmNewNameButton.disabled = false;
+      if (result.saved) {
+        finish("saved-copy");
+        return;
+      }
+
+      const message = result.error?.message || "The new card could not be saved. Try another name.";
+      elements.duplicateNewNameStatus.textContent = /already exists/i.test(message)
+        ? `"${newName}" already exists in the selected set. Choose another name.`
+        : message;
+      elements.duplicateNewNameInput.focus();
+      if (/already exists/i.test(message)) elements.duplicateNewNameInput.select();
+    };
+    const handleCancelEvent = (event) => {
+      if (isSaving) event.preventDefault();
+    };
     const handleClose = () => {
+      elements.duplicateUpdateButton.removeEventListener("click", handleUpdate);
+      elements.duplicateSaveAsButton.removeEventListener("click", handleSaveAs);
+      elements.duplicateCancelButton.removeEventListener("click", handleCancel);
+      elements.duplicateSaveForm.removeEventListener("submit", handleSaveNew);
+      elements.duplicateSaveDialog.removeEventListener("cancel", handleCancelEvent);
       elements.duplicateSaveDialog.removeEventListener("close", handleClose);
       resolve(elements.duplicateSaveDialog.returnValue || "cancel");
     };
 
+    elements.duplicateUpdateButton.addEventListener("click", handleUpdate);
+    elements.duplicateSaveAsButton.addEventListener("click", handleSaveAs);
+    elements.duplicateCancelButton.addEventListener("click", handleCancel);
+    elements.duplicateSaveForm.addEventListener("submit", handleSaveNew);
+    elements.duplicateSaveDialog.addEventListener("cancel", handleCancelEvent);
     elements.duplicateSaveDialog.addEventListener("close", handleClose);
     elements.duplicateSaveDialog.dataset.cardId = existingCard.cardId;
     elements.duplicateSaveDialog.showModal();
@@ -2466,7 +3051,7 @@ async function deleteCurrentCardFrame() {
 }
 
 /** Saves or updates a card and uploads its rendered PNG. */
-async function saveCard(cardId = "") {
+async function saveCard(cardId = "", options = {}) {
   try {
     if (state.pendingArtLoad) await state.pendingArtLoad;
     if (state.pendingFrameLoad) await state.pendingFrameLoad;
@@ -2474,11 +3059,13 @@ async function saveCard(cardId = "") {
     await savePendingFrameForLater();
     await syncArtInputBeforeSave();
     await syncFrameInputBeforeSave();
-    const card = collectCardData();
+    let card = collectCardData();
     if (!cardId) {
-      card.collectorNumber = getNextCollectorNumber(card.setCode);
-      elements.collectorInput.value = card.collectorNumber;
+      const collectorNumber = getNextCollectorNumber(card.setCode);
+      elements.collectorInput.value = collectorNumber;
       syncCard();
+      card = collectCardData();
+      card.collectorNumber = collectorNumber;
     }
     card.cardImagePng = await getCardPngDataUrl();
     const data = await apiFetch(cardId ? `/cards/${cardId}` : "/cards", {
@@ -2486,11 +3073,12 @@ async function saveCard(cardId = "") {
       body: JSON.stringify(card),
     });
     state.currentCardId = data.card.cardId;
-    updateCurrentCardSnapshot(card);
+    updateCurrentCardSnapshot();
     elements.cardSetsInput.value = data.card.setCode || card.setCode || "DEFAULT";
     const imageStatus = data.card.imageKey ? " and uploaded PNG" : "";
     setSaveStatus(cardId ? `Saved changes${imageStatus}` : `Saved new design${imageStatus}`);
     await Promise.all([refreshSavedCards(), refreshCardSets()]);
+    await refreshCardTemplates(data.card.setCode || card.setCode || "DEFAULT");
     if (!cardId) {
       const cardsToRegenerate = getCardsInSet(data.card.setCode || card.setCode)
         .filter((savedCard) => savedCard.cardId !== state.currentCardId);
@@ -2503,26 +3091,52 @@ async function saveCard(cardId = "") {
     elements.savedCardsInput.value = state.currentCardId;
     rememberLastLoadedCardSelection(data.card.setCode || card.setCode || "DEFAULT", state.currentCardId);
     await refreshCardHistory(state.currentCardId, 3);
+    return true;
   } catch (error) {
     setSaveStatus(error.message);
+    options.onError?.(error);
+    return false;
   }
 }
 
 /** Handles Save New, including duplicate-name decisions. */
 async function saveNewCard() {
   const cardName = elements.nameInput.value.trim() || "Untitled Card";
-  const existingCard = findSavedCardByName(cardName);
-
-  if (existingCard) {
-    const choice = await promptDuplicateSave(cardName, existingCard);
+  const resolveDuplicate = async (existingCard) => {
+    const choice = await promptDuplicateSave(cardName, existingCard, async (newName) => {
+      const originalName = elements.nameInput.value;
+      let saveError = null;
+      elements.nameInput.value = newName;
+      syncCard();
+      const saved = await saveCard("", { onError: (error) => { saveError = error; } });
+      if (!saved) {
+        elements.nameInput.value = originalName;
+        syncCard();
+      }
+      return { saved, error: saveError };
+    });
     if (choice === "update") {
-      await saveCard(existingCard.cardId);
-      return;
+      return saveCard(existingCard.cardId);
     }
-    if (choice !== "save-new") return;
+    if (choice === "saved-copy") return true;
+    return false;
+  };
+
+  const existingCard = findSavedCardByName(cardName);
+  if (existingCard) return resolveDuplicate(existingCard);
+
+  let saveError = null;
+  const saved = await saveCard("", { onError: (error) => { saveError = error; } });
+  if (saved || !/already exists/i.test(saveError?.message || "")) return saved;
+
+  await refreshSavedCards();
+  const newlyDetectedDuplicate = findSavedCardByName(cardName);
+  if (newlyDetectedDuplicate) {
+    return resolveDuplicate(newlyDetectedDuplicate);
   }
 
-  await saveCard();
+  setSaveStatus(saveError.message);
+  return false;
 }
 /** Loads the selected saved-card dropdown item into the editor. */
 async function loadSelectedCard(cardId = elements.savedCardsInput.value) {
@@ -2532,6 +3146,7 @@ async function loadSelectedCard(cardId = elements.savedCardsInput.value) {
     elements.savedCardsInput.value = cardId;
     const data = await apiFetch(`/cards/${encodeURIComponent(cardId)}`);
     applyCardData(data.card);
+    await refreshCardTemplates(data.card.setCode || "DEFAULT");
     clearNewCardRequest();
     await refreshCardHistory(data.card.cardId, 3);
     setSaveStatus("Loaded design");
@@ -2645,14 +3260,36 @@ function readBlobAsDataUrl(blob) {
 }
 
 /** Converts an image source to an embeddable data URL for SVG snapshotting. */
+async function fetchCardImageBlob(src) {
+  const imageUrl = src.startsWith("/")
+    ? `${backendConfig.apiUrl}${src}`
+    : new URL(src, window.location.href).href;
+  try {
+    const directResponse = await fetch(imageUrl, {
+      headers: imageUrl.startsWith(`${backendConfig.apiUrl}/`)
+        ? { Authorization: `Bearer ${state.idToken}` }
+        : {},
+    });
+    if (directResponse.ok) {
+      const blob = await directResponse.blob();
+      if (blob.type.startsWith("image/")) return blob;
+    }
+  } catch (error) {
+    // Remote images may need the authenticated image proxy for CORS-safe rendering.
+  }
+  const proxyResponse = await fetch(
+    `${backendConfig.apiUrl}/image-proxy?url=${encodeURIComponent(imageUrl)}`,
+    { headers: { Authorization: `Bearer ${state.idToken}` } },
+  );
+  if (!proxyResponse.ok) throw new Error("Image could not be embedded in the PNG.");
+  const blob = await proxyResponse.blob();
+  if (!blob.type.startsWith("image/")) throw new Error("Image URL did not return an image.");
+  return blob;
+}
+
 async function getEmbeddableImageSource(src) {
   if (!src || src.startsWith("data:")) return src;
-
-  const response = await fetch(src);
-  if (!response.ok) throw new Error("Image could not be embedded in the PNG.");
-  const blob = await response.blob();
-  if (!blob.type.startsWith("image/")) throw new Error("Image URL did not return an image.");
-  return readBlobAsDataUrl(blob);
+  return readBlobAsDataUrl(await fetchCardImageBlob(src));
 }
 
 /** Embeds preview images in a cloned card before serializing it to SVG. */
@@ -2695,12 +3332,12 @@ function waitForRenderPaint() {
 /** Renders the actual preview DOM to a canvas so PNG output matches the card. */
 async function createCardCanvas(scale = 3) {
   syncCard();
-  if (elements.art.src && !elements.art.complete) {
-    await elements.art.decode().catch(() => {});
-  }
-  if (elements.cardFrameImage.src && !elements.cardFrameImage.complete) {
-    await elements.cardFrameImage.decode().catch(() => {});
-  }
+  await state.customFieldImageLoad;
+  await Promise.all(
+    [...elements.card.querySelectorAll("img")]
+      .filter((image) => image.src && !image.complete)
+      .map((image) => image.decode().catch(() => {})),
+  );
   if (document.fonts?.ready) await document.fonts.ready;
   await waitForRenderPaint();
 
@@ -2818,9 +3455,10 @@ function attachEvents() {
   elements.frameUrlInput.addEventListener("change", loadFrameUrl);
   elements.deleteFrameButton.addEventListener("click", deleteCurrentCardFrame);
   elements.viewAllCardHistoryButton.addEventListener("click", openCardHistoryDialog);
-  elements.cardSetsInput.addEventListener("change", () => {
+  elements.cardSetsInput.addEventListener("change", async () => {
     const setCode = elements.cardSetsInput.value || "DEFAULT";
     renderSavedCards();
+    await refreshCardTemplates(setCode);
     updateMakeSetPublicButton();
     rememberLastLoadedCardSelection(setCode, "");
   });
@@ -2831,6 +3469,11 @@ function attachEvents() {
   });
   elements.addSetButton.addEventListener("click", openSetDialog);
   elements.viewSetsButton.addEventListener("click", openSetLibrary);
+  elements.viewSetTemplatesButton.addEventListener("click", openTemplatesForSelectedSet);
+  elements.cardTemplatesInput.addEventListener("change", handleTemplateSelectionChange);
+  elements.templateStatInputs.addEventListener("input", syncCard);
+  elements.templateCustomFields.addEventListener("input", syncCard);
+  elements.templateCustomFields.addEventListener("change", syncCard);
   elements.setLibraryBackButton.addEventListener("click", renderSetLibraryList);
   elements.setLibraryCloseButton.addEventListener("click", closeSetLibrary);
   elements.deleteSetDialog.addEventListener("close", () => {
@@ -2880,6 +3523,10 @@ function attachEvents() {
     fitRulesText();
     rememberCardRenderProfile();
   });
+  window.addEventListener("pagehide", () => {
+    for (const objectUrl of state.customFieldObjectUrls) URL.revokeObjectURL(objectUrl);
+    state.customFieldObjectUrls = [];
+  });
 }
 
 /** Loads defaults and starts the app. */
@@ -2897,6 +3544,7 @@ async function initialize() {
   if (!isRenderWorkspace) rememberCardRenderProfile();
   renderSavedCards();
   renderCardSets();
+  renderCardTemplates();
   renderCardHistory();
   updateAccountUi();
   if (state.refreshToken && (!state.idToken || isJwtExpired(state.idToken))) {
@@ -2904,7 +3552,7 @@ async function initialize() {
   }
   if (state.idToken && !isJwtExpired(state.idToken)) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
-    await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets()]);
+    await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets(), refreshCardTemplates()]);
     if (!isRenderWorkspace) {
       if (!isNewCardRequest) await restoreLastLoadedCardSelection();
       await setSharing.checkSetShareResponses();

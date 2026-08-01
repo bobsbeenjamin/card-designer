@@ -81,6 +81,7 @@ TEMPLATE_FIELDS_BY_SECTION = {
 ALLOWED_FIELDS = {
     "name",
     "artUrl",
+    "artFit",
     "frameUrl",
     "frameFit",
     "cost",
@@ -97,11 +98,16 @@ ALLOWED_FIELDS = {
     "rarity",
     "colors",
     "setCode",
+    "templateId",
+    "templateName",
+    "templateSections",
+    "templateCustomFields",
 }
 
 CARD_HISTORY_FIELD_LABELS = {
     "name": "name",
     "artUrl": "art",
+    "artFit": "art fit",
     "frameUrl": "card frame",
     "frameFit": "background fit",
     "cost": "cost",
@@ -118,6 +124,10 @@ CARD_HISTORY_FIELD_LABELS = {
     "rarity": "rarity",
     "colors": "colors",
     "setCode": "set",
+    "templateId": "template",
+    "templateName": "template name",
+    "templateSections": "template fields",
+    "templateCustomFields": "custom template fields",
 }
 
 CARD_IMAGE_FIELD = "cardImagePng"
@@ -1473,8 +1483,25 @@ def clean_card(body):
         raise ValueError("Card name is required.")
     card["setCode"] = normalize_set_code(card.get("setCode"))
     card["collectorNumber"] = normalize_collector_number(card.get("collectorNumber"))
+    if card.get("artFit") not in {"cover", "contain", "fill"}:
+        card["artFit"] = "cover"
     if card.get("frameFit") not in {"cover", "contain", "fill"}:
         card["frameFit"] = "fill"
+    template_id = str(card.get("templateId") or "").strip()
+    if template_id:
+        if len(template_id) > 80:
+            raise ValueError("Card template id is too long.")
+        card["templateId"] = template_id
+        card["templateName"] = str(card.get("templateName") or "").strip()[:80]
+        card["templateSections"] = clean_template_sections({
+            "sections": card.get("templateSections"),
+        })
+        card["templateCustomFields"] = clean_card_template_custom_fields(
+            card.get("templateCustomFields")
+        )
+    else:
+        for field_name in ("templateId", "templateName", "templateSections", "templateCustomFields"):
+            card.pop(field_name, None)
     return card
 
 
@@ -1908,6 +1935,28 @@ def clean_template_custom_fields(body):
         })
 
     return cleaned_fields
+
+
+def clean_card_template_custom_fields(value):
+    """Validate template custom-field definitions and their card values."""
+    if not isinstance(value, list):
+        raise ValueError("Card template custom fields must be a list.")
+    definitions = clean_template_custom_fields({"customFields": value})
+    for index, cleaned_field in enumerate(definitions):
+        raw_value = value[index].get("value", "")
+        if isinstance(raw_value, (dict, list)) or raw_value is None:
+            raise ValueError("Card template custom field values must be text.")
+        card_value = str(raw_value)
+        if len(card_value) > 5000:
+            raise ValueError("Card template custom field values are too long.")
+        if (
+            cleaned_field["dataType"] == "dropdown"
+            and card_value
+            and card_value not in cleaned_field["options"]
+        ):
+            raise ValueError("Card template dropdown values must use a configured option.")
+        cleaned_field["value"] = card_value
+    return definitions
 
 
 def normalize_template_name(value):
@@ -2491,8 +2540,15 @@ def copy_shared_card_frame(source_card, target_user_id, target_card, api_base_ur
     source_frame_key = get_saved_frame_key_from_url(source_card.get("frameUrl"))
     if not source_frame_key:
         return
-    source_prefix = f"{get_art_user_prefix(source_card.get('userId', ''))}/frames/"
-    if not source_frame_key.startswith(source_prefix):
+    source_user_prefix = get_art_user_prefix(source_card.get("userId", ""))
+    source_parts = source_frame_key.split("/")
+    is_owned_card_frame = source_frame_key.startswith(f"{source_user_prefix}/frames/")
+    is_owned_template_background = (
+        source_frame_key.startswith(f"{source_user_prefix}/")
+        and len(source_parts) == 4
+        and source_parts[-2] == "templates"
+    )
+    if not is_owned_card_frame and not is_owned_template_background:
         return
 
     target_frame_key = get_shared_frame_key(target_user_id, target_card, source_frame_key)
@@ -3609,6 +3665,19 @@ def save_card(user_id, body, card_id=None, changed_by=""):
     card = clean_card(body)
     image_bytes = decode_card_image(body)
     validate_card_set(user_id, card["setCode"])
+    normalized_card_name = " ".join(str(card["name"]).strip().split()).casefold()
+    duplicate_card = next(
+        (
+            existing_card
+            for existing_card in get_cards_for_set(user_id, card["setCode"])
+            if existing_card.get("cardId") != card_id
+            and " ".join(str(existing_card.get("name") or "").strip().split()).casefold()
+            == normalized_card_name
+        ),
+        None,
+    )
+    if duplicate_card:
+        raise ValueError("A card with this name already exists in the selected set.")
     if not card_id:
         card["collectorNumber"] = get_next_collector_number(user_id, card["setCode"])
     user_bucket_name = ensure_user_bucket(user_id)

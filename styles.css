@@ -1244,8 +1244,24 @@ h1 {
   text-align: center;
 }
 
+.custom-field-preview-item.image-value img {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
 .custom-field-preview-item.symbol-value {
   border-radius: 50%;
+}
+
+.custom-field-preview-item.symbol-value img {
+  border-radius: 50%;
+}
+
+.template-card-fields {
+  display: grid;
+  gap: 14px;
 }
 
 .panel-header {
@@ -1920,6 +1936,15 @@ input[type="color"] {
 
 .modal-actions.two-up {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.duplicate-new-name-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.duplicate-new-name-fields .status-line {
+  margin: 0;
 }
 
 .hidden {

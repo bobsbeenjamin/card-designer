@@ -142,6 +142,13 @@ card-art bucket. Regeneration overwrites the stable object and returns a
 versioned URL to break browser caches. Deleting a set also deletes all of its
 templates, preview images, and app-managed template backgrounds.
 
+Cards created from a template retain the template id and name, a snapshot of
+the standard field definitions and values, and the custom-field definitions and
+values. This keeps saved cards and regenerated card PNGs consistent even when
+the source template is edited later. Card records also persist the selected art
+fit. Card names are enforced as case-insensitive unique identifiers within each
+set.
+
 ## Existing user migration
 
 Before switching the frontend configuration to the new stack outputs, populate
