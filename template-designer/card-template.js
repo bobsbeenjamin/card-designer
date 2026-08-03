@@ -17,6 +17,7 @@ const state = {
   originalTemplateName: "",
   originalSetCode: "",
   renameFieldId: "",
+  editingBuiltInFieldId: "",
   editingCustomFieldName: "",
   templateNavigationPending: false,
   allowPageExit: false,
@@ -24,6 +25,10 @@ const state = {
   framePreviewSourceUrl: "",
   framePreviewLoadToken: 0,
   backgroundGenerating: false,
+  setSymbolMaskSource: "",
+  setSymbolMaskDataUrl: "",
+  setSymbolMaskLoadToken: 0,
+  setSymbolMaskLoad: Promise.resolve(),
   dirty: false,
 };
 
@@ -70,6 +75,10 @@ const elements = {
   cardFrameImage: document.querySelector("#cardFrameImage"),
   cardName: document.querySelector("#cardName"),
   cardType: document.querySelector("#cardType"),
+  cardTypeValue: document.querySelector("#cardTypeValue"),
+  cardTypeSeparator: document.querySelector("#cardTypeSeparator"),
+  cardSubtypeValue: document.querySelector("#cardSubtypeValue"),
+  cardSubtypeText: document.querySelector("#cardSubtypeText"),
   cardCost: document.querySelector("#cardCost"),
   previewArtwork: document.querySelector("#previewArtwork"),
   previewText: document.querySelector("#previewText"),
@@ -95,6 +104,23 @@ const elements = {
   renameFieldInput: document.querySelector("#renameFieldInput"),
   renameFieldStatus: document.querySelector("#renameFieldStatus"),
   cancelRenameFieldButton: document.querySelector("#cancelRenameFieldButton"),
+  builtInFieldDialog: document.querySelector("#builtInFieldDialog"),
+  builtInFieldForm: document.querySelector("#builtInFieldForm"),
+  builtInFieldDialogTitle: document.querySelector("#builtInFieldDialogTitle"),
+  builtInFieldPositionGroup: document.querySelector("#builtInFieldPositionGroup"),
+  builtInFieldXInput: document.querySelector("#builtInFieldXInput"),
+  builtInFieldYInput: document.querySelector("#builtInFieldYInput"),
+  builtInFieldPositionHelp: document.querySelector("#builtInFieldPositionHelp"),
+  builtInFieldFontSizeGroup: document.querySelector("#builtInFieldFontSizeGroup"),
+  builtInFieldFontSizeLabel: document.querySelector("#builtInFieldFontSizeLabel"),
+  builtInFieldFontSizeInput: document.querySelector("#builtInFieldFontSizeInput"),
+  builtInFieldImageSizeGroup: document.querySelector("#builtInFieldImageSizeGroup"),
+  builtInFieldWidthInput: document.querySelector("#builtInFieldWidthInput"),
+  builtInFieldHeightInput: document.querySelector("#builtInFieldHeightInput"),
+  builtInFieldColorGroup: document.querySelector("#builtInFieldColorGroup"),
+  builtInFieldColorInput: document.querySelector("#builtInFieldColorInput"),
+  builtInFieldStatus: document.querySelector("#builtInFieldStatus"),
+  cancelBuiltInFieldButton: document.querySelector("#cancelBuiltInFieldButton"),
   generateTemplateBackgroundDialog: document.querySelector("#generateTemplateBackgroundDialog"),
   generateTemplateBackgroundForm: document.querySelector("#generateTemplateBackgroundForm"),
   generateTemplateBackgroundPrompt: document.querySelector("#generateTemplateBackgroundPrompt"),
@@ -134,9 +160,9 @@ const fieldSections = [
     id: "identity",
     label: "Identity",
     fields: [
-      { id: "name", label: "Name", type: "text", maxLength: 36 },
-      { id: "type", label: "Type", type: "select", options: [] },
-      { id: "subtype", label: "Subtype", type: "text", maxLength: 28 },
+      { id: "name", label: "Name", type: "text", maxLength: 36, builtInAppearance: "positionedText" },
+      { id: "type", label: "Type", type: "select", options: [], builtInAppearance: "positionedText" },
+      { id: "subtype", label: "Subtype", type: "text", maxLength: 28, builtInAppearance: "positionedText" },
     ],
   },
   {
@@ -150,6 +176,7 @@ const fieldSections = [
         min: 0,
         max: 99,
         mustBeNumber: true,
+        builtInAppearance: "positionedText",
       },
       {
         id: "statMode",
@@ -160,26 +187,27 @@ const fieldSections = [
           { value: "loyalty", label: "Loyalty" },
         ],
       },
-      { id: "attack", label: "Attack", type: "number", min: 0, max: 99 },
-      { id: "health", label: "Health", type: "number", min: 0, max: 99 },
-      { id: "loyalty", label: "Loyalty", type: "number", min: 0, max: 99 },
+      { id: "attack", label: "Attack", type: "number", min: 0, max: 99, builtInAppearance: "positionedText" },
+      { id: "health", label: "Health", type: "number", min: 0, max: 99, builtInAppearance: "positionedText" },
+      { id: "loyalty", label: "Loyalty", type: "number", min: 0, max: 99, builtInAppearance: "positionedText" },
     ],
   },
   {
     id: "text",
     label: "Text",
     fields: [
-      { id: "ability", label: "Rules", type: "textarea", rows: 5 },
-      { id: "flavor", label: "Flavor", type: "textarea", rows: 3 },
+      { id: "ability", label: "Rules", type: "textarea", rows: 5, builtInAppearance: "flowText" },
+      { id: "flavor", label: "Flavor", type: "textarea", rows: 3, builtInAppearance: "flowText" },
     ],
   },
   {
     id: "artwork",
     label: "Artwork",
     fields: [
+      { id: "artwork", label: "Artwork", type: "display", builtInAppearance: "positionedImage" },
       {
         id: "fit",
-        label: "Art fit",
+        label: "Default Art Fit",
         type: "select",
         options: [
           { value: "cover", label: "Cover (preserve ratio)" },
@@ -220,13 +248,14 @@ const fieldSections = [
     id: "footer",
     label: "Footer",
     fields: [
-      { id: "artist", label: "Artist name", type: "text", maxLength: 40 },
+      { id: "artist", label: "Artist name", type: "text", maxLength: 40, builtInAppearance: "positionedText" },
       {
         id: "collector",
         label: "Collector number",
         type: "text",
         maxLength: 16,
         canEdit: false,
+        builtInAppearance: "positionedText",
       },
       {
         id: "rarity",
@@ -239,6 +268,7 @@ const fieldSections = [
           { value: "mythic", label: "Mythic" },
         ],
       },
+      { id: "setSymbol", label: "Set symbol", type: "display", builtInAppearance: "positionedImageColor" },
     ],
   },
 ];
@@ -370,6 +400,65 @@ async function apiFetch(path, options = {}) {
   return data;
 }
 
+function getDefaultBuiltInAppearance(fieldId) {
+  const textColor = state.defaults.text || "#f8f4e8";
+  const accentColor = state.defaults.accent || "#d69d42";
+  const appearances = {
+    name: { position: { x: 29, y: 29 }, size: { fontSize: 22 }, color: textColor },
+    type: { position: { x: 29, y: 55 }, size: { fontSize: 11 }, color: accentColor },
+    subtype: { position: { x: 105, y: 55 }, size: { fontSize: 11 }, color: accentColor },
+    cost: { position: { x: 350, y: 29 }, size: { fontSize: 18 }, color: "#191510" },
+    attack: { position: { x: 246, y: 503 }, size: { fontSize: 20 }, color: textColor },
+    health: { position: { x: 326, y: 503 }, size: { fontSize: 20 }, color: textColor },
+    loyalty: { position: { x: 264, y: 503 }, size: { fontSize: 20 }, color: textColor },
+    ability: { size: { fontSize: 17 }, color: "#242014" },
+    flavor: { size: { fontSize: 14 }, color: "#66573b" },
+    artwork: { position: { x: 29, y: 82 }, size: { width: 362, height: 218 } },
+    artist: { position: { x: 296, y: 552 }, size: { fontSize: 11 }, color: textColor },
+    collector: { position: { x: 65, y: 552 }, size: { fontSize: 11 }, color: textColor },
+    setSymbol: { position: { x: 27, y: 551 }, size: { width: 14, height: 14 }, color: accentColor },
+  };
+  if (fieldId.startsWith("stat_")) return structuredClone(appearances.loyalty);
+  return appearances[fieldId] ? structuredClone(appearances[fieldId]) : {};
+}
+
+function normalizeBuiltInAppearance(savedField, defaultField) {
+  if (!defaultField.builtInAppearance) return {};
+  const hasSavedAppearance = ["position", "size", "color"].some(
+    (propertyName) => Object.hasOwn(savedField || {}, propertyName),
+  );
+  if (!hasSavedAppearance) return {};
+  const fallback = getDefaultBuiltInAppearance(defaultField.id);
+  const isImage = defaultField.builtInAppearance.startsWith("positionedImage");
+  const hasPosition = defaultField.builtInAppearance !== "flowText";
+  const appearance = {};
+  if (hasPosition) {
+    appearance.position = {
+      x: getCustomFieldInteger(savedField?.position?.x, fallback.position?.x || 0),
+      y: getCustomFieldInteger(savedField?.position?.y, fallback.position?.y || 0),
+    };
+  }
+  appearance.size = isImage
+    ? {
+        width: getCustomFieldInteger(savedField?.size?.width, fallback.size?.width || 64, 1),
+        height: getCustomFieldInteger(savedField?.size?.height, fallback.size?.height || 64, 1),
+      }
+    : {
+        fontSize: getCustomFieldInteger(savedField?.size?.fontSize, fallback.size?.fontSize || 16, 1),
+      };
+  if (defaultField.builtInAppearance !== "positionedImage") {
+    appearance.color = /^#[0-9a-f]{6}$/i.test(savedField?.color || "")
+      ? savedField.color
+      : fallback.color;
+  }
+  const legacyComparableAppearance = defaultField.id === "subtype"
+    && appearance.position?.x === 70 && appearance.position?.y === 55
+    ? { ...appearance, position: { x: 105, y: 55 } }
+    : appearance;
+  const matchesLegacyDefaults = JSON.stringify(legacyComparableAppearance) === JSON.stringify(fallback);
+  return matchesLegacyDefaults ? {} : appearance;
+}
+
 function createDefaultSections() {
   const defaultValues = { ...state.defaults, frameUrl: "" };
   fieldSections[0].fields[1].options = state.cardTypes.map((value) => ({ value, label: value }));
@@ -400,7 +489,51 @@ function getFieldLabel(fieldId, fallback) {
   return getField(fieldId)?.label || fallback;
 }
 
+function appendRuleTextWithParentheses(lineElement, line) {
+  if (!line) {
+    lineElement.textContent = "\u00a0";
+    return;
+  }
+  const parentheticalPattern = /\(([^)]*)\)/g;
+  let cursor = 0;
+  let match = parentheticalPattern.exec(line);
+  while (match) {
+    lineElement.append(document.createTextNode(line.slice(cursor, match.index)));
+    const emphasis = document.createElement("em");
+    emphasis.textContent = match[0];
+    lineElement.append(emphasis);
+    cursor = match.index + match[0].length;
+    match = parentheticalPattern.exec(line);
+  }
+  lineElement.append(document.createTextNode(line.slice(cursor)));
+}
+
+function updateTemplateMultilineText(target, value) {
+  const text = String(value || "").trim();
+  target.replaceChildren();
+  if (!text) return;
+  for (const line of text.split(/\r?\n/)) {
+    const lineElement = document.createElement("span");
+    lineElement.className = "card-text-line";
+    lineElement.textContent = line || "\u00a0";
+    target.append(lineElement);
+  }
+}
+
+function updateTemplateRulesText(target, value) {
+  const text = String(value || "").trim();
+  target.replaceChildren();
+  if (!text) return;
+  for (const line of text.split(/\r?\n/)) {
+    const lineElement = document.createElement("span");
+    lineElement.className = "card-text-line";
+    appendRuleTextWithParentheses(lineElement, line);
+    target.append(lineElement);
+  }
+}
+
 function createFieldInput(field) {
+  if (field.type === "display") return null;
   let input;
   if (field.type === "select") {
     input = document.createElement("select");
@@ -439,6 +572,8 @@ function createFieldAction(field, action, title) {
   button.setAttribute("aria-label", `${title}: ${field.label}`);
   if (action === "rename") {
     button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"></path></svg>';
+  } else if (action === "edit-appearance") {
+    button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10"></path><path d="M18 7h2"></path><path d="M14 4v6"></path><path d="M4 17h2"></path><path d="M10 17h10"></path><path d="M7 14v6"></path></svg>';
   } else {
     button.innerHTML = '<span class="trash-icon" aria-hidden="true"></span>';
   }
@@ -552,12 +687,23 @@ function renderTemplateFields() {
 
       const actions = document.createElement("span");
       actions.className = "template-field-actions";
-      actions.append(
-        createFieldAction(field, "rename", "Rename field"),
-        createFieldAction(field, "delete", "Delete field"),
-      );
+      if (field.id !== "fit") {
+        if (field.id !== "artwork") actions.append(createFieldAction(field, "rename", "Rename field"));
+        if (field.builtInAppearance) {
+          const capabilities = getBuiltInAppearanceCapabilities(field);
+          const settings = [
+            capabilities.hasPosition ? "position" : "",
+            capabilities.isStartingSize ? "starting size" : "size",
+            capabilities.hasColor ? "color" : "",
+          ].filter(Boolean).join(", ");
+          actions.append(createFieldAction(field, "edit-appearance", `Edit ${settings}`));
+        }
+        actions.append(createFieldAction(field, "delete", "Delete field"));
+      }
       heading.append(label, actions);
-      wrapper.append(heading, createFieldInput(field));
+      wrapper.append(heading);
+      const fieldInput = createFieldInput(field);
+      if (fieldInput) wrapper.append(fieldInput);
       if (field.id === "cost") {
         wrapper.append(createFieldCheckbox(field, "mustBeNumber", "Must be number"));
       }
@@ -571,6 +717,147 @@ function renderTemplateFields() {
     }
     elements.templateFields.append(fieldset);
   }
+}
+
+function getBuiltInAppearanceCapabilities(field) {
+  const kind = field?.builtInAppearance || "";
+  return {
+    hasPosition: kind !== "flowText" && Boolean(kind),
+    hasColor: kind === "positionedText" || kind === "flowText" || kind === "positionedImageColor",
+    isImage: kind === "positionedImage" || kind === "positionedImageColor",
+    isStartingSize: kind === "flowText",
+  };
+}
+
+const builtInCoordinateBounds = {
+  width: 420,
+  height: Math.round((420 * 88) / 63),
+};
+
+function getBuiltInRenderScale() {
+  const bounds = elements.card.getBoundingClientRect();
+  return {
+    x: bounds.width / builtInCoordinateBounds.width,
+    y: bounds.height / builtInCoordinateBounds.height,
+    font: Math.min(
+      bounds.width / builtInCoordinateBounds.width,
+      bounds.height / builtInCoordinateBounds.height,
+    ),
+  };
+}
+
+function cssColorToHex(value, fallback = "#202621") {
+  if (/^#[0-9a-f]{6}$/i.test(value || "")) return value.toLowerCase();
+  const channels = String(value || "").match(/[\d.]+/g)?.slice(0, 3).map(Number);
+  if (!channels || channels.length < 3) return fallback;
+  return `#${channels.map((channel) => Math.max(0, Math.min(255, Math.round(channel)))
+    .toString(16).padStart(2, "0")).join("")}`;
+}
+
+function getCurrentBuiltInAppearance(field) {
+  if (field.size) {
+    return {
+      ...(field.position ? { position: { ...field.position } } : {}),
+      size: { ...field.size },
+      ...(field.color ? { color: field.color } : {}),
+    };
+  }
+  const target = getBuiltInPreviewElement(field.id);
+  const capabilities = getBuiltInAppearanceCapabilities(field);
+  const scale = getBuiltInRenderScale();
+  const cardBounds = elements.card.getBoundingClientRect();
+  const targetBounds = target.getBoundingClientRect();
+  const measuredText = target.querySelector?.("strong") || target;
+  const measuredStyle = getComputedStyle(measuredText);
+  const targetStyle = getComputedStyle(target);
+  const appearance = {};
+  if (capabilities.hasPosition) {
+    appearance.position = {
+      x: Math.round((targetBounds.left - cardBounds.left) / scale.x),
+      y: Math.round((targetBounds.top - cardBounds.top) / scale.y),
+    };
+  }
+  appearance.size = capabilities.isImage
+    ? {
+        width: Math.max(1, Math.round(Number.parseFloat(targetStyle.width) / scale.x)),
+        height: Math.max(1, Math.round(Number.parseFloat(targetStyle.height) / scale.y)),
+      }
+    : {
+        fontSize: Math.max(1, Math.round(Number.parseFloat(measuredStyle.fontSize) / scale.font)),
+      };
+  if (capabilities.hasColor) {
+    appearance.color = cssColorToHex(
+      field.id === "setSymbol" ? targetStyle.backgroundColor : measuredStyle.color,
+    );
+  }
+  return appearance;
+}
+
+function openBuiltInFieldDialog(fieldId) {
+  const field = getField(fieldId);
+  if (!field?.builtInAppearance) return;
+  const capabilities = getBuiltInAppearanceCapabilities(field);
+  const bounds = builtInCoordinateBounds;
+  const appearance = getCurrentBuiltInAppearance(field);
+  state.editingBuiltInFieldId = field.id;
+  elements.builtInFieldDialogTitle.textContent = `Edit ${field.label}`;
+  elements.builtInFieldPositionGroup.classList.toggle("hidden", !capabilities.hasPosition);
+  elements.builtInFieldFontSizeGroup.classList.toggle("hidden", capabilities.isImage);
+  elements.builtInFieldImageSizeGroup.classList.toggle("hidden", !capabilities.isImage);
+  elements.builtInFieldColorGroup.classList.toggle("hidden", !capabilities.hasColor);
+  elements.builtInFieldFontSizeLabel.textContent = capabilities.isStartingSize
+    ? "Starting size (font size in pixels)"
+    : "Size (font size in pixels)";
+  elements.builtInFieldXInput.required = capabilities.hasPosition;
+  elements.builtInFieldYInput.required = capabilities.hasPosition;
+  elements.builtInFieldFontSizeInput.required = !capabilities.isImage;
+  elements.builtInFieldWidthInput.required = capabilities.isImage;
+  elements.builtInFieldHeightInput.required = capabilities.isImage;
+  elements.builtInFieldXInput.max = String(bounds.width);
+  elements.builtInFieldYInput.max = String(bounds.height);
+  elements.builtInFieldPositionHelp.textContent = `X: 0–${bounds.width}px; Y: 0–${bounds.height}px.`;
+  elements.builtInFieldXInput.value = String(appearance.position?.x ?? 0);
+  elements.builtInFieldYInput.value = String(appearance.position?.y ?? 0);
+  elements.builtInFieldFontSizeInput.value = String(appearance.size?.fontSize ?? 16);
+  elements.builtInFieldWidthInput.value = String(appearance.size?.width ?? 64);
+  elements.builtInFieldHeightInput.value = String(appearance.size?.height ?? 64);
+  elements.builtInFieldColorInput.value = appearance.color || "#202621";
+  elements.builtInFieldStatus.textContent = "";
+  elements.builtInFieldDialog.showModal();
+  const firstInput = capabilities.hasPosition
+    ? elements.builtInFieldXInput
+    : (capabilities.isImage ? elements.builtInFieldWidthInput : elements.builtInFieldFontSizeInput);
+  firstInput.focus();
+}
+
+function closeBuiltInFieldDialog() {
+  state.editingBuiltInFieldId = "";
+  elements.builtInFieldStatus.textContent = "";
+  elements.builtInFieldDialog.close();
+}
+
+function saveBuiltInFieldAppearance() {
+  if (!elements.builtInFieldForm.reportValidity()) return;
+  const field = getField(state.editingBuiltInFieldId);
+  if (!field) return closeBuiltInFieldDialog();
+  const capabilities = getBuiltInAppearanceCapabilities(field);
+  if (capabilities.hasPosition) {
+    field.position = {
+      x: elements.builtInFieldXInput.valueAsNumber,
+      y: elements.builtInFieldYInput.valueAsNumber,
+    };
+  }
+  field.size = capabilities.isImage
+    ? {
+        width: elements.builtInFieldWidthInput.valueAsNumber,
+        height: elements.builtInFieldHeightInput.valueAsNumber,
+      }
+    : { fontSize: elements.builtInFieldFontSizeInput.valueAsNumber };
+  if (capabilities.hasColor) field.color = elements.builtInFieldColorInput.value;
+  closeBuiltInFieldDialog();
+  updateCardPreview();
+  markDirty();
+  setTemplateStatus(`${field.label} appearance updated. Save to keep this change.`);
 }
 
 function normalizeCustomFieldName(value) {
@@ -892,7 +1179,7 @@ function normalizeSavedDynamicStatField(savedField) {
   if (!savedField?.dynamicStat || !fieldId.startsWith("stat_")) return null;
   const label = String(savedField.label || "").trim().slice(0, 60);
   if (!label) return null;
-  return {
+  const defaultField = {
     id: fieldId,
     label,
     type: "number",
@@ -900,7 +1187,9 @@ function normalizeSavedDynamicStatField(savedField) {
     max: 99,
     value: String(savedField.value ?? "0"),
     dynamicStat: true,
+    builtInAppearance: "positionedText",
   };
+  return { ...defaultField, ...normalizeBuiltInAppearance(savedField, defaultField) };
 }
 
 function normalizeSavedSections(savedSections) {
@@ -926,7 +1215,10 @@ function normalizeSavedSections(savedSections) {
       if (fields.some((field) => field.id === defaultField.id)) continue;
       const normalizedField = {
         ...defaultField,
-        label: String(savedField.label || defaultField.label).slice(0, 60),
+        ...normalizeBuiltInAppearance(savedField, defaultField),
+        label: defaultField.id === "fit"
+          ? defaultField.label
+          : String(savedField.label || defaultField.label).slice(0, 60),
         value: String(savedField.value ?? defaultField.value),
       };
       if (defaultField.id === "cost") {
@@ -947,6 +1239,10 @@ function normalizeSavedSections(savedSections) {
         }
       }
       fields.push(normalizedField);
+    }
+    if (defaultSection.id === "artwork" && fields.some((field) => field.id === "fit")
+      && !fields.some((field) => field.id === "artwork")) {
+      fields.unshift(fieldsById.get("artwork"));
     }
     normalized.push({ id: defaultSection.id, label: defaultSection.label, fields });
   }
@@ -1107,7 +1403,200 @@ async function generateTemplateBackground() {
   }
 }
 
+function getBuiltInPreviewElement(fieldId) {
+  return {
+    name: elements.cardName,
+    type: elements.cardTypeValue,
+    subtype: elements.cardSubtypeValue,
+    cost: elements.cardCost,
+    attack: elements.attackStat,
+    health: elements.healthStat,
+    loyalty: elements.loyaltyStat,
+    ability: elements.cardAbility,
+    flavor: elements.cardFlavor,
+    artwork: elements.previewArtwork,
+    artist: elements.cardArtist,
+    collector: elements.cardCollector,
+    setSymbol: elements.setSymbol,
+  }[fieldId] || (fieldId.startsWith("stat_") ? elements.loyaltyStat : null);
+}
+
+function applyBuiltInFieldAppearance(field) {
+  if (field.dynamicStat) {
+    const selectedOption = getField("statMode")?.options?.find(
+      (option) => option.value === getFieldValue("statMode"),
+    );
+    if (selectedOption?.fieldId !== field.id) return;
+  }
+  const target = getBuiltInPreviewElement(field.id);
+  if (!target || !field.builtInAppearance || !field.size) return;
+  const capabilities = getBuiltInAppearanceCapabilities(field);
+  const scale = getBuiltInRenderScale();
+  if (capabilities.hasColor) {
+    target.style.color = field.color;
+    target.querySelectorAll?.(".stat-label, strong").forEach((item) => { item.style.color = field.color; });
+  }
+  if (capabilities.isImage) {
+    target.style.width = "";
+    target.style.height = "";
+  } else {
+    const scaledFontSize = field.size.fontSize * scale.font;
+    target.style.fontSize = `${scaledFontSize}px`;
+    target.querySelectorAll?.("strong").forEach((item) => { item.style.fontSize = `${scaledFontSize}px`; });
+    target.querySelectorAll?.(".stat-label").forEach((item) => {
+      item.style.fontSize = `${Math.max(1, scaledFontSize * 0.55)}px`;
+    });
+  }
+}
+
+function applyBuiltInFieldPosition(field) {
+  if (!field.position) return;
+  if (field.dynamicStat) {
+    const selectedOption = getField("statMode")?.options?.find(
+      (option) => option.value === getFieldValue("statMode"),
+    );
+    if (selectedOption?.fieldId !== field.id) return;
+  }
+  const target = getBuiltInPreviewElement(field.id);
+  if (!target) return;
+  const scale = getBuiltInRenderScale();
+  target.style.transform = "";
+  const cardBounds = elements.card.getBoundingClientRect();
+  const targetBounds = target.getBoundingClientRect();
+  const currentX = targetBounds.left - cardBounds.left;
+  const currentY = targetBounds.top - cardBounds.top;
+  let transform = `translate(${field.position.x * scale.x - currentX}px, ${field.position.y * scale.y - currentY}px)`;
+  const capabilities = getBuiltInAppearanceCapabilities(field);
+  if (capabilities.isImage && targetBounds.width && targetBounds.height) {
+    transform += ` scale(${(field.size.width * scale.x) / targetBounds.width}, ${(field.size.height * scale.y) / targetBounds.height})`;
+    target.style.transformOrigin = "top left";
+  }
+  target.style.transform = transform;
+}
+
+function updateTemplateSetSymbol() {
+  const field = getField("setSymbol");
+  const setCode = elements.templateSetInput.value || "DEFAULT";
+  const cardSet = state.sets.find((item) => (item.code || "DEFAULT") === setCode);
+  const symbolUrl = String(cardSet?.symbol || "").trim();
+  elements.setSymbol.style.backgroundColor = field?.color || "";
+  if (symbolUrl !== state.setSymbolMaskSource) {
+    const loadToken = ++state.setSymbolMaskLoadToken;
+    state.setSymbolMaskSource = symbolUrl;
+    state.setSymbolMaskDataUrl = "";
+    state.setSymbolMaskLoad = symbolUrl
+      ? fetchImageBlob(getAbsoluteTemplateImageUrl(symbolUrl))
+          .then((blob) => readBlobAsDataUrl(blob))
+          .then((dataUrl) => {
+            if (loadToken !== state.setSymbolMaskLoadToken) return;
+            state.setSymbolMaskDataUrl = dataUrl;
+            elements.setSymbol.style.maskImage = `url("${dataUrl}")`;
+            elements.setSymbol.style.webkitMaskImage = `url("${dataUrl}")`;
+          })
+          .catch(() => {})
+      : Promise.resolve();
+  }
+  const maskUrl = state.setSymbolMaskDataUrl;
+  elements.setSymbol.style.maskImage = maskUrl ? `url("${maskUrl}")` : "";
+  elements.setSymbol.style.webkitMaskImage = maskUrl ? `url("${maskUrl}")` : "";
+  elements.setSymbol.classList.toggle("has-set-symbol-image", Boolean(symbolUrl));
+}
+
+function applyBuiltInFieldAppearances() {
+  for (const section of state.sections) {
+    for (const field of section.fields) applyBuiltInFieldAppearance(field);
+  }
+}
+
+function applyBuiltInFieldPositions() {
+  for (const section of state.sections) {
+    for (const field of section.fields) applyBuiltInFieldPosition(field);
+  }
+}
+
+function resetTemplateBuiltInAppearanceStyles() {
+  const fieldIds = [
+    "name", "type", "subtype", "cost", "attack", "health", "loyalty", "ability", "flavor",
+    "artwork", "artist", "collector", "setSymbol",
+  ];
+  for (const fieldId of fieldIds) {
+    const target = getBuiltInPreviewElement(fieldId);
+    if (!target) continue;
+    for (const propertyName of ["transform", "transform-origin", "color", "font-size", "width", "height"]) {
+      target.style.removeProperty(propertyName);
+    }
+    target.querySelectorAll?.(".stat-label, strong").forEach((item) => {
+      item.style.removeProperty("color");
+      item.style.removeProperty("font-size");
+    });
+  }
+  elements.setSymbol.style.removeProperty("background-color");
+}
+
+function fitTemplateCardName() {
+  const name = elements.cardName;
+  name.classList.remove("is-wrapped");
+  const configuredSize = getField("name")?.size?.fontSize;
+  const scale = getBuiltInRenderScale();
+  name.style.fontSize = configuredSize ? `${configuredSize * scale.font}px` : "";
+  const defaultSize = Number.parseFloat(getComputedStyle(name).fontSize);
+  const minSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.8;
+  let size = defaultSize;
+  while (name.scrollWidth > name.clientWidth && size > minSize) {
+    size = Math.max(minSize, size - 1);
+    name.style.fontSize = `${size}px`;
+  }
+  if (name.scrollWidth > name.clientWidth) name.classList.add("is-wrapped");
+}
+
+function shouldCenterShortTemplateRulesText() {
+  const hasAbility = Boolean(getFieldValue("ability").trim());
+  const hasFlavor = Boolean(getFieldValue("flavor").trim());
+  if (!hasAbility || !hasFlavor) return false;
+  return elements.cardAbility.scrollHeight + elements.cardFlavor.scrollHeight
+    <= elements.previewText.clientHeight * 0.48;
+}
+
+function fitTemplateRulesText() {
+  const panel = elements.previewText;
+  const ability = elements.cardAbility;
+  const flavor = elements.cardFlavor;
+  panel.classList.remove("is-short-split");
+  const scale = getBuiltInRenderScale();
+  const abilitySize = getField("ability")?.size?.fontSize;
+  const flavorSize = getField("flavor")?.size?.fontSize;
+  ability.style.fontSize = abilitySize ? `${abilitySize * scale.font}px` : "";
+  ability.style.lineHeight = "";
+  flavor.style.fontSize = flavorSize ? `${flavorSize * scale.font}px` : "";
+  flavor.style.lineHeight = "";
+  const rootSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const minAbilitySize = rootSize * 0.5;
+  const minFlavorSize = rootSize * 0.48;
+  let currentAbilitySize = Number.parseFloat(getComputedStyle(ability).fontSize);
+  let currentFlavorSize = Number.parseFloat(getComputedStyle(flavor).fontSize);
+  while (panel.scrollHeight > panel.clientHeight
+    && (currentAbilitySize > minAbilitySize || currentFlavorSize > minFlavorSize)) {
+    if (currentAbilitySize > minAbilitySize) {
+      currentAbilitySize = Math.max(minAbilitySize, currentAbilitySize - 1);
+      ability.style.fontSize = `${currentAbilitySize}px`;
+      ability.style.lineHeight = "1.22";
+    }
+    if (panel.scrollHeight <= panel.clientHeight) break;
+    if (currentFlavorSize > minFlavorSize) {
+      currentFlavorSize = Math.max(minFlavorSize, currentFlavorSize - 1);
+      flavor.style.fontSize = `${currentFlavorSize}px`;
+      flavor.style.lineHeight = "1.18";
+    }
+  }
+  panel.classList.toggle("is-short-split", shouldCenterShortTemplateRulesText());
+}
+
 function updateCardPreview() {
+  resetTemplateBuiltInAppearanceStyles();
+  elements.card.classList.toggle(
+    "has-built-in-layout",
+    state.sections.some((section) => section.fields.some((field) => field.position || field.size || field.color)),
+  );
   const type = getFieldValue("type", state.defaults.type);
   const subtype = getFieldValue("subtype", state.defaults.subtype);
   const statMode = getFieldValue("statMode", state.defaults.statMode || "combat");
@@ -1123,17 +1612,21 @@ function updateCardPreview() {
 
   elements.cardName.textContent = hasName ? getFieldValue("name") || "Untitled Card" : "";
   elements.cardName.classList.toggle("hidden", !hasName);
-  elements.cardType.textContent = [hasType ? type : "", hasSubtype ? subtype : ""].filter(Boolean).join(" - ");
+  elements.cardTypeValue.textContent = hasType ? type : "";
+  elements.cardSubtypeText.textContent = hasSubtype ? subtype : "";
+  elements.cardTypeSeparator.classList.toggle("hidden", !hasType || !hasSubtype || !type || !subtype);
   elements.cardType.classList.toggle("hidden", !hasType && !hasSubtype);
   elements.cardCost.textContent = `$${getFieldValue("cost", state.defaults.cost || "0") || "0"}`;
   elements.cardCost.classList.toggle("hidden", !getField("cost"));
 
-  elements.cardAbility.textContent = hasAbility ? getFieldValue("ability") : "";
-  elements.cardFlavor.textContent = hasFlavor ? getFieldValue("flavor") : "";
-  elements.cardFlavor.classList.toggle("has-separator", hasAbility && hasFlavor);
+  const abilityValue = hasAbility ? getFieldValue("ability") : "";
+  const flavorValue = hasFlavor ? getFieldValue("flavor") : "";
+  updateTemplateRulesText(elements.cardAbility, abilityValue);
+  updateTemplateMultilineText(elements.cardFlavor, flavorValue);
+  elements.cardFlavor.classList.toggle("has-separator", Boolean(abilityValue.trim() && flavorValue.trim()));
   elements.previewText.classList.toggle("hidden", !hasAbility && !hasFlavor);
 
-  elements.previewArtwork.classList.toggle("hidden", !getField("fit"));
+  elements.previewArtwork.classList.toggle("hidden", !getField("artwork"));
   const artFit = getFieldValue("fit", state.defaults.fit || "cover");
   elements.previewArtwork.style.backgroundSize = artFit === "fill" ? "100% 100%" : artFit;
 
@@ -1152,8 +1645,10 @@ function updateCardPreview() {
   elements.cardLoyalty.textContent = customStatField
     ? customStatField.value
     : getFieldValue("loyalty", state.defaults.loyalty || "0");
-  elements.attackStatLabel.textContent = getFieldLabel("attack", "Attack").toUpperCase();
-  elements.healthStatLabel.textContent = getFieldLabel("health", "Health").toUpperCase();
+  const attackLabel = getFieldLabel("attack", "Attack");
+  const healthLabel = getFieldLabel("health", "Health");
+  elements.attackStatLabel.textContent = attackLabel === "Attack" ? "ATK" : attackLabel.toUpperCase();
+  elements.healthStatLabel.textContent = healthLabel === "Health" ? "HP" : healthLabel.toUpperCase();
   elements.loyaltyStatLabel.textContent = customStatField
     ? customStatField.label.toUpperCase()
     : getFieldLabel("loyalty", "Loyalty").toUpperCase();
@@ -1169,7 +1664,7 @@ function updateCardPreview() {
   document.documentElement.style.setProperty("--panel", getFieldValue("panel", state.defaults.panel || "#fff7df"));
   document.documentElement.style.setProperty("--rarity-color", state.rarityInfo.colors[rarity] || "#b8c2bc");
 
-  elements.setSymbol.classList.toggle("hidden", !getField("rarity"));
+  elements.setSymbol.classList.toggle("hidden", !getField("setSymbol"));
   elements.cardCollector.textContent = getField("collector") ? getFieldValue("collector") || "1/1" : "";
   const rarityField = getField("rarity");
   const selectedRarity = rarityField?.options?.find((option) => option.value === rarity);
@@ -1181,8 +1676,13 @@ function updateCardPreview() {
     : "";
   elements.previewFooter.classList.toggle(
     "hidden",
-    !getField("collector") && !getField("rarity") && !getField("artist"),
+    !getField("collector") && !getField("rarity") && !getField("artist") && !getField("setSymbol"),
   );
+  updateTemplateSetSymbol();
+  applyBuiltInFieldAppearances();
+  fitTemplateCardName();
+  fitTemplateRulesText();
+  applyBuiltInFieldPositions();
   renderCustomFieldPreview();
 }
 
@@ -1299,6 +1799,7 @@ function addTemplateSelectOption(fieldId) {
       max: 99,
       value: "0",
       dynamicStat: true,
+      builtInAppearance: "positionedText",
     });
   }
   field.options = [...(field.options || []), option];
@@ -1350,6 +1851,9 @@ function deleteField(fieldId) {
     const fieldIndex = section.fields.findIndex((field) => field.id === fieldId);
     if (fieldIndex < 0) continue;
     const [deletedField] = section.fields.splice(fieldIndex, 1);
+    if (deletedField.id === "artwork") {
+      section.fields = section.fields.filter((field) => field.id !== "fit");
+    }
     if (deletedField.id === "statMode") {
       section.fields = section.fields.filter((field) => !field.dynamicStat);
     } else if (deletedField.dynamicStat) {
@@ -1562,6 +2066,7 @@ async function handleTemplateSelectionChange() {
 
 async function handleTemplateSetChange() {
   markDirty();
+  updateCardPreview();
   if (!state.idToken || isJwtExpired(state.idToken)) {
     state.templates = [];
     renderTemplateOptions();
@@ -1770,6 +2275,7 @@ function waitForRenderPaint() {
 
 async function createTemplateCanvas(scale = 2) {
   updateCardPreview();
+  await state.setSymbolMaskLoad;
   if (elements.cardFrameImage.getAttribute("src") && !elements.cardFrameImage.complete) {
     await elements.cardFrameImage.decode().catch(() => {});
   }
@@ -1869,6 +2375,11 @@ async function saveTemplate() {
               label: field.label,
               value: field.value,
             };
+            if (field.builtInAppearance && field.size) {
+              if (field.position) savedField.position = { ...field.position };
+              savedField.size = { ...field.size };
+              if (field.color) savedField.color = field.color;
+            }
             if (field.id === "cost") savedField.mustBeNumber = Boolean(field.mustBeNumber);
             if (field.id === "collector") savedField.canEdit = Boolean(field.canEdit);
             if (field.id === "statMode" || field.id === "rarity") {
@@ -1936,6 +2447,7 @@ function handleFieldAction(event) {
   const button = event.target.closest("[data-action][data-field-id]");
   if (!button) return;
   if (button.dataset.action === "rename") openRenameField(button.dataset.fieldId);
+  if (button.dataset.action === "edit-appearance") openBuiltInFieldDialog(button.dataset.fieldId);
   if (button.dataset.action === "delete") deleteField(button.dataset.fieldId);
   if (button.dataset.action === "delete-option") {
     deleteTemplateSelectOption(button.dataset.fieldId, button.dataset.optionValue);
@@ -2011,6 +2523,15 @@ function attachEvents() {
     renameField();
   });
   elements.cancelRenameFieldButton.addEventListener("click", closeRenameField);
+  elements.builtInFieldForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveBuiltInFieldAppearance();
+  });
+  elements.cancelBuiltInFieldButton.addEventListener("click", closeBuiltInFieldDialog);
+  elements.builtInFieldDialog.addEventListener("close", () => {
+    state.editingBuiltInFieldId = "";
+    elements.builtInFieldStatus.textContent = "";
+  });
   elements.accountMenuButton.addEventListener("click", () => {
     const open = elements.accountMenu.classList.contains("hidden");
     elements.accountMenu.classList.toggle("hidden", !open);

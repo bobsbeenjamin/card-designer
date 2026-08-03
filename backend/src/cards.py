@@ -72,11 +72,18 @@ TEMPLATE_FIELDS_BY_SECTION = {
     "identity": {"name", "type", "subtype"},
     "numbers": {"cost", "statMode", "attack", "health", "loyalty"},
     "text": {"ability", "flavor"},
-    "artwork": {"fit"},
+    "artwork": {"artwork", "fit"},
     "colors": {"frame", "accent", "text", "panel"},
     "cardFrame": {"frameUrl", "frameFit"},
-    "footer": {"artist", "collector", "rarity"},
+    "footer": {"artist", "collector", "rarity", "setSymbol"},
 }
+
+POSITIONED_TEXT_TEMPLATE_FIELDS = {
+    "name", "type", "subtype", "cost", "attack", "health", "loyalty", "artist", "collector",
+}
+FLOW_TEXT_TEMPLATE_FIELDS = {"ability", "flavor"}
+POSITIONED_IMAGE_TEMPLATE_FIELDS = {"artwork", "setSymbol"}
+COLORED_IMAGE_TEMPLATE_FIELDS = {"setSymbol"}
 
 ALLOWED_FIELDS = {
     "name",
@@ -1661,6 +1668,69 @@ def validate_card_set(user_id, set_code):
         raise ValueError("Card set does not exist.")
 
 
+def clean_built_in_template_measurement(value, label, minimum=0):
+    """Return one bounded whole-number built-in template measurement."""
+    if isinstance(value, bool):
+        raise ValueError(f"Built-in field {label} must be a whole number.")
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Built-in field {label} must be a whole number.")
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"Built-in field {label} must be a whole number.")
+    if number < minimum or number > 5000:
+        raise ValueError(f"Built-in field {label} must be between {minimum} and 5000.")
+    return number
+
+
+def clean_built_in_template_appearance(field_id, field, is_dynamic_stat=False):
+    """Validate position, size, and color settings for configurable built-in fields."""
+    is_positioned_text = field_id in POSITIONED_TEXT_TEMPLATE_FIELDS or is_dynamic_stat
+    is_flow_text = field_id in FLOW_TEXT_TEMPLATE_FIELDS
+    is_image = field_id in POSITIONED_IMAGE_TEMPLATE_FIELDS
+    if not (is_positioned_text or is_flow_text or is_image):
+        return {}
+    if not any(property_name in field for property_name in ("position", "size", "color")):
+        return {}
+
+    cleaned = {}
+    if is_positioned_text or is_image:
+        position = field.get("position")
+        if not isinstance(position, dict):
+            raise ValueError("Built-in field positions must contain x and y coordinates.")
+        cleaned["position"] = {
+            "x": clean_built_in_template_measurement(position.get("x"), "x coordinate"),
+            "y": clean_built_in_template_measurement(position.get("y"), "y coordinate"),
+        }
+
+    size = field.get("size")
+    if not isinstance(size, dict):
+        raise ValueError("Built-in field sizes are required.")
+    cleaned["size"] = (
+        {
+            "width": clean_built_in_template_measurement(size.get("width"), "width", minimum=1),
+            "height": clean_built_in_template_measurement(size.get("height"), "height", minimum=1),
+        }
+        if is_image
+        else {
+            "fontSize": clean_built_in_template_measurement(
+                size.get("fontSize"), "font size", minimum=1
+            )
+        }
+    )
+
+    if is_positioned_text or is_flow_text or field_id in COLORED_IMAGE_TEMPLATE_FIELDS:
+        color = str(field.get("color") or "").strip().lower()
+        if (
+            len(color) != 7
+            or not color.startswith("#")
+            or any(character not in "0123456789abcdef" for character in color[1:])
+        ):
+            raise ValueError("Built-in field colors must be six-digit hex colors.")
+        cleaned["color"] = color
+    return cleaned
+
+
 def list_sets(user_id):
     """Return all accepted sets owned by the user."""
     ensure_default_set_if_missing(user_id)
@@ -1730,6 +1800,9 @@ def clean_template_sections(body):
             if len(value) > 5000:
                 raise ValueError("Template field values are too long.")
             cleaned_field = {"id": field_id, "label": label, "value": value}
+            cleaned_field.update(
+                clean_built_in_template_appearance(field_id, field, is_dynamic_stat)
+            )
 
             if field_id == "cost":
                 must_be_number = field.get("mustBeNumber", True)
@@ -1769,6 +1842,11 @@ def clean_template_sections(body):
             }
             if not option_field_ids.issubset(field_ids) or dynamic_field_ids != option_field_ids:
                 raise ValueError("Each custom Stat mode item must have a matching Numbers field.")
+
+        if section_id == "artwork":
+            artwork_field_ids = {field["id"] for field in cleaned_fields}
+            if "artwork" in artwork_field_ids and "fit" not in artwork_field_ids:
+                raise ValueError("Artwork requires Default Art Fit.")
 
         cleaned_sections.append({
             "id": section_id,

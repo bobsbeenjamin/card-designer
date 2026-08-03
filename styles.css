@@ -702,6 +702,33 @@ h1 {
   text-transform: uppercase;
 }
 
+.card-type > span {
+  display: inline-block;
+}
+
+#cardSubtypeValue {
+  vertical-align: baseline;
+}
+
+#cardTypeSeparator {
+  display: inline-block;
+  letter-spacing: 0;
+  margin-inline: 0.42em;
+  vertical-align: baseline;
+}
+
+.card-frame.has-built-in-layout .card-type {
+  overflow: visible;
+}
+
+.card-frame.has-built-in-layout #cardArtist,
+.card-frame.has-built-in-layout #cardCollector {
+  flex: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
 .card-top h2 {
   color: var(--card-text);
   font-family: Georgia, "Times New Roman", serif;
@@ -897,8 +924,19 @@ h1 {
   border: 2px solid rgba(255, 255, 255, 0.5);
   flex: 0 0 14px;
   height: 14px;
-  transform: rotate(45deg);
+  rotate: 45deg;
   width: 14px;
+}
+
+.set-symbol.has-set-symbol-image {
+  border: 0;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  rotate: 0deg;
 }
 
 .card-bottom {

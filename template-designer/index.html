@@ -113,7 +113,9 @@
               <header id="previewIdentity" class="card-top">
                 <div class="card-title-lines">
                   <h2 id="cardName"></h2>
-                  <p id="cardType" class="card-type"></p>
+                  <p id="cardType" class="card-type">
+                    <span id="cardTypeValue"></span><span id="cardSubtypeValue"><span id="cardTypeSeparator" aria-hidden="true">-</span><span id="cardSubtypeText"></span></span>
+                  </p>
                 </div>
                 <div id="cardCost" class="cost-badge"></div>
               </header>
@@ -210,6 +212,42 @@
         <div class="modal-actions two-up">
           <button class="button primary" type="submit">Rename</button>
           <button id="cancelRenameFieldButton" class="button subtle" type="button">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="builtInFieldDialog" class="modal-dialog custom-field-dialog" aria-labelledby="builtInFieldDialogTitle">
+      <form id="builtInFieldForm" class="modal-card custom-field-modal-card">
+        <h2 id="builtInFieldDialogTitle">Edit Built-in Field</h2>
+        <div id="builtInFieldPositionGroup" class="custom-field-form-group">
+          <span class="custom-field-group-label">Position</span>
+          <div class="custom-field-value-grid">
+            <label><span>X</span><input id="builtInFieldXInput" type="number" min="0" step="1" /></label>
+            <label><span>Y</span><input id="builtInFieldYInput" type="number" min="0" step="1" /></label>
+          </div>
+          <p id="builtInFieldPositionHelp" class="custom-field-help"></p>
+        </div>
+        <div id="builtInFieldFontSizeGroup" class="custom-field-form-group">
+          <label>
+            <span id="builtInFieldFontSizeLabel">Size (font size in pixels)</span>
+            <input id="builtInFieldFontSizeInput" type="number" min="1" step="1" />
+          </label>
+        </div>
+        <div id="builtInFieldImageSizeGroup" class="custom-field-form-group hidden">
+          <span class="custom-field-group-label">Size (pixels)</span>
+          <div class="custom-field-value-grid">
+            <label><span>Width</span><input id="builtInFieldWidthInput" type="number" min="1" step="1" /></label>
+            <label><span>Height</span><input id="builtInFieldHeightInput" type="number" min="1" step="1" /></label>
+          </div>
+        </div>
+        <label id="builtInFieldColorGroup">
+          <span>Color</span>
+          <input id="builtInFieldColorInput" type="color" />
+        </label>
+        <p id="builtInFieldStatus" class="status-line" aria-live="polite"></p>
+        <div class="modal-actions two-up">
+          <button class="button primary" type="submit">Save Changes</button>
+          <button id="cancelBuiltInFieldButton" class="button subtle" type="button">Cancel</button>
         </div>
       </form>
     </dialog>

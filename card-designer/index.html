@@ -193,7 +193,9 @@
               <header class="card-top">
                 <div class="card-title-lines">
                   <h2 id="cardName"></h2>
-                  <p id="cardType" class="card-type"></p>
+                  <p id="cardType" class="card-type">
+                    <span id="cardTypeValue"></span><span id="cardSubtypeValue"><span id="cardTypeSeparator" aria-hidden="true">-</span><span id="cardSubtypeText"></span></span>
+                  </p>
                 </div>
                 <div id="cardCost" class="cost-badge"></div>
               </header>
@@ -213,11 +215,11 @@
               <footer class="card-footer">
                 <div class="card-bottom">
                   <div id="combatStats" class="stat-pair">
-                    <div>
+                    <div id="attackStat">
                       <span class="stat-label">ATK</span>
                       <strong id="cardAttack"></strong>
                     </div>
-                    <div>
+                    <div id="healthStat">
                       <span class="stat-label">HP</span>
                       <strong id="cardHealth"></strong>
                     </div>

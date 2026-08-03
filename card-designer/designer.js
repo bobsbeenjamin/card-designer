@@ -167,6 +167,10 @@ const state = {
   customFieldObjectUrls: [],
   customFieldPreviewToken: 0,
   customFieldImageLoad: Promise.resolve(),
+  setSymbolMaskSource: "",
+  setSymbolMaskDataUrl: "",
+  setSymbolMaskLoadToken: 0,
+  setSymbolMaskLoad: Promise.resolve(),
   artObjectUrl: "",
   artUrl: "",
   pendingArtUpload: null,
@@ -199,17 +203,24 @@ const elements = {
   rulesPanel: document.querySelector(".rules-panel"),
   cardName: document.querySelector("#cardName"),
   cardType: document.querySelector("#cardType"),
+  cardTypeValue: document.querySelector("#cardTypeValue"),
+  cardTypeSeparator: document.querySelector("#cardTypeSeparator"),
+  cardSubtypeValue: document.querySelector("#cardSubtypeValue"),
+  cardSubtypeText: document.querySelector("#cardSubtypeText"),
   cardCost: document.querySelector("#cardCost"),
   cardAttack: document.querySelector("#cardAttack"),
   cardHealth: document.querySelector("#cardHealth"),
   cardLoyalty: document.querySelector("#cardLoyalty"),
   combatStats: document.querySelector("#combatStats"),
+  attackStat: document.querySelector("#attackStat"),
+  healthStat: document.querySelector("#healthStat"),
   loyaltyStat: document.querySelector("#loyaltyStat"),
   cardAbility: document.querySelector("#cardAbility"),
   cardFlavor: document.querySelector("#cardFlavor"),
   cardArtist: document.querySelector("#cardArtist"),
   cardCollector: document.querySelector("#cardCollector"),
   cardRarity: document.querySelector("#cardRarity"),
+  setSymbol: document.querySelector("#setSymbol"),
   nameInput: document.querySelector("#nameInput"),
   setInput: document.querySelector("#setInput"),
   typeInput: document.querySelector("#typeInput"),
@@ -610,6 +621,7 @@ const defaultDesignerFieldLabels = {
   ability: "Rules",
   flavor: "Flavor",
   fit: "Art fit",
+  artwork: "Artwork",
   frame: "Frame",
   accent: "Accent",
   text: "Text",
@@ -619,6 +631,7 @@ const defaultDesignerFieldLabels = {
   artist: "Artist name",
   collector: "Collector number",
   rarity: "Rarity",
+  setSymbol: "Set symbol",
 };
 
 function getTemplateField(fieldId, sections = state.templateSections) {
@@ -675,11 +688,125 @@ function setSelectItems(select, options, selectedValue = "") {
     : select.options[0]?.value || "";
 }
 
+function getBuiltInAppearanceCapabilities(field) {
+  const isDynamicStat = Boolean(field?.dynamicStat) || String(field?.id || "").startsWith("stat_");
+  const positionedTextIds = new Set([
+    "name", "type", "subtype", "cost", "attack", "health", "loyalty", "artist", "collector",
+  ]);
+  const flowTextIds = new Set(["ability", "flavor"]);
+  const imageIds = new Set(["artwork", "setSymbol"]);
+  const fieldId = field?.id || "";
+  return {
+    hasPosition: positionedTextIds.has(fieldId) || imageIds.has(fieldId) || isDynamicStat,
+    hasColor: positionedTextIds.has(fieldId) || flowTextIds.has(fieldId) || fieldId === "setSymbol" || isDynamicStat,
+    isImage: imageIds.has(fieldId),
+  };
+}
+
+function getLegacyBuiltInAppearance(fieldId) {
+  const textColor = defaults.text || "#f8f4e8";
+  const accentColor = defaults.accent || "#d69d42";
+  const appearances = {
+    name: { position: { x: 29, y: 29 }, size: { fontSize: 22 }, color: textColor },
+    type: { position: { x: 29, y: 55 }, size: { fontSize: 11 }, color: accentColor },
+    subtype: { position: { x: 105, y: 55 }, size: { fontSize: 11 }, color: accentColor },
+    cost: { position: { x: 350, y: 29 }, size: { fontSize: 18 }, color: "#191510" },
+    attack: { position: { x: 246, y: 503 }, size: { fontSize: 20 }, color: textColor },
+    health: { position: { x: 326, y: 503 }, size: { fontSize: 20 }, color: textColor },
+    loyalty: { position: { x: 264, y: 503 }, size: { fontSize: 20 }, color: textColor },
+    ability: { size: { fontSize: 17 }, color: "#242014" },
+    flavor: { size: { fontSize: 14 }, color: "#66573b" },
+    artwork: { position: { x: 29, y: 82 }, size: { width: 362, height: 218 } },
+    artist: { position: { x: 296, y: 552 }, size: { fontSize: 11 }, color: textColor },
+    collector: { position: { x: 65, y: 552 }, size: { fontSize: 11 }, color: textColor },
+    setSymbol: { position: { x: 27, y: 551 }, size: { width: 14, height: 14 }, color: accentColor },
+  };
+  return fieldId.startsWith("stat_") ? appearances.loyalty : appearances[fieldId];
+}
+
+function hasExplicitBuiltInAppearance(field) {
+  if (!field?.size) return false;
+  const legacy = getLegacyBuiltInAppearance(field.id);
+  if (!legacy) return true;
+  const fieldX = Number(field.position?.x);
+  const fieldY = Number(field.position?.y);
+  const samePosition = !legacy.position || (
+    fieldY === legacy.position.y
+    && (fieldX === legacy.position.x || (field.id === "subtype" && fieldX === 70))
+  );
+  const sameSize = legacy.size.fontSize !== undefined
+    ? Number(field.size?.fontSize) === legacy.size.fontSize
+    : Number(field.size?.width) === legacy.size.width && Number(field.size?.height) === legacy.size.height;
+  const sameColor = !legacy.color || String(field.color || "").toLowerCase() === legacy.color.toLowerCase();
+  return !(samePosition && sameSize && sameColor);
+}
+
+const builtInCoordinateBounds = {
+  width: 420,
+  height: Math.round((420 * 88) / 63),
+};
+
+function getBuiltInRenderScale() {
+  const bounds = elements.card.getBoundingClientRect();
+  return {
+    x: bounds.width / builtInCoordinateBounds.width,
+    y: bounds.height / builtInCoordinateBounds.height,
+    font: Math.min(
+      bounds.width / builtInCoordinateBounds.width,
+      bounds.height / builtInCoordinateBounds.height,
+    ),
+  };
+}
+
+function getBuiltInPreviewElement(fieldId) {
+  return {
+    name: elements.cardName,
+    type: elements.cardTypeValue,
+    subtype: elements.cardSubtypeValue,
+    cost: elements.cardCost,
+    attack: elements.attackStat,
+    health: elements.healthStat,
+    loyalty: elements.loyaltyStat,
+    ability: elements.cardAbility,
+    flavor: elements.cardFlavor,
+    artwork: elements.artWindow,
+    artist: elements.cardArtist,
+    collector: elements.cardCollector,
+    setSymbol: elements.setSymbol,
+  }[fieldId] || (fieldId.startsWith("stat_") ? elements.loyaltyStat : null);
+}
+
+function resetBuiltInAppearanceStyles() {
+  const fieldIds = [
+    "name", "type", "subtype", "cost", "attack", "health", "loyalty", "ability", "flavor",
+    "artwork", "artist", "collector", "setSymbol",
+  ];
+  for (const fieldId of fieldIds) {
+    const target = getBuiltInPreviewElement(fieldId);
+    if (!target) continue;
+    target.style.removeProperty("transform");
+    target.style.removeProperty("transform-origin");
+    target.style.removeProperty("color");
+    target.style.removeProperty("font-size");
+    target.style.removeProperty("width");
+    target.style.removeProperty("height");
+    target.querySelectorAll?.(".stat-label, strong").forEach((item) => {
+      item.style.removeProperty("color");
+      item.style.removeProperty("font-size");
+    });
+  }
+  elements.setSymbol.style.removeProperty("background-color");
+  elements.setSymbol.style.removeProperty("mask-image");
+  elements.setSymbol.style.removeProperty("-webkit-mask-image");
+  elements.setSymbol.classList.remove("has-set-symbol-image");
+}
+
 function resetTemplateDrivenControls() {
   state.currentTemplateId = "";
   state.currentTemplateName = "";
   state.templateSections = [];
   state.templateCustomFields = [];
+  resetBuiltInAppearanceStyles();
   for (const [fieldId, labelText] of Object.entries(defaultDesignerFieldLabels)) {
     const input = getStandardTemplateInput(fieldId);
     const label = input?.closest("label");
@@ -842,7 +969,11 @@ function configureTemplateDrivenControls() {
     const label = input?.closest("label");
     if (label) label.classList.toggle("hidden", !field);
     const labelText = getStandardTemplateLabel(fieldId);
-    if (labelText) labelText.textContent = field?.label || defaultLabel;
+    if (labelText) {
+      labelText.textContent = fieldId === "fit" && field
+        ? "Default Art Fit"
+        : field?.label || defaultLabel;
+    }
   }
   elements.frameInput.closest("label")?.classList.toggle("hidden", !getTemplateField("frameUrl"));
 
@@ -881,8 +1012,11 @@ function configureTemplateDrivenControls() {
   for (const section of document.querySelectorAll("[data-card-section]")) {
     const sectionId = section.dataset.cardSection;
     const templateSection = state.templateSections.find((item) => item.id === sectionId);
-    const preservePerCardControls = sectionId === "identity" || sectionId === "artwork";
-    section.classList.toggle("hidden", !preservePerCardControls && !(templateSection?.fields || []).length);
+    const preservePerCardControls = sectionId === "identity";
+    const hasSectionFields = sectionId === "artwork"
+      ? Boolean(getTemplateField("artwork") || getTemplateField("fit"))
+      : Boolean((templateSection?.fields || []).length);
+    section.classList.toggle("hidden", !preservePerCardControls && !hasSectionFields);
   }
   renderTemplateStatInputs();
   renderTemplateCustomFieldInputs();
@@ -907,11 +1041,110 @@ function setTypeControl(value) {
   syncTypeMode();
 }
 
+function applyTemplateBuiltInTypographyAndSize() {
+  if (!state.currentTemplateId) return;
+  const scale = getBuiltInRenderScale();
+  for (const section of state.templateSections) {
+    for (const field of section.fields || []) {
+      if (!hasExplicitBuiltInAppearance(field)) continue;
+      if (field.dynamicStat) {
+        const selectedOption = getTemplateField("statMode")?.options?.find(
+          (option) => option.value === elements.statModeInput.value,
+        );
+        if (selectedOption?.fieldId !== field.id) continue;
+      }
+      const target = getBuiltInPreviewElement(field.id);
+      if (!target || !field.size) continue;
+      const capabilities = getBuiltInAppearanceCapabilities(field);
+      if (capabilities.hasColor && field.color) {
+        target.style.color = field.color;
+        target.querySelectorAll?.(".stat-label, strong").forEach((item) => { item.style.color = field.color; });
+      }
+      if (capabilities.isImage) {
+        target.style.width = "";
+        target.style.height = "";
+      } else {
+        const scaledFontSize = field.size.fontSize * scale.font;
+        target.style.fontSize = `${scaledFontSize}px`;
+        target.querySelectorAll?.("strong").forEach((item) => { item.style.fontSize = `${scaledFontSize}px`; });
+        target.querySelectorAll?.(".stat-label").forEach((item) => {
+          item.style.fontSize = `${Math.max(1, scaledFontSize * 0.55)}px`;
+        });
+      }
+    }
+  }
+}
+
+function applyTemplateBuiltInPositions() {
+  if (!state.currentTemplateId) return;
+  const cardBounds = elements.card.getBoundingClientRect();
+  const scale = getBuiltInRenderScale();
+  for (const section of state.templateSections) {
+    for (const field of section.fields || []) {
+      if (!hasExplicitBuiltInAppearance(field)) continue;
+      if (field.dynamicStat) {
+        const selectedOption = getTemplateField("statMode")?.options?.find(
+          (option) => option.value === elements.statModeInput.value,
+        );
+        if (selectedOption?.fieldId !== field.id) continue;
+      }
+      if (!field.position) continue;
+      const target = getBuiltInPreviewElement(field.id);
+      if (!target) continue;
+      target.style.transform = "";
+      const targetBounds = target.getBoundingClientRect();
+      const currentX = targetBounds.left - cardBounds.left;
+      const currentY = targetBounds.top - cardBounds.top;
+      let transform = `translate(${field.position.x * scale.x - currentX}px, ${field.position.y * scale.y - currentY}px)`;
+      const capabilities = getBuiltInAppearanceCapabilities(field);
+      if (capabilities.isImage && targetBounds.width && targetBounds.height) {
+        transform += ` scale(${(field.size.width * scale.x) / targetBounds.width}, ${(field.size.height * scale.y) / targetBounds.height})`;
+        target.style.transformOrigin = "top left";
+      }
+      target.style.transform = transform;
+    }
+  }
+}
+
+function updateCardSetSymbol() {
+  const symbolField = getTemplateField("setSymbol");
+  const cardSet = getSetByCode(elements.setInput.value || "DEFAULT");
+  const symbolUrl = String(cardSet?.symbol || "").trim();
+  elements.setSymbol.classList.toggle("hidden", state.currentTemplateId && !symbolField);
+  if (!state.currentTemplateId) return;
+  elements.setSymbol.style.backgroundColor = hasExplicitBuiltInAppearance(symbolField)
+    ? symbolField.color
+    : "";
+  if (symbolUrl !== state.setSymbolMaskSource) {
+    const loadToken = ++state.setSymbolMaskLoadToken;
+    state.setSymbolMaskSource = symbolUrl;
+    state.setSymbolMaskDataUrl = "";
+    state.setSymbolMaskLoad = symbolUrl
+      ? fetchCardImageBlob(symbolUrl)
+          .then((blob) => readBlobAsDataUrl(blob))
+          .then((dataUrl) => {
+            if (loadToken !== state.setSymbolMaskLoadToken) return;
+            state.setSymbolMaskDataUrl = dataUrl;
+            elements.setSymbol.style.maskImage = `url("${dataUrl}")`;
+            elements.setSymbol.style.webkitMaskImage = `url("${dataUrl}")`;
+          })
+          .catch(() => {})
+      : Promise.resolve();
+  }
+  const maskUrl = state.setSymbolMaskDataUrl;
+  elements.setSymbol.style.maskImage = maskUrl ? `url("${maskUrl}")` : "";
+  elements.setSymbol.style.webkitMaskImage = maskUrl ? `url("${maskUrl}")` : "";
+  elements.setSymbol.classList.toggle("has-set-symbol-image", Boolean(symbolUrl));
+}
+
 /** Shrinks or wraps the preview name so it stays inside the card header. */
 function fitCardName() {
   const name = elements.cardName;
   name.classList.remove("is-wrapped");
-  name.style.fontSize = "";
+  const nameField = getTemplateField("name");
+  const configuredSize = hasExplicitBuiltInAppearance(nameField) ? nameField.size.fontSize : 0;
+  const scale = getBuiltInRenderScale();
+  name.style.fontSize = configuredSize ? `${configuredSize * scale.font}px` : "";
 
   const defaultSize = Number.parseFloat(getComputedStyle(name).fontSize);
   const minSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.8;
@@ -933,9 +1166,14 @@ function fitRulesText() {
   const ability = elements.cardAbility;
   const flavor = elements.cardFlavor;
   panel.classList.remove("is-short-split");
-  ability.style.fontSize = "";
+  const abilityField = getTemplateField("ability");
+  const flavorField = getTemplateField("flavor");
+  const configuredAbilitySize = hasExplicitBuiltInAppearance(abilityField) ? abilityField.size.fontSize : 0;
+  const configuredFlavorSize = hasExplicitBuiltInAppearance(flavorField) ? flavorField.size.fontSize : 0;
+  const scale = getBuiltInRenderScale();
+  ability.style.fontSize = configuredAbilitySize ? `${configuredAbilitySize * scale.font}px` : "";
   ability.style.lineHeight = "";
-  flavor.style.fontSize = "";
+  flavor.style.fontSize = configuredFlavorSize ? `${configuredFlavorSize * scale.font}px` : "";
   flavor.style.lineHeight = "";
 
   const rootSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
@@ -1095,10 +1333,14 @@ function syncCollectorInputForCurrentSet() {
 function syncCard() {
   syncTypeMode();
   syncTemplateValuesFromControls();
+  elements.card.classList.toggle(
+    "has-built-in-layout",
+    Boolean(state.currentTemplateId) && state.templateSections.some(
+      (section) => (section.fields || []).some((field) => hasExplicitBuiltInAppearance(field)),
+    ),
+  );
   const subtype = elements.subtypeInput.value.trim();
   const typeValue = getSelectedType();
-  const typeParts = [hasTemplateField("type") ? typeValue : "", hasTemplateField("subtype") ? subtype : ""];
-  const typeLine = typeParts.filter(Boolean).join(" - ");
   const statModeField = getTemplateField("statMode");
   const hasCombatStats = hasTemplateField("attack") || hasTemplateField("health");
   const activeStatMode = statModeField
@@ -1119,7 +1361,11 @@ function syncCard() {
   updateText(elements.cardName, elements.nameInput.value, "Untitled Card");
   elements.cardName.classList.toggle("hidden", !hasTemplateField("name"));
   fitCardName();
-  updateText(elements.cardType, typeLine, "Card");
+  const hasType = hasTemplateField("type");
+  const hasSubtype = hasTemplateField("subtype");
+  elements.cardTypeValue.textContent = hasType ? typeValue || "Card" : "";
+  elements.cardSubtypeText.textContent = hasSubtype ? subtype : "";
+  elements.cardTypeSeparator.classList.toggle("hidden", !hasType || !hasSubtype || !typeValue || !subtype);
   elements.cardType.classList.toggle("hidden", !hasTemplateField("type") && !hasTemplateField("subtype"));
   elements.cardCost.textContent = formatCost(elements.costInput.value);
   elements.cardCost.classList.toggle("hidden", !hasTemplateField("cost"));
@@ -1128,8 +1374,10 @@ function syncCard() {
   updateText(elements.cardLoyalty, customStatField?.value ?? elements.loyaltyInput.value, "0");
   elements.cardAttack.closest("div").classList.toggle("hidden", !hasTemplateField("attack"));
   elements.cardHealth.closest("div").classList.toggle("hidden", !hasTemplateField("health"));
-  elements.cardAttack.previousElementSibling.textContent = getTemplateField("attack")?.label?.toUpperCase() || "ATK";
-  elements.cardHealth.previousElementSibling.textContent = getTemplateField("health")?.label?.toUpperCase() || "HP";
+  const attackLabel = getTemplateField("attack")?.label || "Attack";
+  const healthLabel = getTemplateField("health")?.label || "Health";
+  elements.cardAttack.previousElementSibling.textContent = attackLabel === "Attack" ? "ATK" : attackLabel.toUpperCase();
+  elements.cardHealth.previousElementSibling.textContent = healthLabel === "Health" ? "HP" : healthLabel.toUpperCase();
   elements.cardLoyalty.previousElementSibling.textContent = (
     customStatField?.label || getTemplateField("loyalty")?.label || "Loyalty"
   ).toUpperCase();
@@ -1167,6 +1415,10 @@ function syncCard() {
   elements.loyaltyInputs.classList.toggle("hidden", isStatless || !isLoyalty);
   elements.combatStats.classList.toggle("hidden", isStatless || showSingleStat || !hasCombatStats);
   elements.loyaltyStat.classList.toggle("hidden", isStatless || !showSingleStat);
+  elements.artWindow.classList.toggle(
+    "hidden",
+    Boolean(state.currentTemplateId) && !getTemplateField("artwork") && !getTemplateField("fit"),
+  );
   updateArtFit();
   updateFrameFit();
   document.documentElement.style.setProperty("--frame", elements.frameColor.value);
@@ -1174,8 +1426,11 @@ function syncCard() {
   document.documentElement.style.setProperty("--card-text", elements.textColor.value);
   document.documentElement.style.setProperty("--panel", elements.panelColor.value);
   document.documentElement.style.setProperty("--rarity-color", getRarityColor(rarity));
+  updateCardSetSymbol();
+  applyTemplateBuiltInTypographyAndSize();
   renderCardCustomFields();
   fitRulesText();
+  applyTemplateBuiltInPositions();
 }
 
 /** Checks whether artwork input is an acceptable image URI. */
@@ -3333,6 +3588,7 @@ function waitForRenderPaint() {
 async function createCardCanvas(scale = 3) {
   syncCard();
   await state.customFieldImageLoad;
+  await state.setSymbolMaskLoad;
   await Promise.all(
     [...elements.card.querySelectorAll("img")]
       .filter((image) => image.src && !image.complete)

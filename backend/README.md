@@ -133,7 +133,9 @@ stable URLs when templates are renamed or moved. Each template stores its
 ordered section and field definitions, editable labels, current default values,
 the Cost number constraint, Collector number editability, editable Stat mode
 and Rarity options, dynamically added number fields, custom field definitions
-(type, position, size, color, and dropdown options), and S3 preview metadata.
+(type, position, size, color, and dropdown options), built-in field position,
+size, and color settings, an Artwork field with a dependent Default Art Fit,
+the set-level Set Symbol layout, and S3 preview metadata.
 Preview PNGs use
 `<setCode>/templates/<templateId>.png` in the same user bucket as card previews.
 Generated template backgrounds use
