@@ -283,6 +283,7 @@ const customFieldTypeLabels = {
 const textCustomFieldTypes = new Set(["text", "number", "dropdown"]);
 const imageCustomFieldTypes = new Set(["symbol", "art"]);
 
+/** Decodes the payload from a Cognito JWT. */
 function getJwtPayload(token) {
   try {
     const encoded = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
@@ -292,11 +293,13 @@ function getJwtPayload(token) {
   }
 }
 
+/** Returns whether a JWT is missing or expired. */
 function isJwtExpired(token) {
   const expiresAt = Number(getJwtPayload(token).exp || 0);
   return !expiresAt || Date.now() >= expiresAt * 1000 - 15000;
 }
 
+/** Sends a browser authentication request to Cognito. */
 async function cognitoRequest(target, payload) {
   const response = await fetch(`https://cognito-idp.${backendConfig.region}.amazonaws.com/`, {
     method: "POST",
@@ -311,6 +314,7 @@ async function cognitoRequest(target, payload) {
   return data;
 }
 
+/** Refreshes the current Cognito session when possible. */
 async function refreshAuthSession() {
   if (!state.refreshToken) return false;
   try {
@@ -333,6 +337,7 @@ function setAuthStatus(message) {
   elements.authStatus.textContent = message;
 }
 
+/** Displays template workflow feedback. */
 function setTemplateStatus(message) {
   elements.templateStatus.textContent = message;
 }
@@ -342,6 +347,7 @@ function closeAccountMenu() {
   elements.accountMenuButton.setAttribute("aria-expanded", "false");
 }
 
+/** Renders the signed-in or signed-out account controls. */
 function renderAuthUi() {
   const signedIn = Boolean(state.idToken) && !isJwtExpired(state.idToken);
   elements.signInPanel.classList.toggle("hidden", signedIn);
@@ -357,6 +363,7 @@ function renderAuthUi() {
   if (!signedIn) closeAccountMenu();
 }
 
+/** Clears locally stored authentication and template state. */
 function clearAuthSession() {
   state.idToken = "";
   state.refreshToken = "";
@@ -377,6 +384,7 @@ function signOut() {
   setTemplateStatus("Sign in to save templates.");
 }
 
+/** Calls the authenticated backend API and normalizes errors. */
 async function apiFetch(path, options = {}) {
   if (!state.idToken || (isJwtExpired(state.idToken) && !(await refreshAuthSession()))) {
     clearAuthSession();
@@ -400,6 +408,7 @@ async function apiFetch(path, options = {}) {
   return data;
 }
 
+/** Returns the legacy appearance defaults for a built-in field. */
 function getDefaultBuiltInAppearance(fieldId) {
   const textColor = state.defaults.text || "#f8f4e8";
   const accentColor = state.defaults.accent || "#d69d42";
@@ -422,6 +431,7 @@ function getDefaultBuiltInAppearance(fieldId) {
   return appearances[fieldId] ? structuredClone(appearances[fieldId]) : {};
 }
 
+/** Normalizes a saved built-in appearance while removing legacy defaults. */
 function normalizeBuiltInAppearance(savedField, defaultField) {
   if (!defaultField.builtInAppearance) return {};
   const hasSavedAppearance = ["position", "size", "color"].some(
@@ -459,6 +469,7 @@ function normalizeBuiltInAppearance(savedField, defaultField) {
   return matchesLegacyDefaults ? {} : appearance;
 }
 
+/** Creates editable field sections from the card defaults. */
 function createDefaultSections() {
   const defaultValues = { ...state.defaults, frameUrl: "" };
   fieldSections[0].fields[1].options = state.cardTypes.map((value) => ({ value, label: value }));
@@ -473,6 +484,7 @@ function createDefaultSections() {
   }));
 }
 
+/** Finds a built-in field by identifier. */
 function getField(fieldId) {
   for (const section of state.sections) {
     const field = section.fields.find((item) => item.id === fieldId);
@@ -489,6 +501,7 @@ function getFieldLabel(fieldId, fallback) {
   return getField(fieldId)?.label || fallback;
 }
 
+/** Appends a rules line while emphasizing parenthetical text. */
 function appendRuleTextWithParentheses(lineElement, line) {
   if (!line) {
     lineElement.textContent = "\u00a0";
@@ -508,6 +521,7 @@ function appendRuleTextWithParentheses(lineElement, line) {
   lineElement.append(document.createTextNode(line.slice(cursor)));
 }
 
+/** Renders multiline preview text with explicit line elements. */
 function updateTemplateMultilineText(target, value) {
   const text = String(value || "").trim();
   target.replaceChildren();
@@ -520,6 +534,7 @@ function updateTemplateMultilineText(target, value) {
   }
 }
 
+/** Renders template rules with line breaks and parenthetical emphasis. */
 function updateTemplateRulesText(target, value) {
   const text = String(value || "").trim();
   target.replaceChildren();
@@ -532,6 +547,7 @@ function updateTemplateRulesText(target, value) {
   }
 }
 
+/** Creates the value control for a built-in template field. */
 function createFieldInput(field) {
   if (field.type === "display") return null;
   let input;
@@ -562,6 +578,12 @@ function createFieldInput(field) {
   return input;
 }
 
+/**
+ * Creates an icon action for a built-in template field.
+ * @param {*} field Field definition associated with the action.
+ * @param {string} action Action identifier stored on the button.
+ * @param {string} title Accessible action label and hover text.
+ */
 function createFieldAction(field, action, title) {
   const button = document.createElement("button");
   button.className = `template-field-action ${action.startsWith("delete") ? "delete" : ""}`.trim();
@@ -580,6 +602,12 @@ function createFieldAction(field, action, title) {
   return button;
 }
 
+/**
+ * Creates a boolean setting for a built-in template field.
+ * @param {*} field Field definition associated with the setting.
+ * @param {string} property Boolean property updated by the checkbox.
+ * @param {string} labelText Visible checkbox label.
+ */
 function createFieldCheckbox(field, property, labelText) {
   const label = document.createElement("label");
   label.className = "template-field-setting";
@@ -594,6 +622,7 @@ function createFieldCheckbox(field, property, labelText) {
   return label;
 }
 
+/** Creates the editable option list for a built-in dropdown. */
 function createSelectOptionEditor(field) {
   const editor = document.createElement("div");
   editor.className = "template-option-editor";
@@ -636,6 +665,7 @@ function createSelectOptionEditor(field) {
   return editor;
 }
 
+/** Creates the background-generation action row. */
 function createGenerateBackgroundRow() {
   const generateRow = document.createElement("div");
   generateRow.className = "generate-image-row";
@@ -658,6 +688,7 @@ function createGenerateBackgroundRow() {
   return generateRow;
 }
 
+/** Renders all built-in template sections and controls. */
 function renderTemplateFields() {
   elements.templateFields.replaceChildren();
   for (const section of state.sections) {
@@ -719,6 +750,7 @@ function renderTemplateFields() {
   }
 }
 
+/** Returns the appearance settings supported by a built-in field. */
 function getBuiltInAppearanceCapabilities(field) {
   const kind = field?.builtInAppearance || "";
   return {
@@ -734,6 +766,7 @@ const builtInCoordinateBounds = {
   height: Math.round((420 * 88) / 63),
 };
 
+/** Returns scaling from canonical card coordinates to the visible preview. */
 function getBuiltInRenderScale() {
   const bounds = elements.card.getBoundingClientRect();
   return {
@@ -746,6 +779,7 @@ function getBuiltInRenderScale() {
   };
 }
 
+/** Converts a computed CSS color to a six-digit hex value. */
 function cssColorToHex(value, fallback = "#202621") {
   if (/^#[0-9a-f]{6}$/i.test(value || "")) return value.toLowerCase();
   const channels = String(value || "").match(/[\d.]+/g)?.slice(0, 3).map(Number);
@@ -754,6 +788,7 @@ function cssColorToHex(value, fallback = "#202621") {
     .toString(16).padStart(2, "0")).join("")}`;
 }
 
+/** Returns saved appearance values or measures the field's current styling. */
 function getCurrentBuiltInAppearance(field) {
   if (field.size) {
     return {
@@ -793,6 +828,7 @@ function getCurrentBuiltInAppearance(field) {
   return appearance;
 }
 
+/** Opens the appearance editor for a built-in field. */
 function openBuiltInFieldDialog(fieldId) {
   const field = getField(fieldId);
   if (!field?.builtInAppearance) return;
@@ -836,6 +872,7 @@ function closeBuiltInFieldDialog() {
   elements.builtInFieldDialog.close();
 }
 
+/** Applies the built-in appearance form to the active field. */
 function saveBuiltInFieldAppearance() {
   if (!elements.builtInFieldForm.reportValidity()) return;
   const field = getField(state.editingBuiltInFieldId);
@@ -864,11 +901,18 @@ function normalizeCustomFieldName(value) {
   return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+/**
+ * Returns a bounded integer used by custom-field geometry.
+ * @param {*} value Candidate numeric value.
+ * @param {number} fallback Value returned when the candidate is invalid.
+ * @param {number} minimum Smallest permitted value.
+ */
 function getCustomFieldInteger(value, fallback, minimum = 0) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? Math.max(minimum, Math.min(parsed, 5000)) : fallback;
 }
 
+/** Normalizes custom fields loaded from a saved template. */
 function normalizeSavedCustomFields(savedFields) {
   if (!Array.isArray(savedFields)) return [];
   const normalized = [];
@@ -910,6 +954,12 @@ function normalizeSavedCustomFields(savedFields) {
   return normalized;
 }
 
+/**
+ * Creates an edit or delete action for a custom field.
+ * @param {*} field Custom-field definition associated with the action.
+ * @param {string} action Action identifier stored on the button.
+ * @param {string} title Accessible action label and hover text.
+ */
 function createCustomFieldAction(field, action, title) {
   const button = document.createElement("button");
   button.className = `template-field-action ${action === "delete" ? "delete" : ""}`.trim();
@@ -924,6 +974,7 @@ function createCustomFieldAction(field, action, title) {
   return button;
 }
 
+/** Renders summaries and actions for all custom fields. */
 function renderCustomFields() {
   elements.customFieldsList.replaceChildren();
   if (!state.customFields.length) {
@@ -957,6 +1008,7 @@ function renderCustomFields() {
   }
 }
 
+/** Returns the visible card dimensions in pixels. */
 function getCardPixelBounds() {
   const bounds = elements.card.getBoundingClientRect();
   return {
@@ -965,6 +1017,7 @@ function getCardPixelBounds() {
   };
 }
 
+/** Updates custom-field coordinate limits from the visible card. */
 function setCustomFieldPositionLimits() {
   const bounds = getCardPixelBounds();
   elements.customFieldXInput.max = String(bounds.width);
@@ -973,6 +1026,7 @@ function setCustomFieldPositionLimits() {
   return bounds;
 }
 
+/** Creates one editable custom-dropdown option row. */
 function createCustomFieldOptionRow(value = "") {
   const row = document.createElement("div");
   row.className = "custom-field-option-row";
@@ -992,6 +1046,7 @@ function createCustomFieldOptionRow(value = "") {
   return row;
 }
 
+/** Renders the custom dropdown's editable option rows. */
 function renderCustomFieldOptions(options = []) {
   elements.customFieldOptionList.replaceChildren();
   for (const option of options) {
@@ -999,6 +1054,7 @@ function renderCustomFieldOptions(options = []) {
   }
 }
 
+/** Shows controls applicable to the selected custom-field type. */
 function syncCustomFieldTypeUi() {
   const dataType = elements.customFieldTypeInput.value;
   const isImage = imageCustomFieldTypes.has(dataType);
@@ -1015,6 +1071,7 @@ function syncCustomFieldTypeUi() {
   }
 }
 
+/** Opens the custom-field editor for a new or existing field. */
 function openCustomFieldDialog(field = null) {
   const bounds = setCustomFieldPositionLimits();
   state.editingCustomFieldName = field?.name || "";
@@ -1043,12 +1100,14 @@ function closeCustomFieldDialog() {
   elements.customFieldDialog.close();
 }
 
+/** Returns nonempty options from the custom dropdown editor. */
 function getCustomFieldOptions() {
   return [...elements.customFieldOptionList.querySelectorAll("input")]
     .map((input) => input.value.trim())
     .filter(Boolean);
 }
 
+/** Validates and saves the active custom-field definition. */
 function saveCustomFieldDefinition() {
   if (!elements.customFieldForm.reportValidity()) return;
   const name = elements.customFieldNameInput.value.trim().replace(/\s+/g, " ");
@@ -1108,6 +1167,7 @@ function saveCustomFieldDefinition() {
   setTemplateStatus(`${field.name} ${wasEditing ? "updated" : "added"}. Save to keep this change.`);
 }
 
+/** Confirms and deletes a custom field by name. */
 function deleteCustomField(fieldName) {
   const index = state.customFields.findIndex(
     (field) => normalizeCustomFieldName(field.name) === normalizeCustomFieldName(fieldName),
@@ -1122,6 +1182,7 @@ function deleteCustomField(fieldName) {
   setTemplateStatus(`${field.name} deleted. Save to keep this change.`);
 }
 
+/** Handles edit and delete actions from the custom-field list. */
 function handleCustomFieldAction(event) {
   const button = event.target.closest("[data-custom-field-action][data-custom-field-name]");
   if (!button) return;
@@ -1133,6 +1194,7 @@ function handleCustomFieldAction(event) {
   if (button.dataset.customFieldAction === "delete") deleteCustomField(field.name);
 }
 
+/** Renders custom-field placeholders on the template preview. */
 function renderCustomFieldPreview() {
   elements.customFieldPreview.replaceChildren();
   for (const field of state.customFields) {
@@ -1154,6 +1216,7 @@ function renderCustomFieldPreview() {
   }
 }
 
+/** Normalizes editable built-in dropdown options. */
 function normalizeSavedSelectOptions(savedOptions, defaultOptions) {
   if (!Array.isArray(savedOptions)) {
     return (defaultOptions || []).map((option) => ({ ...option }));
@@ -1174,6 +1237,7 @@ function normalizeSavedSelectOptions(savedOptions, defaultOptions) {
   return options;
 }
 
+/** Normalizes a user-defined stat loaded from a template. */
 function normalizeSavedDynamicStatField(savedField) {
   const fieldId = String(savedField?.id || "").trim();
   if (!savedField?.dynamicStat || !fieldId.startsWith("stat_")) return null;
@@ -1192,6 +1256,7 @@ function normalizeSavedDynamicStatField(savedField) {
   return { ...defaultField, ...normalizeBuiltInAppearance(savedField, defaultField) };
 }
 
+/** Merges saved sections with current built-in field definitions. */
 function normalizeSavedSections(savedSections) {
   const defaultsBySection = new Map(createDefaultSections().map((section) => [section.id, section]));
   if (!Array.isArray(savedSections)) return [...defaultsBySection.values()];
@@ -1253,6 +1318,7 @@ function normalizeSavedSections(savedSections) {
   return normalized;
 }
 
+/** Revokes the object URL used by the frame preview. */
 function revokeTemplateFramePreviewUrl() {
   if (state.framePreviewObjectUrl) {
     URL.revokeObjectURL(state.framePreviewObjectUrl);
@@ -1260,6 +1326,7 @@ function revokeTemplateFramePreviewUrl() {
   }
 }
 
+/** Resolves a template image source to an absolute URL. */
 function getAbsoluteTemplateImageUrl(source) {
   const imageUrl = String(source || "").trim();
   if (!imageUrl || imageUrl.startsWith("data:") || imageUrl.startsWith("blob:")) return imageUrl;
@@ -1271,6 +1338,7 @@ function getAbsoluteTemplateImageUrl(source) {
   }
 }
 
+/** Clears the current template frame preview. */
 function clearTemplateFramePreview() {
   state.framePreviewLoadToken += 1;
   state.framePreviewSourceUrl = "";
@@ -1278,6 +1346,7 @@ function clearTemplateFramePreview() {
   elements.cardFrameImage.removeAttribute("src");
 }
 
+/** Loads a CORS-safe template frame preview. */
 async function setTemplateFramePreview(source) {
   const sourceUrl = String(source || "").trim();
   if (!sourceUrl) {
@@ -1305,6 +1374,7 @@ async function setTemplateFramePreview(source) {
   await elements.cardFrameImage.decode().catch(() => {});
 }
 
+/** Returns the greatest common divisor of two dimensions. */
 function greatestCommonDivisor(first, second) {
   let left = Math.abs(Math.round(first));
   let right = Math.abs(Math.round(second));
@@ -1314,6 +1384,7 @@ function greatestCommonDivisor(first, second) {
   return left || 1;
 }
 
+/** Returns the template card's simplified aspect ratio. */
 function getTemplateCardAspectRatio() {
   const rootStyle = getComputedStyle(document.documentElement);
   const configuredRatio = rootStyle.getPropertyValue("--card-ratio").trim()
@@ -1333,6 +1404,7 @@ function getTemplateCardAspectRatio() {
   return `${width / divisor}:${height / divisor}`;
 }
 
+/** Returns the live background-generation button and spinner. */
 function getGenerateBackgroundControls() {
   return {
     button: elements.templateFields.querySelector("[data-template-action='generate-background']"),
@@ -1340,6 +1412,7 @@ function getGenerateBackgroundControls() {
   };
 }
 
+/** Toggles controls while a background is being generated. */
 function setGenerateBackgroundBusy(busy) {
   state.backgroundGenerating = busy;
   const { button, spinner } = getGenerateBackgroundControls();
@@ -1350,6 +1423,7 @@ function setGenerateBackgroundBusy(busy) {
   elements.cancelGenerateTemplateBackgroundButton.disabled = busy;
 }
 
+/** Opens the template background prompt dialog. */
 function openGenerateTemplateBackgroundDialog() {
   if (!getField("frameUrl")) {
     setTemplateStatus("The Image URL field is required to generate a background.");
@@ -1365,6 +1439,7 @@ function closeGenerateTemplateBackgroundDialog() {
   if (!state.backgroundGenerating) elements.generateTemplateBackgroundDialog.close();
 }
 
+/** Generates, stores, and previews a template background. */
 async function generateTemplateBackground() {
   if (!elements.generateTemplateBackgroundForm.reportValidity()) return;
   const prompt = elements.generateTemplateBackgroundPrompt.value.trim();
@@ -1403,6 +1478,7 @@ async function generateTemplateBackground() {
   }
 }
 
+/** Returns the preview element associated with a built-in field. */
 function getBuiltInPreviewElement(fieldId) {
   return {
     name: elements.cardName,
@@ -1421,6 +1497,7 @@ function getBuiltInPreviewElement(fieldId) {
   }[fieldId] || (fieldId.startsWith("stat_") ? elements.loyaltyStat : null);
 }
 
+/** Applies a built-in field's configured size and color. */
 function applyBuiltInFieldAppearance(field) {
   if (field.dynamicStat) {
     const selectedOption = getField("statMode")?.options?.find(
@@ -1449,6 +1526,7 @@ function applyBuiltInFieldAppearance(field) {
   }
 }
 
+/** Positions a built-in field in canonical card coordinates. */
 function applyBuiltInFieldPosition(field) {
   if (!field.position) return;
   if (field.dynamicStat) {
@@ -1474,6 +1552,7 @@ function applyBuiltInFieldPosition(field) {
   target.style.transform = transform;
 }
 
+/** Loads and styles the selected set's symbol for the preview. */
 function updateTemplateSetSymbol() {
   const field = getField("setSymbol");
   const setCode = elements.templateSetInput.value || "DEFAULT";
@@ -1514,6 +1593,7 @@ function applyBuiltInFieldPositions() {
   }
 }
 
+/** Clears inline built-in styles so shared card CSS remains the baseline. */
 function resetTemplateBuiltInAppearanceStyles() {
   const fieldIds = [
     "name", "type", "subtype", "cost", "attack", "health", "loyalty", "ability", "flavor",
@@ -1533,6 +1613,7 @@ function resetTemplateBuiltInAppearanceStyles() {
   elements.setSymbol.style.removeProperty("background-color");
 }
 
+/** Shrinks or wraps the template name to fit the card header. */
 function fitTemplateCardName() {
   const name = elements.cardName;
   name.classList.remove("is-wrapped");
@@ -1549,6 +1630,7 @@ function fitTemplateCardName() {
   if (name.scrollWidth > name.clientWidth) name.classList.add("is-wrapped");
 }
 
+/** Returns whether short rules and flavor text should be vertically split. */
 function shouldCenterShortTemplateRulesText() {
   const hasAbility = Boolean(getFieldValue("ability").trim());
   const hasFlavor = Boolean(getFieldValue("flavor").trim());
@@ -1557,6 +1639,7 @@ function shouldCenterShortTemplateRulesText() {
     <= elements.previewText.clientHeight * 0.48;
 }
 
+/** Shrinks template rules and flavor text to fit their panel. */
 function fitTemplateRulesText() {
   const panel = elements.previewText;
   const ability = elements.cardAbility;
@@ -1591,6 +1674,7 @@ function fitTemplateRulesText() {
   panel.classList.toggle("is-short-split", shouldCenterShortTemplateRulesText());
 }
 
+/** Renders the current template state into the card preview. */
 function updateCardPreview() {
   resetTemplateBuiltInAppearanceStyles();
   elements.card.classList.toggle(
@@ -1686,12 +1770,14 @@ function updateCardPreview() {
   renderCustomFieldPreview();
 }
 
+/** Marks the current template as having unsaved changes. */
 function markDirty() {
   state.dirty = true;
   updateCurrentSetLabel();
   setTemplateStatus(`Unsaved changes for ${elements.templateNameInput.value.trim() || "untitled template"}.`);
 }
 
+/** Opens the rename dialog for a built-in field. */
 function openRenameField(fieldId) {
   const field = getField(fieldId);
   if (!field) return;
@@ -1708,6 +1794,7 @@ function closeRenameField() {
   elements.renameFieldDialog.close();
 }
 
+/** Synchronizes renamed built-in stats with Stat mode labels. */
 function syncBuiltInStatModeLabels(fieldId) {
   const statMode = getField("statMode");
   if (!statMode) return;
@@ -1723,6 +1810,7 @@ function syncBuiltInStatModeLabels(fieldId) {
   }
 }
 
+/** Applies the pending built-in field name. */
 function renameField() {
   const field = getField(state.renameFieldId);
   const label = elements.renameFieldInput.value.trim();
@@ -1744,6 +1832,7 @@ function renameField() {
   markDirty();
 }
 
+/** Creates a unique storage value for a dropdown label. */
 function makeUniqueTemplateOptionValue(label, options) {
   const base = String(label || "")
     .normalize("NFKD")
@@ -1767,6 +1856,7 @@ function getTemplateOptionInput(fieldId) {
     .find((input) => input.dataset.optionInputFor === fieldId);
 }
 
+/** Adds an option and any related stat field to a built-in dropdown. */
 function addTemplateSelectOption(fieldId) {
   const field = getField(fieldId);
   const input = getTemplateOptionInput(fieldId);
@@ -1809,6 +1899,7 @@ function addTemplateSelectOption(fieldId) {
   setTemplateStatus(`${label} added to ${field.label}. Save to keep this change.`);
 }
 
+/** Removes an option and any related dynamic stat field. */
 function deleteTemplateSelectOption(fieldId, optionValue) {
   const field = getField(fieldId);
   const option = field?.options?.find((item) => item.value === optionValue);
@@ -1830,6 +1921,7 @@ function deleteTemplateSelectOption(fieldId, optionValue) {
   setTemplateStatus(`${option.label} removed from ${field.label}. Save to keep this change.`);
 }
 
+/** Applies checkbox settings from built-in field controls. */
 function handleTemplateFieldSetting(event) {
   const property = event.target.dataset.templateFieldSetting;
   const field = getField(event.target.dataset.configFieldId);
@@ -1846,6 +1938,7 @@ function handleTemplateFieldSetting(event) {
   markDirty();
 }
 
+/** Deletes a built-in field and its dependent definitions. */
 function deleteField(fieldId) {
   for (const section of state.sections) {
     const fieldIndex = section.fields.findIndex((field) => field.id === fieldId);
@@ -1872,6 +1965,7 @@ function deleteField(fieldId) {
   }
 }
 
+/** Renders the available set options and preserves a preferred set. */
 function renderSetOptions(preferredCode = elements.templateSetInput.value || requestedSetCode) {
   const selectedCode = String(preferredCode || "DEFAULT").toUpperCase();
   const sets = state.sets.length ? state.sets : [{ code: "DEFAULT", name: "Default" }];
@@ -1888,6 +1982,7 @@ function renderSetOptions(preferredCode = elements.templateSetInput.value || req
   updateCurrentSetLabel();
 }
 
+/** Updates the selected-set summary in My Stuff. */
 function updateCurrentSetLabel() {
   const setCode = elements.templateSetInput.value || "DEFAULT";
   const cardSet = state.sets.find((item) => (item.code || "DEFAULT") === setCode);
@@ -1904,6 +1999,7 @@ function getNextDefaultTemplateName(templates = []) {
   return `Template ${suffix}`;
 }
 
+/** Renders templates available for the selected set. */
 function renderTemplateOptions(selectedTemplateId = state.currentTemplateId) {
   elements.myTemplatesInput.replaceChildren();
   const placeholder = document.createElement("option");
@@ -1926,6 +2022,7 @@ function renderTemplateOptions(selectedTemplateId = state.currentTemplateId) {
   elements.myTemplatesInput.disabled = state.templateNavigationPending || !state.templates.length;
 }
 
+/** Loads templates for a set and refreshes the selector. */
 async function refreshTemplatesForSet(
   setCode = elements.templateSetInput.value || "DEFAULT",
   selectedTemplateId = state.currentTemplateId,
@@ -1943,6 +2040,7 @@ async function refreshSets() {
   renderSetOptions();
 }
 
+/** Replaces editor state with a loaded template. */
 function setLoadedTemplate(template) {
   state.currentTemplateId = template.templateId || "";
   state.originalTemplateName = template.name || "";
@@ -1958,6 +2056,7 @@ function setLoadedTemplate(template) {
   updateCurrentSetLabel();
 }
 
+/** Resets the editor for a new template in the given set. */
 function resetNewTemplate(setCode = requestedSetCode) {
   state.currentTemplateId = "";
   state.originalTemplateName = "";
@@ -1972,6 +2071,7 @@ function resetNewTemplate(setCode = requestedSetCode) {
   updateCardPreview();
 }
 
+/** Loads the template requested by the URL or starts a new one. */
 async function loadRequestedTemplate() {
   const requestedTemplateId = new URLSearchParams(window.location.search).get("template") || "";
   if (!requestedTemplateId) {
@@ -1988,6 +2088,7 @@ async function loadRequestedTemplate() {
   await loadTemplateById(requestedTemplateId);
 }
 
+/** Resolves with a modal dialog's selected return value. */
 function waitForDialogChoice(dialog) {
   return new Promise((resolve) => {
     const handleClose = () => {
@@ -2006,6 +2107,7 @@ function promptSaveUnsavedTemplateChanges(destination = "loading another templat
   return waitForDialogChoice(elements.templateUnsavedChangesDialog);
 }
 
+/** Resolves pending edits before template navigation. */
 async function resolveUnsavedTemplateChanges(destination) {
   if (!state.dirty) return true;
   const choice = await promptSaveUnsavedTemplateChanges(destination);
@@ -2014,6 +2116,7 @@ async function resolveUnsavedTemplateChanges(destination) {
   return choice === "discard";
 }
 
+/** Loads a saved template by its stable identifier. */
 async function loadTemplateById(templateId) {
   if (!templateId) return false;
   setTemplateStatus("Loading template...");
@@ -2048,6 +2151,7 @@ async function loadTemplateById(templateId) {
   }
 }
 
+/** Saves or discards edits before switching templates. */
 async function handleTemplateSelectionChange() {
   const selectedTemplateId = elements.myTemplatesInput.value;
   if (!selectedTemplateId || selectedTemplateId === state.currentTemplateId || state.templateNavigationPending) return;
@@ -2064,6 +2168,7 @@ async function handleTemplateSelectionChange() {
   }
 }
 
+/** Refreshes template choices after the selected set changes. */
 async function handleTemplateSetChange() {
   markDirty();
   updateCardPreview();
@@ -2081,6 +2186,7 @@ async function handleTemplateSetChange() {
   }
 }
 
+/** Resolves unsaved edits before navigating away from the designer. */
 async function leaveTemplatePage(destination, navigate) {
   if (state.templateNavigationPending) return;
   state.templateNavigationPending = true;
@@ -2096,6 +2202,7 @@ async function leaveTemplatePage(destination, navigate) {
   navigate();
 }
 
+/** Intercepts internal links so unsaved templates can be resolved. */
 function handleTemplatePageLink(event) {
   const anchor = event.target.closest("a[href]");
   if (
@@ -2119,12 +2226,14 @@ function handleTemplatePageLink(event) {
   });
 }
 
+/** Requests the browser's unload warning for unsaved templates. */
 function warnBeforeUnloadingTemplatePage(event) {
   if (!state.dirty || state.allowPageExit) return;
   event.preventDefault();
   event.returnValue = "";
 }
 
+/** Resolves rename, copy, and set-move decisions before saving. */
 async function getSaveDecision(name, setCode) {
   let finalSetCode = setCode;
   let saveMode = state.currentTemplateId ? "update" : "create";
@@ -2148,6 +2257,7 @@ async function getSaveDecision(name, setCode) {
   return { saveMode, finalSetCode };
 }
 
+/** Returns the CSS variables needed by serialized card snapshots. */
 function getSnapshotCssVariables() {
   const rootStyle = getComputedStyle(document.documentElement);
   return ["--accent", "--card-ratio", "--card-text", "--frame", "--panel", "--rarity-color"]
@@ -2155,6 +2265,7 @@ function getSnapshotCssVariables() {
     .join(" ");
 }
 
+/** Copies computed preview styles into a cloned snapshot tree. */
 function inlineSnapshotStyles(source, target) {
   const sourceElements = [source, ...source.querySelectorAll("*")];
   const targetElements = [target, ...target.querySelectorAll("*")];
@@ -2169,6 +2280,7 @@ function inlineSnapshotStyles(source, target) {
   });
 }
 
+/** Reads an image Blob as an embeddable data URL. */
 function readBlobAsDataUrl(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2178,6 +2290,7 @@ function readBlobAsDataUrl(blob) {
   });
 }
 
+/** Fetches an image directly or through the authenticated proxy. */
 async function fetchImageBlob(src) {
   try {
     const directResponse = await fetch(src, {
@@ -2197,6 +2310,7 @@ async function fetchImageBlob(src) {
   return proxyResponse.blob();
 }
 
+/** Converts a template image source to a safe data URL. */
 async function getEmbeddableTemplateImageSource(src) {
   if (!src || src.startsWith("data:")) return src;
   const blob = await fetchImageBlob(src);
@@ -2204,6 +2318,7 @@ async function getEmbeddableTemplateImageSource(src) {
   return readBlobAsDataUrl(blob);
 }
 
+/** Embeds preview images into a cloned card snapshot. */
 async function embedSnapshotImages(cardClone) {
   const originalImages = [...elements.card.querySelectorAll("img")];
   const clonedImages = [...cardClone.querySelectorAll("img")];
@@ -2219,6 +2334,7 @@ async function embedSnapshotImages(cardClone) {
   }));
 }
 
+/** Temporarily embeds live preview images while rendering a canvas. */
 async function withEmbeddedPreviewImages(callback) {
   const images = [...elements.card.querySelectorAll("img")];
   const originalSources = images.map((image) => image.getAttribute("src"));
@@ -2242,6 +2358,7 @@ async function withEmbeddedPreviewImages(callback) {
   }
 }
 
+/** Resolves an image source against the current page URL. */
 function imageSourceToAbsoluteUrl(source) {
   try {
     return new URL(source, window.location.href).href;
@@ -2250,6 +2367,7 @@ function imageSourceToAbsoluteUrl(source) {
   }
 }
 
+/** Flattens a rendered template canvas onto its frame color. */
 function flattenTemplateCanvas(canvas) {
   const flattenedCanvas = document.createElement("canvas");
   flattenedCanvas.width = canvas.width;
@@ -2261,6 +2379,7 @@ function flattenTemplateCanvas(canvas) {
   return flattenedCanvas;
 }
 
+/** Waits for two animation frames so layout and images can settle. */
 function waitForRenderPaint() {
   return new Promise((resolve) => {
     const timeoutId = window.setTimeout(resolve, 250);
@@ -2273,6 +2392,7 @@ function waitForRenderPaint() {
   });
 }
 
+/** Renders the live template preview to a canvas. */
 async function createTemplateCanvas(scale = 2) {
   updateCardPreview();
   await state.setSymbolMaskLoad;
@@ -2328,6 +2448,7 @@ async function createTemplateCanvas(scale = 2) {
   }
 }
 
+/** Returns the rendered template preview as a PNG data URL. */
 async function getTemplatePngDataUrl() {
   const canvas = await createTemplateCanvas(2);
   try {
@@ -2340,6 +2461,7 @@ async function getTemplatePngDataUrl() {
   }
 }
 
+/** Validates, renders, and persists the current template. */
 async function saveTemplate() {
   const name = elements.templateNameInput.value.trim();
   const selectedSetCode = elements.templateSetInput.value || "DEFAULT";
@@ -2424,6 +2546,7 @@ async function saveTemplate() {
   }
 }
 
+/** Synchronizes a built-in value control with template state. */
 function handleFieldInput(event) {
   const fieldId = event.target.dataset.fieldId;
   if (!fieldId) return;
@@ -2434,6 +2557,7 @@ function handleFieldInput(event) {
   markDirty();
 }
 
+/** Routes delegated actions from the built-in fields pane. */
 function handleFieldAction(event) {
   const templateAction = event.target.closest("[data-template-action]");
   if (templateAction?.dataset.templateAction === "generate-background") {
@@ -2454,6 +2578,7 @@ function handleFieldAction(event) {
   }
 }
 
+/** Resolves unsaved edits before closing the template designer. */
 function closeTemplatePage() {
   leaveTemplatePage("closing the template designer", () => {
     if (window.history.length > 1) window.history.back();
@@ -2473,6 +2598,7 @@ const accountAuth = new AccountAuthController({
   },
 });
 
+/** Registers the template-designer event handlers. */
 function attachEvents() {
   accountAuth.attachEvents();
   elements.saveTemplateButton.addEventListener("click", saveTemplate);
@@ -2546,6 +2672,7 @@ function attachEvents() {
   window.addEventListener("pagehide", revokeTemplateFramePreviewUrl);
 }
 
+/** Loads default card values, types, and rarity metadata. */
 async function loadDefaults() {
   const [defaultsResponse, typesResponse, rarityResponse] = await Promise.all([
     fetch("../defaults/card-defaults.json"),
@@ -2560,6 +2687,7 @@ async function loadDefaults() {
   state.rarityInfo = await rarityResponse.json();
 }
 
+/** Initializes defaults, authentication, and template state. */
 async function initialize() {
   attachEvents();
   try {

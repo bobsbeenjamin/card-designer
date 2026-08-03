@@ -34,6 +34,7 @@ const elements = {
   authStatus: document.querySelector("#authStatus"),
 };
 
+/** Decodes the payload from a Cognito JWT. */
 function getJwtPayload(token) {
   try {
     const encoded = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
@@ -48,6 +49,7 @@ function isJwtExpired(token) {
   return !expiresAt || Date.now() >= expiresAt * 1000 - 15000;
 }
 
+/** Sends a browser authentication request to Cognito. */
 async function cognitoRequest(target, payload) {
   const response = await fetch(`https://cognito-idp.${backendConfig.region}.amazonaws.com/`, {
     method: "POST",
@@ -62,6 +64,7 @@ async function cognitoRequest(target, payload) {
   return data;
 }
 
+/** Refreshes the current Cognito session when possible. */
 async function refreshAuthSession() {
   if (!state.refreshToken) return false;
   try {
@@ -84,12 +87,14 @@ function setAuthStatus(message) {
   elements.authStatus.textContent = message;
 }
 
+/** Renders the signed-in or signed-out account controls. */
 function renderAuthUi() {
   const signedIn = Boolean(state.idToken) && !isJwtExpired(state.idToken);
   elements.signInPanel.classList.toggle("hidden", signedIn);
   elements.templatesPageContent.classList.toggle("hidden", !signedIn);
 }
 
+/** Clears locally stored authentication state. */
 function clearAuthSession() {
   state.idToken = "";
   state.refreshToken = "";
@@ -100,6 +105,7 @@ function clearAuthSession() {
   renderAuthUi();
 }
 
+/** Calls the authenticated backend API and normalizes errors. */
 async function apiFetch(path, options = {}) {
   if (!state.idToken || (isJwtExpired(state.idToken) && !(await refreshAuthSession()))) {
     clearAuthSession();
@@ -128,6 +134,7 @@ function getTemplateDesignerUrl(templateId) {
   return url;
 }
 
+/** Creates a clickable template preview tile. */
 function createTemplateTile(template) {
   const tile = document.createElement("div");
   tile.className = "library-card-tile";
@@ -167,6 +174,7 @@ function createTemplateTile(template) {
   return tile;
 }
 
+/** Loads and renders templates for the requested set. */
 async function loadTemplates() {
   elements.templatesStatus.textContent = "Loading templates...";
   const [setsData, templatesData] = await Promise.all([
@@ -199,6 +207,7 @@ const accountAuth = new AccountAuthController({
   onSignedIn: loadTemplates,
 });
 
+/** Initializes authentication and the template gallery. */
 async function initialize() {
   accountAuth.attachEvents();
   if (state.refreshToken && (!state.idToken || isJwtExpired(state.idToken))) await refreshAuthSession();
