@@ -10,10 +10,11 @@
   </head>
   <body class="sets-page">
     <main class="sets-shell">
-      <header class="sets-page-header">
-        <div>
+      <header class="sets-page-header sets-standard-header standard-header">
+        <div class="standard-header-title">
           <p class="eyebrow">Card Designer</p>
-          <div class="sets-title-row">
+          <div class="sets-title-row standard-header-title-row">
+            <span class="my-sets-icon standard-header-logo" aria-hidden="true"></span>
             <h1 id="setsTitle">My Sets</h1>
             <button
               id="setDetailRenameButton"
@@ -30,7 +31,7 @@
           </div>
           <p id="setsStatus" class="status-line">Sign in to view your sets.</p>
         </div>
-        <div class="sets-header-actions">
+        <div class="sets-header-actions standard-header-actions">
           <label id="massEditControl" class="mass-edit-control hidden">
             <span>Mass edit</span>
             <select id="massEditInput" aria-label="Mass edit">

@@ -104,6 +104,7 @@ textarea {
 }
 
 .standard-header-logo {
+  display: block;
   flex: 0 0 44px;
   height: 44px;
   width: 44px;
@@ -2165,6 +2166,10 @@ input[type="color"] {
   padding: 24px;
 }
 
+.sets-standard-header {
+  --standard-header-side-width: 230px;
+}
+
 .sets-page-header {
   align-items: center;
   border-bottom: 1px solid var(--line);
@@ -2173,19 +2178,9 @@ input[type="color"] {
   padding-bottom: 18px;
 }
 
-.sets-page-header:not(.standard-header) {
-  grid-template-columns: minmax(0, 1fr) auto;
-}
-
-.sets-page-header h1 {
-  margin: 0;
-}
-
 .sets-title-row {
   align-items: flex-end;
-  display: flex;
   gap: 8px;
-  margin-bottom: 4px;
   min-width: 0;
 }
 
@@ -2389,7 +2384,6 @@ input[type="color"] {
 
   .sets-page-header {
     align-items: start;
-    grid-template-columns: 1fr;
   }
 
   .sets-header-actions {
