@@ -583,13 +583,28 @@ h1 {
 }
 
 .preview-stage {
-  display: grid;
+  display: flex;
   flex: 1;
   gap: clamp(10px, 2vw, 24px);
-  grid-template-columns: minmax(42px, 1fr) auto minmax(42px, 1fr);
+  justify-content: center;
   min-height: 0;
   padding: 6px 18px 18px;
-  place-items: start center;
+  align-items: flex-start;
+  position: relative;
+}
+
+.preview-stage > .card-navigation-button {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+}
+.preview-stage > .card-navigation-button:first-child {
+  left: 18px;
+}
+
+.preview-stage > .card-navigation-button:last-child {
+  right: 18px;
 }
 
 .card-navigation-button {
@@ -2092,6 +2107,14 @@ input[type="color"] {
   }
 
   .card-navigation-button:last-child {
+    right: 2px;
+  }
+
+  .preview-stage > .card-navigation-button:first-child {
+    left: 2px;
+  }
+
+  .preview-stage > .card-navigation-button:last-child {
     right: 2px;
   }
 
