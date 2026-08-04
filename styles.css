@@ -65,39 +65,54 @@ textarea {
   padding: 16px 24px;
 }
 
-.designer-brand {
+.standard-header {
+  --standard-header-side-width: 86px;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: var(--standard-header-side-width) minmax(0, 1fr) var(--standard-header-side-width);
+}
+
+.standard-header::before {
+  content: "";
+  width: var(--standard-header-side-width);
+}
+
+.standard-header-title {
+  justify-content: center;
+  min-width: 0;
+  text-align: center;
+}
+
+.standard-header-title-row {
   align-items: center;
   display: flex;
   gap: 12px;
-  min-width: 0;
-}
-
-.card-designer-page-header {
-  display: grid;
-  gap: 18px;
-  grid-template-columns: 86px minmax(0, 1fr) 86px;
-}
-
-.card-designer-page-header::before {
-  content: "";
-  width: 86px;
-}
-
-.card-designer-page-header .designer-brand {
   justify-content: center;
+  margin-bottom: 4px;
 }
 
-.designer-header-actions {
+.standard-header-title-row h1 {
+  margin: 0;
+}
+
+.standard-header-actions,
+.sets-header-actions {
   align-items: center;
   display: flex;
   gap: 10px;
   justify-content: flex-end;
 }
 
-.designer-brand img {
+.standard-header-logo {
   flex: 0 0 44px;
   height: 44px;
   width: 44px;
+}
+
+.designer-brand {
+  align-items: center;
+  display: flex;
+  gap: 12px;
 }
 
 .designer-brand h1 {
@@ -109,44 +124,7 @@ textarea {
 }
 
 .template-page-header {
-  display: grid;
-  gap: 18px;
-  grid-template-columns: 166px minmax(0, 1fr) 166px;
-}
-
-.template-page-header::before {
-  content: "";
-  width: 166px;
-}
-
-.template-title-block {
-  min-width: 0;
-  text-align: center;
-}
-
-.template-title-row {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-  margin-bottom: 4px;
-}
-
-.template-title-row img {
-  flex: 0 0 44px;
-  height: 44px;
-  width: 44px;
-}
-
-.template-title-row h1 {
-  margin: 0;
-}
-
-.template-header-actions {
-  align-items: center;
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
+  --standard-header-side-width: 166px;
 }
 
 .template-creator-page .library-panel {
@@ -2074,31 +2052,19 @@ input[type="color"] {
     padding: 14px 18px;
   }
 
-  .card-designer-page-header {
-    grid-template-columns: 1fr;
+  .standard-header {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .card-designer-page-header::before {
+  .standard-header::before {
     display: none;
   }
 
-  .designer-header-actions {
-    justify-content: flex-end;
-  }
-
-  .template-page-header {
-    grid-template-columns: 1fr;
-  }
-
-  .template-page-header::before {
-    display: none;
-  }
-
-  .template-header-actions {
+  .template-page-header .standard-header-actions {
     justify-content: flex-start;
   }
 
-  .designer-brand img {
+  .designer-brand .standard-header-logo {
     flex-basis: 40px;
     height: 40px;
     width: 40px;
@@ -2204,8 +2170,11 @@ input[type="color"] {
   border-bottom: 1px solid var(--line);
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(0, 1fr) auto;
   padding-bottom: 18px;
+}
+
+.sets-page-header:not(.standard-header) {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .sets-page-header h1 {
@@ -2248,11 +2217,7 @@ input[type="color"] {
 }
 
 .sets-header-actions {
-  align-items: center;
-  display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  justify-content: flex-end;
 }
 
 .set-detail-menu {
@@ -2774,36 +2739,6 @@ input[type="color"] {
   text-decoration: underline;
 }
 
-.friends-title-row {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-  margin-bottom: 4px;
-}
-
-.friends-header {
-  grid-template-columns: 86px minmax(0, 1fr) 86px;
-}
-
-.friends-header::before {
-  content: "";
-  width: 86px;
-}
-
-.friends-header > div:first-of-type {
-  min-width: 0;
-  text-align: center;
-}
-
-.friends-header .sets-header-actions {
-  justify-content: flex-end;
-}
-
-.friends-title-row h1 {
-  margin: 0;
-}
-
 .friends-title-icon {
   background: var(--ink);
   display: block;
@@ -2942,15 +2877,7 @@ input[type="color"] {
 }
 
 @media (max-width: 620px) {
-  .friends-header {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .friends-header::before {
-    display: none;
-  }
-
-  .friends-header .sets-header-actions {
+  .friends-header .standard-header-actions {
     justify-content: center;
   }
 
