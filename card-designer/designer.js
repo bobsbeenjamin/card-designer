@@ -331,6 +331,7 @@ const elements = {
   deleteSavedButton: document.querySelector("#deleteSavedButton"),
   resetCard: document.querySelector("#resetCard"),
   homeButton: document.querySelector("#homeButton"),
+  closeDesignerButton: document.querySelector("#closeDesignerButton"),
   exportPng: document.querySelector("#exportPng"),
   duplicateSaveDialog: document.querySelector("#duplicateSaveDialog"),
   duplicateSaveForm: document.querySelector("#duplicateSaveForm"),
@@ -3149,10 +3150,10 @@ function promptSaveUnsavedChanges(destination = "loading the selected card") {
   });
 }
 
-/** Saves pending changes when requested, then returns to the site home page. */
-async function navigateHome() {
+/** Resolves unsaved card edits before navigating away from the designer. */
+async function leaveDesignerPage(destination, navigate) {
   if (hasUnsavedCardChanges()) {
-    const shouldSave = await promptSaveUnsavedChanges("going to the Home Page");
+    const shouldSave = await promptSaveUnsavedChanges(destination);
     if (shouldSave) {
       const cardIdToSave = state.currentCardId;
       if (cardIdToSave) await saveCard(cardIdToSave);
@@ -3160,7 +3161,22 @@ async function navigateHome() {
     }
   }
 
-  window.location.href = new URL("../", window.location.href).toString();
+  navigate();
+}
+
+/** Saves pending changes when requested, then returns to the site home page. */
+function navigateHome() {
+  return leaveDesignerPage("going to the Home Page", () => {
+    window.location.href = new URL("../", window.location.href).toString();
+  });
+}
+
+/** Resolves pending changes before closing the card designer. */
+function closeDesignerPage() {
+  return leaveDesignerPage("closing the card designer", () => {
+    if (window.history.length > 1) window.history.back();
+    else window.location.href = new URL("../", window.location.href).toString();
+  });
 }
 
 /** Loads saved card summaries for the signed-in user. */
@@ -3747,6 +3763,7 @@ function attachEvents() {
   elements.setDialog.addEventListener("close", clearSetDialog);
   elements.resetCard.addEventListener("click", resetCard);
   elements.homeButton.addEventListener("click", navigateHome);
+  elements.closeDesignerButton.addEventListener("click", closeDesignerPage);
   elements.exportPng.addEventListener("click", () => exportPng());
   accountAuth.attachEvents();
   elements.imageProviderInput.addEventListener("change", handleImageProviderChange);

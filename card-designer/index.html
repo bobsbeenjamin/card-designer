@@ -9,13 +9,19 @@
   </head>
   <body class="designer-page">
     <main class="app-shell">
-      <header class="designer-page-header">
+      <header class="designer-page-header card-designer-page-header">
         <div class="designer-brand">
           <img src="../assets/custom-card-designer-logo.svg" alt="" />
           <div>
             <p class="eyebrow">Card Designer</p>
             <h1>Custom Card Designer</h1>
           </div>
+        </div>
+        <div class="designer-header-actions">
+          <button id="homeButton" class="home-button" type="button" title="Go to the Home Page" aria-label="Go to the Home Page">
+            <span class="home-icon" aria-hidden="true"></span>
+          </button>
+          <button id="closeDesignerButton" class="sets-close-button" type="button" title="Close" aria-label="Close">x</button>
         </div>
       </header>
 
@@ -248,12 +254,7 @@
       <aside class="control-panel" aria-label="Card controls">
         <div class="panel-header">
           <h2>Card Design Fields</h2>
-          <div class="panel-header-actions">
-            <button id="resetCard" class="button subtle" type="button">Reset</button>
-            <button id="homeButton" class="home-button" type="button" title="Go to the Home Page" aria-label="Go to the Home Page">
-              <span class="home-icon" aria-hidden="true"></span>
-            </button>
-          </div>
+          <button id="resetCard" class="button subtle" type="button">Reset</button>
         </div>
         <form id="cardForm">
           <fieldset data-card-section="identity">
