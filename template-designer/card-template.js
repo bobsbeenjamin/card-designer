@@ -20,6 +20,7 @@ const state = {
   editingBuiltInFieldId: "",
   editingCustomFieldName: "",
   templateNavigationPending: false,
+  cardRefactorInProgress: false,
   allowPageExit: false,
   framePreviewObjectUrl: "",
   framePreviewSourceUrl: "",
@@ -29,6 +30,7 @@ const state = {
   setSymbolMaskDataUrl: "",
   setSymbolMaskLoadToken: 0,
   setSymbolMaskLoad: Promise.resolve(),
+  cardRendererReadyPromise: null,
   dirty: false,
 };
 
@@ -38,6 +40,7 @@ const elements = {
   templateStatus: document.querySelector("#templateStatus"),
   templateNameInput: document.querySelector("#templateNameInput"),
   templateSetInput: document.querySelector("#templateSetInput"),
+  applyToExistingCardsInput: document.querySelector("#applyToExistingCardsInput"),
   templateForm: document.querySelector("#templateForm"),
   templateFields: document.querySelector("#templateFields"),
   templateHomeButton: document.querySelector("#templateHomeButton"),
@@ -72,6 +75,7 @@ const elements = {
   mySetsPanel: document.querySelector("#mySetsPanel"),
   currentTemplateSetLabel: document.querySelector("#currentTemplateSetLabel"),
   card: document.querySelector("#card"),
+  cardRenderFrame: document.querySelector("#cardRenderFrame"),
   cardFrameImage: document.querySelector("#cardFrameImage"),
   cardName: document.querySelector("#cardName"),
   cardType: document.querySelector("#cardType"),
@@ -2019,7 +2023,7 @@ function renderTemplateOptions(selectedTemplateId = state.currentTemplateId) {
   elements.myTemplatesInput.value = state.templates.some(
     (template) => template.templateId === selectedTemplateId,
   ) ? selectedTemplateId : "";
-  elements.myTemplatesInput.disabled = state.templateNavigationPending || !state.templates.length;
+  elements.myTemplatesInput.disabled = state.templateNavigationPending || state.cardRefactorInProgress || !state.templates.length;
 }
 
 /** Loads templates for a set and refreshes the selector. */
@@ -2048,6 +2052,7 @@ function setLoadedTemplate(template) {
   state.sections = normalizeSavedSections(template.sections);
   state.customFields = normalizeSavedCustomFields(template.customFields);
   elements.templateNameInput.value = state.originalTemplateName;
+  elements.applyToExistingCardsInput.checked = Boolean(template.applyToExistingCards);
   renderSetOptions(state.originalSetCode);
   state.dirty = false;
   renderTemplateFields();
@@ -2064,6 +2069,7 @@ function resetNewTemplate(setCode = requestedSetCode) {
   state.sections = createDefaultSections();
   state.customFields = [];
   elements.templateNameInput.value = "";
+  elements.applyToExistingCardsInput.checked = false;
   renderSetOptions(setCode);
   state.dirty = false;
   renderTemplateFields();
@@ -2154,7 +2160,7 @@ async function loadTemplateById(templateId) {
 /** Saves or discards edits before switching templates. */
 async function handleTemplateSelectionChange() {
   const selectedTemplateId = elements.myTemplatesInput.value;
-  if (!selectedTemplateId || selectedTemplateId === state.currentTemplateId || state.templateNavigationPending) return;
+  if (!selectedTemplateId || selectedTemplateId === state.currentTemplateId || state.templateNavigationPending || state.cardRefactorInProgress) return;
 
   state.templateNavigationPending = true;
   renderTemplateOptions(selectedTemplateId);
@@ -2188,6 +2194,10 @@ async function handleTemplateSetChange() {
 
 /** Resolves unsaved edits before navigating away from the designer. */
 async function leaveTemplatePage(destination, navigate) {
+  if (state.cardRefactorInProgress) {
+    setTemplateStatus("Wait for the existing card previews to finish regenerating before leaving.");
+    return;
+  }
   if (state.templateNavigationPending) return;
   state.templateNavigationPending = true;
   renderTemplateOptions();
@@ -2214,7 +2224,7 @@ function handleTemplatePageLink(event) {
     || event.ctrlKey
     || event.shiftKey
     || event.altKey
-    || !state.dirty
+    || (!state.dirty && !state.cardRefactorInProgress)
   ) return;
 
   event.preventDefault();
@@ -2228,7 +2238,7 @@ function handleTemplatePageLink(event) {
 
 /** Requests the browser's unload warning for unsaved templates. */
 function warnBeforeUnloadingTemplatePage(event) {
-  if (!state.dirty || state.allowPageExit) return;
+  if ((!state.dirty && !state.cardRefactorInProgress) || state.allowPageExit) return;
   event.preventDefault();
   event.returnValue = "";
 }
@@ -2461,6 +2471,79 @@ async function getTemplatePngDataUrl() {
   }
 }
 
+/** Waits for the hidden card designer used to rebuild linked-card previews. */
+async function getCardRendererWindow() {
+  if (!state.cardRendererReadyPromise) {
+    state.cardRendererReadyPromise = new Promise((resolve, reject) => {
+      const frame = elements.cardRenderFrame;
+      if (!frame) {
+        reject(new Error("Card renderer is unavailable."));
+        return;
+      }
+
+      /** Resolves the renderer after its own initialization has completed. */
+      const finishLoading = async () => {
+        try {
+          const renderer = frame.contentWindow;
+          if (!renderer) throw new Error("Card renderer is unavailable.");
+          if (renderer.cardDesignerReady) await renderer.cardDesignerReady;
+          if (!renderer.applyCardData || !renderer.getCardPngDataUrl || !renderer.setArtSource || !renderer.setFrameSource || !renderer.setCardRenderTotal) {
+            throw new Error("Card renderer did not finish loading.");
+          }
+          resolve(renderer);
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      frame.addEventListener("load", finishLoading, { once: true });
+      frame.addEventListener("error", () => reject(new Error("Card renderer failed to load.")), { once: true });
+      if (!frame.getAttribute("src")) frame.src = "../card-designer/?render=card";
+    });
+  }
+  return state.cardRendererReadyPromise;
+}
+
+/** Renders a refactored card as a complete PNG in the hidden designer. */
+async function renderRefactoredCardPng(card, setTotal) {
+  const renderer = await getCardRendererWindow();
+  renderer.setCardRenderTotal(setTotal);
+  try {
+    renderer.applyCardData({ ...card, artUrl: "", frameUrl: "" });
+    if (card.artUrl) await renderer.setArtSource(card.artUrl);
+    if (card.frameUrl) await renderer.setFrameSource(card.frameUrl);
+    renderer.syncCard();
+    return renderer.getCardPngDataUrl();
+  } finally {
+    renderer.setCardRenderTotal(null);
+  }
+}
+
+/** Regenerates S3 preview images for cards changed by a template update. */
+async function regenerateRefactoredCardImages(cards) {
+  if (!cards.length) return 0;
+  if (!window.cardImageTools?.regenerateCardImages) {
+    throw new Error("Card image regeneration is unavailable.");
+  }
+
+  const cardData = await apiFetch("/cards");
+  const setTotals = new Map();
+  for (const card of cardData.cards || []) {
+    const setCode = card.setCode || "DEFAULT";
+    setTotals.set(setCode, (setTotals.get(setCode) || 0) + 1);
+  }
+  return window.cardImageTools.regenerateCardImages({
+    cards,
+    apiFetch,
+    onProgress: setTemplateStatus,
+    renderCardPng: (card) => renderRefactoredCardPng(
+      card,
+      setTotals.get(card.setCode || "DEFAULT") || 1,
+    ),
+    setTotal: null,
+  });
+}
+
 /** Validates, renders, and persists the current template. */
 async function saveTemplate() {
   const name = elements.templateNameInput.value.trim();
@@ -2487,6 +2570,7 @@ async function saveTemplate() {
       body: JSON.stringify({
         name,
         setCode: decision.finalSetCode,
+        applyToExistingCards: elements.applyToExistingCardsInput.checked,
         templateImagePng,
         sections: state.sections.map((section) => ({
           id: section.id,
@@ -2525,6 +2609,8 @@ async function saveTemplate() {
         })),
       }),
     });
+    const refactoredCards = data.refactoredCards || [];
+    state.cardRefactorInProgress = Boolean(refactoredCards.length);
     setLoadedTemplate(data.template);
     const url = new URL(window.location.href);
     url.searchParams.set("template", data.template.templateId);
@@ -2536,12 +2622,25 @@ async function saveTemplate() {
       state.templates = [];
       renderTemplateOptions();
     }
-    setTemplateStatus(`${data.template.name} saved.`);
+    if (refactoredCards.length) {
+      setTemplateStatus(`${data.template.name} saved. Regenerating ${refactoredCards.length} card previews...`);
+      try {
+        await regenerateRefactoredCardImages(refactoredCards);
+      } catch (error) {
+        setTemplateStatus(`${data.template.name} saved and linked card data updated, but card previews could not all be regenerated: ${error.message}`);
+        return true;
+      }
+      setTemplateStatus(`${data.template.name} saved. Updated ${refactoredCards.length} existing ${refactoredCards.length === 1 ? "card" : "cards"}.`);
+    } else {
+      setTemplateStatus(`${data.template.name} saved.`);
+    }
     return true;
   } catch (error) {
     setTemplateStatus(error.message);
     return false;
   } finally {
+    state.cardRefactorInProgress = false;
+    renderTemplateOptions(state.currentTemplateId);
     elements.saveTemplateButton.disabled = !state.idToken || isJwtExpired(state.idToken);
   }
 }
@@ -2626,6 +2725,7 @@ function attachEvents() {
     elements.customFieldStatus.textContent = "";
   });
   elements.templateNameInput.addEventListener("input", markDirty);
+  elements.applyToExistingCardsInput.addEventListener("change", markDirty);
   elements.templateSetInput.addEventListener("change", handleTemplateSetChange);
   elements.templateForm.addEventListener("submit", (event) => event.preventDefault());
   elements.templateFields.addEventListener("input", handleFieldInput);

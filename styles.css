@@ -1725,7 +1725,7 @@ input[type="color"] {
 }
 
 .modal-dialog.card-history-dialog {
-  width: min(760px, calc(100vw - 36px));
+  width: min(1000px, calc(100vw - 36px));
 }
 
 .card-history-dialog .modal-card {
@@ -1740,6 +1740,33 @@ input[type="color"] {
 
 .card-history-value {
   white-space: pre-wrap;
+}
+
+.card-history-group-row td {
+  background: #e4eee6;
+  border-top: 2px solid var(--accent);
+  color: var(--ink);
+  padding: 10px 12px;
+}
+
+.card-history-group-row strong,
+.card-history-group-row span {
+  display: block;
+}
+
+.card-history-group-row span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  margin-top: 2px;
+}
+
+.card-history-linked-change td:nth-child(3) {
+  border-left: 3px solid var(--accent);
+}
+
+.card-history-linked-change-last td {
+  border-bottom: 2px solid var(--accent);
 }
 
 .card-history-modal-actions {

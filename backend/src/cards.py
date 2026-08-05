@@ -1,6 +1,7 @@
 import base64
 import binascii
-from decimal import Decimal
+import copy
+from decimal import Decimal, InvalidOperation
 import hashlib
 import ipaddress
 import json
@@ -137,6 +138,30 @@ CARD_HISTORY_FIELD_LABELS = {
     "templateCustomFields": "custom template fields",
 }
 
+CARD_HISTORY_PROPERTY_LABELS = {
+    "accent": "Accent",
+    "canEdit": "Can edit",
+    "color": "Color",
+    "dataType": "Data type",
+    "dynamicStat": "Dynamic stat",
+    "fieldId": "Field id",
+    "fontSize": "Font size",
+    "frame": "Frame",
+    "height": "Height",
+    "label": "Label",
+    "mustBeNumber": "Must be number",
+    "options": "Options",
+    "panel": "Panel",
+    "position": "Position",
+    "size": "Size",
+    "text": "Text",
+    "value": "Value",
+    "width": "Width",
+    "x": "X",
+    "y": "Y",
+}
+CARD_HISTORY_MISSING = object()
+
 CARD_IMAGE_FIELD = "cardImagePng"
 ART_IMAGE_FIELD = "artImage"
 FRAME_IMAGE_FIELD = "frameImage"
@@ -237,7 +262,7 @@ def handler(event, _context):
 
         if method == "PUT" and route_key == "PUT /templates/{templateId}":
             template_id = event["pathParameters"]["templateId"]
-            return ok(save_template(user_id, template_id, read_body(event)))
+            return ok(save_template(user_id, template_id, read_body(event), user_email))
 
         if method == "GET" and route_key == "GET /friends":
             return ok(list_friends(user_id))
@@ -1526,6 +1551,320 @@ def format_change_labels(labels):
     return f"{', '.join(labels[:-1])}, and {labels[-1]}"
 
 
+def escape_card_history_path(value):
+    """Escape one stable history-path segment using JSON Pointer rules."""
+    return str(value).replace("~", "~0").replace("/", "~1")
+
+
+def card_history_values_equal(old_value, new_value):
+    """Compare history values while ignoring non-visual numeric storage types."""
+    if old_value == new_value:
+        return True
+    if isinstance(old_value, bool) or isinstance(new_value, bool):
+        return False
+    if isinstance(old_value, dict) and isinstance(new_value, dict):
+        return old_value.keys() == new_value.keys() and all(
+            card_history_values_equal(old_value[key], new_value[key])
+            for key in old_value
+        )
+    if isinstance(old_value, list) and isinstance(new_value, list):
+        return len(old_value) == len(new_value) and all(
+            card_history_values_equal(old_item, new_item)
+            for old_item, new_item in zip(old_value, new_value)
+        )
+    numeric_types = (int, float, Decimal)
+    if (
+        (isinstance(old_value, numeric_types) and isinstance(new_value, str))
+        or (isinstance(new_value, numeric_types) and isinstance(old_value, str))
+    ):
+        try:
+            return Decimal(str(old_value).strip()) == Decimal(str(new_value).strip())
+        except (InvalidOperation, ValueError):
+            return False
+    return False
+
+
+def append_card_history_change(
+    changes,
+    field,
+    path,
+    label,
+    old_value=CARD_HISTORY_MISSING,
+    new_value=CARD_HISTORY_MISSING,
+):
+    """Append one exact, reversible old/new history change."""
+    if old_value is CARD_HISTORY_MISSING and new_value is CARD_HISTORY_MISSING:
+        return
+    if old_value is not CARD_HISTORY_MISSING and new_value is not CARD_HISTORY_MISSING:
+        if card_history_values_equal(old_value, new_value):
+            return
+    change = {
+        "field": field,
+        "path": path,
+        "label": label,
+        "oldExists": old_value is not CARD_HISTORY_MISSING,
+        "newExists": new_value is not CARD_HISTORY_MISSING,
+    }
+    if old_value is not CARD_HISTORY_MISSING:
+        change["oldValue"] = copy.deepcopy(old_value)
+    if new_value is not CARD_HISTORY_MISSING:
+        change["newValue"] = copy.deepcopy(new_value)
+    changes.append(change)
+
+
+def append_nested_card_history_changes(
+    changes,
+    field,
+    path,
+    label,
+    old_value=CARD_HISTORY_MISSING,
+    new_value=CARD_HISTORY_MISSING,
+):
+    """Recursively record changed mapping properties without unchanged siblings."""
+    old_is_mapping = isinstance(old_value, dict)
+    new_is_mapping = isinstance(new_value, dict)
+    if old_is_mapping or new_is_mapping:
+        if old_value is not CARD_HISTORY_MISSING and not old_is_mapping:
+            append_card_history_change(changes, field, path, label, old_value, new_value)
+            return
+        if new_value is not CARD_HISTORY_MISSING and not new_is_mapping:
+            append_card_history_change(changes, field, path, label, old_value, new_value)
+            return
+        old_mapping = old_value if old_is_mapping else {}
+        new_mapping = new_value if new_is_mapping else {}
+        property_names = list(old_mapping)
+        property_names.extend(name for name in new_mapping if name not in old_mapping)
+        for property_name in property_names:
+            property_label = CARD_HISTORY_PROPERTY_LABELS.get(property_name, str(property_name))
+            append_nested_card_history_changes(
+                changes,
+                field,
+                f"{path}/{escape_card_history_path(property_name)}",
+                f"{label} › {property_label}",
+                old_mapping.get(property_name, CARD_HISTORY_MISSING),
+                new_mapping.get(property_name, CARD_HISTORY_MISSING),
+            )
+        return
+    append_card_history_change(changes, field, path, label, old_value, new_value)
+
+
+def get_ordered_history_items(items, identity_key):
+    """Return an identity lookup and exact order for a structured history list."""
+    lookup = {}
+    order = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        identity = str(identity_key(item) or "")
+        if not identity or identity in lookup:
+            continue
+        lookup[identity] = item
+        order.append(identity)
+    return lookup, order
+
+
+def append_template_option_history_changes(changes, field, path, label, old_options, new_options):
+    """Record dropdown option additions, removals, edits, and ordering changes."""
+    old_options = old_options if isinstance(old_options, list) else []
+    new_options = new_options if isinstance(new_options, list) else []
+    structured = all(isinstance(option, dict) for option in old_options + new_options)
+    if not structured:
+        if old_options != new_options:
+            append_card_history_change(
+                changes,
+                field,
+                f"{path}/order",
+                f"{label} › Order and items",
+                old_options,
+                new_options,
+            )
+        return
+
+    old_lookup, old_order = get_ordered_history_items(old_options, lambda option: option.get("value"))
+    new_lookup, new_order = get_ordered_history_items(new_options, lambda option: option.get("value"))
+    if old_order != new_order:
+        append_card_history_change(
+            changes,
+            field,
+            f"{path}/order",
+            f"{label} › Order",
+            old_order,
+            new_order,
+        )
+    option_ids = old_order + [option_id for option_id in new_order if option_id not in old_lookup]
+    for option_id in option_ids:
+        old_option = old_lookup.get(option_id, {})
+        new_option = new_lookup.get(option_id, {})
+        option_label = str(new_option.get("label") or old_option.get("label") or option_id)
+        property_names = [name for name in old_option if name != "value"]
+        property_names.extend(
+            name for name in new_option if name != "value" and name not in old_option
+        )
+        for property_name in property_names:
+            property_label = CARD_HISTORY_PROPERTY_LABELS.get(property_name, property_name)
+            append_nested_card_history_changes(
+                changes,
+                field,
+                f"{path}/{escape_card_history_path(option_id)}/{escape_card_history_path(property_name)}",
+                f"{label} › {option_label} › {property_label}",
+                old_option.get(property_name, CARD_HISTORY_MISSING),
+                new_option.get(property_name, CARD_HISTORY_MISSING),
+            )
+
+
+def append_template_section_history_changes(changes, old_sections, new_sections):
+    """Record exact template section and field definition changes."""
+    old_lookup, old_order = get_ordered_history_items(old_sections, lambda section: section.get("id"))
+    new_lookup, new_order = get_ordered_history_items(new_sections, lambda section: section.get("id"))
+    if old_order != new_order:
+        append_card_history_change(
+            changes,
+            "templateSections",
+            "/templateSections/order",
+            "Template fields › Section order",
+            old_order,
+            new_order,
+        )
+
+    section_ids = old_order + [section_id for section_id in new_order if section_id not in old_lookup]
+    for section_id in section_ids:
+        old_section = old_lookup.get(section_id, {})
+        new_section = new_lookup.get(section_id, {})
+        section_label = str(
+            new_section.get("label") or old_section.get("label") or section_id
+        )
+        section_path = f"/templateSections/{escape_card_history_path(section_id)}"
+        append_nested_card_history_changes(
+            changes,
+            "templateSections",
+            f"{section_path}/label",
+            f"Template fields › {section_label} › Section label",
+            old_section.get("label", CARD_HISTORY_MISSING),
+            new_section.get("label", CARD_HISTORY_MISSING),
+        )
+
+        old_fields, old_field_order = get_ordered_history_items(
+            old_section.get("fields"),
+            lambda field: field.get("id"),
+        )
+        new_fields, new_field_order = get_ordered_history_items(
+            new_section.get("fields"),
+            lambda field: field.get("id"),
+        )
+        if old_field_order != new_field_order:
+            append_card_history_change(
+                changes,
+                "templateSections",
+                f"{section_path}/fields/order",
+                f"Template fields › {section_label} › Field order",
+                old_field_order,
+                new_field_order,
+            )
+
+        field_ids = old_field_order + [field_id for field_id in new_field_order if field_id not in old_fields]
+        for field_id in field_ids:
+            old_field = old_fields.get(field_id, {})
+            new_field = new_fields.get(field_id, {})
+            field_label = str(new_field.get("label") or old_field.get("label") or field_id)
+            field_path = f"{section_path}/fields/{escape_card_history_path(field_id)}"
+            property_names = [name for name in old_field if name != "id"]
+            property_names.extend(
+                name for name in new_field if name != "id" and name not in old_field
+            )
+            for property_name in property_names:
+                property_label = CARD_HISTORY_PROPERTY_LABELS.get(property_name, property_name)
+                if property_name == "options":
+                    append_template_option_history_changes(
+                        changes,
+                        "templateSections",
+                        f"{field_path}/options",
+                        f"Template fields › {section_label} › {field_label} › {property_label}",
+                        old_field.get(property_name),
+                        new_field.get(property_name),
+                    )
+                    continue
+                append_nested_card_history_changes(
+                    changes,
+                    "templateSections",
+                    f"{field_path}/{escape_card_history_path(property_name)}",
+                    f"Template fields › {section_label} › {field_label} › {property_label}",
+                    old_field.get(property_name, CARD_HISTORY_MISSING),
+                    new_field.get(property_name, CARD_HISTORY_MISSING),
+                )
+
+
+def append_template_custom_field_history_changes(changes, old_fields, new_fields):
+    """Record exact custom template field definition and value changes."""
+    identity = lambda field: str(field.get("name") or "").casefold()
+    old_lookup, old_order = get_ordered_history_items(old_fields, identity)
+    new_lookup, new_order = get_ordered_history_items(new_fields, identity)
+    old_names = [old_lookup[field_id].get("name", field_id) for field_id in old_order]
+    new_names = [new_lookup[field_id].get("name", field_id) for field_id in new_order]
+    if old_names != new_names:
+        append_card_history_change(
+            changes,
+            "templateCustomFields",
+            "/templateCustomFields/order",
+            "Custom template fields › Field order",
+            old_names,
+            new_names,
+        )
+
+    field_ids = old_order + [field_id for field_id in new_order if field_id not in old_lookup]
+    for field_id in field_ids:
+        old_field = old_lookup.get(field_id, {})
+        new_field = new_lookup.get(field_id, {})
+        field_name = str(new_field.get("name") or old_field.get("name") or field_id)
+        field_path = f"/templateCustomFields/{escape_card_history_path(field_id)}"
+        property_names = list(old_field)
+        property_names.extend(name for name in new_field if name not in old_field)
+        for property_name in property_names:
+            property_label = CARD_HISTORY_PROPERTY_LABELS.get(property_name, property_name)
+            if property_name == "options":
+                append_template_option_history_changes(
+                    changes,
+                    "templateCustomFields",
+                    f"{field_path}/options",
+                    f"Custom template fields › {field_name} › {property_label}",
+                    old_field.get(property_name),
+                    new_field.get(property_name),
+                )
+                continue
+            append_nested_card_history_changes(
+                changes,
+                "templateCustomFields",
+                f"{field_path}/{escape_card_history_path(property_name)}",
+                f"Custom template fields › {field_name} › {property_label}",
+                old_field.get(property_name, CARD_HISTORY_MISSING),
+                new_field.get(property_name, CARD_HISTORY_MISSING),
+            )
+
+
+def build_card_history_changes(existing_card, updated_card):
+    """Return every meaningful card change as an exact reversible operation."""
+    changes = []
+    for field, field_label in CARD_HISTORY_FIELD_LABELS.items():
+        old_value = existing_card.get(field, CARD_HISTORY_MISSING)
+        new_value = updated_card.get(field, CARD_HISTORY_MISSING)
+        if old_value is not CARD_HISTORY_MISSING and new_value is not CARD_HISTORY_MISSING:
+            if card_history_values_equal(old_value, new_value):
+                continue
+        if field == "templateSections":
+            append_template_section_history_changes(changes, old_value, new_value)
+        elif field == "templateCustomFields":
+            append_template_custom_field_history_changes(changes, old_value, new_value)
+        else:
+            append_nested_card_history_changes(
+                changes,
+                field,
+                f"/{escape_card_history_path(field)}",
+                field_label.capitalize(),
+                old_value,
+                new_value,
+            )
+    return changes
+
+
 def summarize_card_change(existing_card, updated_card, change_type):
     """Return changed field names and a human-readable update description.
 
@@ -1537,7 +1876,10 @@ def summarize_card_change(existing_card, updated_card, change_type):
     changed_fields = [
         field
         for field in CARD_HISTORY_FIELD_LABELS
-        if existing_card.get(field) != updated_card.get(field)
+        if not card_history_values_equal(
+            existing_card.get(field, CARD_HISTORY_MISSING),
+            updated_card.get(field, CARD_HISTORY_MISSING),
+        )
     ]
     if change_type == "reorder":
         old_number = normalize_collector_number(existing_card.get("collectorNumber"))
@@ -1562,8 +1904,17 @@ def build_card_history_item(user_id, existing_card, updated_card, change_type, c
     """
     recorded_at_ns = time.time_ns()
     changed_fields, description = summarize_card_change(existing_card, updated_card, change_type)
-    old_values = {field: existing_card.get(field) for field in changed_fields}
-    new_values = {field: updated_card.get(field) for field in changed_fields}
+    changes = build_card_history_changes(existing_card, updated_card)
+    if change_type == "template-refactor" and changes:
+        noun = "change" if len(changes) == 1 else "changes"
+        description = f"Template update made {len(changes)} reversible {noun}."
+    legacy_value_fields = [
+        field
+        for field in changed_fields
+        if field not in {"templateSections", "templateCustomFields"}
+    ]
+    old_values = {field: existing_card.get(field) for field in legacy_value_fields}
+    new_values = {field: updated_card.get(field) for field in legacy_value_fields}
     return {
         "cardKey": f"{user_id}#{existing_card['cardId']}",
         "versionId": f"{recorded_at_ns:020d}#{uuid.uuid4()}",
@@ -1574,6 +1925,7 @@ def build_card_history_item(user_id, existing_card, updated_card, change_type, c
         "changeType": change_type,
         "changedFields": changed_fields,
         "description": description,
+        "changes": changes,
         "oldValues": old_values,
         "newValues": new_values,
         "snapshot": existing_card,
@@ -2154,6 +2506,9 @@ def clean_template_record(user_id, body, template_id=None, created_at=None):
     normalized_name = normalize_template_name(name)
     set_code = normalize_set_code(body.get("setCode"))
     validate_card_set(user_id, set_code)
+    apply_to_existing_cards = body.get("applyToExistingCards", False)
+    if not isinstance(apply_to_existing_cards, bool):
+        raise ValueError("Apply to existing cards must be true or false.")
     now = int(time.time())
     return {
         "ownerSet": get_template_owner_set(user_id, set_code),
@@ -2162,6 +2517,7 @@ def clean_template_record(user_id, body, template_id=None, created_at=None):
         "templateId": template_id or str(uuid.uuid4()),
         "setCode": set_code,
         "name": name,
+        "applyToExistingCards": apply_to_existing_cards,
         "sections": clean_template_sections(body),
         "customFields": clean_template_custom_fields(body),
         "createdAt": created_at or now,
@@ -2223,7 +2579,204 @@ def create_template(user_id, body):
     return {"template": add_template_image_url(item)}
 
 
-def save_template(user_id, template_id, body):
+def get_template_fields_by_id(sections):
+    """Return a field-id lookup for a template section collection."""
+    return {
+        field.get("id"): field
+        for section in sections or []
+        for field in section.get("fields") or []
+        if field.get("id")
+    }
+
+
+def is_valid_numeric_template_value(value):
+    """Return whether a template value can be stored in a numeric card field."""
+    try:
+        return Decimal(str(value).strip()).is_finite()
+    except (InvalidOperation, ValueError):
+        return False
+
+
+def get_refactored_template_field_value(card_field, old_template_field, new_template_field):
+    """Preserve card overrides while adopting a changed template default."""
+    new_default = str(new_template_field.get("value", ""))
+    if not card_field:
+        value = new_default
+    else:
+        value = str(card_field.get("value", ""))
+        if old_template_field and value == str(old_template_field.get("value", "")):
+            value = new_default
+
+    field_id = new_template_field.get("id")
+    if field_id in {"statMode", "rarity"}:
+        allowed_values = {
+            str(option.get("value", ""))
+            for option in new_template_field.get("options") or []
+        }
+        if value and value not in allowed_values:
+            value = new_default if new_default in allowed_values else ""
+    if field_id == "cost" and new_template_field.get("mustBeNumber"):
+        if not is_valid_numeric_template_value(value):
+            value = new_default if is_valid_numeric_template_value(new_default) else "0"
+    return value
+
+
+def refactor_template_sections_for_card(card, old_template, new_template):
+    """Apply the new template schema while retaining card-entered field values."""
+    old_template_fields = get_template_fields_by_id(old_template.get("sections"))
+    card_fields = get_template_fields_by_id(card.get("templateSections"))
+    sections = copy.deepcopy(new_template.get("sections") or [])
+    for section in sections:
+        for field in section.get("fields") or []:
+            field_id = field.get("id")
+            field["value"] = get_refactored_template_field_value(
+                card_fields.get(field_id),
+                old_template_fields.get(field_id),
+                field,
+            )
+            if field_id == "name":
+                field["value"] = str(card.get("name") or field["value"])
+            elif field_id == "collector":
+                field["value"] = str(card.get("collectorNumber") or field["value"])
+    return sections
+
+
+def refactor_template_custom_fields_for_card(card, new_template):
+    """Apply new custom-field definitions and retain values for matching names."""
+    existing_fields = {
+        str(field.get("name") or "").casefold(): field
+        for field in card.get("templateCustomFields") or []
+    }
+    custom_fields = copy.deepcopy(new_template.get("customFields") or [])
+    for field in custom_fields:
+        existing_field = existing_fields.get(str(field.get("name") or "").casefold())
+        value = str((existing_field or {}).get("value", ""))
+        if field.get("dataType") == "dropdown" and value not in (field.get("options") or []):
+            value = ""
+        field["value"] = value
+    return custom_fields
+
+
+def build_refactored_card(existing_card, old_template, new_template):
+    """Build a linked card with the new template snapshot and preserved card data."""
+    updated_card = copy.deepcopy(existing_card)
+    sections = refactor_template_sections_for_card(existing_card, old_template, new_template)
+    custom_fields = refactor_template_custom_fields_for_card(existing_card, new_template)
+    fields = get_template_fields_by_id(sections)
+    card_field_names = {
+        "type": "type",
+        "subtype": "sub_type",
+        "cost": "cost",
+        "statMode": "statMode",
+        "attack": "attack",
+        "health": "health",
+        "loyalty": "loyalty",
+        "ability": "abilities",
+        "flavor": "flavorText",
+        "artist": "artistName",
+        "rarity": "rarity",
+        "fit": "artFit",
+        "frameUrl": "frameUrl",
+        "frameFit": "frameFit",
+    }
+    for template_field_id, card_field_name in card_field_names.items():
+        if template_field_id in fields:
+            field = fields[template_field_id]
+            field_value = field.get("value", "")
+            is_numeric = template_field_id in {"attack", "health", "loyalty"} or (
+                template_field_id == "cost" and field.get("mustBeNumber", True)
+            )
+            if is_numeric:
+                try:
+                    field_value = Decimal(str(field_value).strip())
+                except (InvalidOperation, ValueError):
+                    field_value = existing_card.get(card_field_name)
+            updated_card[card_field_name] = field_value
+
+    stat_mode = updated_card.get("statMode")
+    if stat_mode != "combat":
+        updated_card["attack"] = None
+        updated_card["health"] = None
+    if stat_mode != "loyalty":
+        updated_card["loyalty"] = None
+
+    colors = copy.deepcopy(existing_card.get("colors") or {})
+    for template_field_id in ("frame", "accent", "text", "panel"):
+        if template_field_id in fields:
+            colors[template_field_id] = fields[template_field_id].get("value", "")
+    updated_card["colors"] = colors
+    updated_card["templateName"] = new_template.get("name", "")
+    updated_card["templateSections"] = sections
+    updated_card["templateCustomFields"] = custom_fields
+    return updated_card
+
+
+def refactor_cards_for_template(user_id, old_template, new_template, changed_by):
+    """Update all cards linked to a template and record each card's prior state."""
+    query_args = {"KeyConditionExpression": Key("userId").eq(user_id)}
+    cards = []
+    while True:
+        response = TABLE.query(**query_args)
+        cards.extend(response.get("Items", []))
+        last_key = response.get("LastEvaluatedKey")
+        if not last_key:
+            break
+        query_args["ExclusiveStartKey"] = last_key
+
+    card_updates = []
+    compared_fields = list(CARD_HISTORY_FIELD_LABELS)
+    for existing_card in cards:
+        if existing_card.get("pendingShare") or existing_card.get("templateId") != new_template["templateId"]:
+            continue
+        updated_card = build_refactored_card(existing_card, old_template, new_template)
+        if all(
+            card_history_values_equal(
+                existing_card.get(field, CARD_HISTORY_MISSING),
+                updated_card.get(field, CARD_HISTORY_MISSING),
+            )
+            for field in compared_fields
+        ):
+            continue
+        updated_card["updatedAt"] = int(time.time())
+        card_updates.append((existing_card, updated_card))
+
+    for offset in range(0, len(card_updates), 12):
+        transaction_items = []
+        for existing_card, updated_card in card_updates[offset:offset + 12]:
+            history_item = build_card_history_item(
+                user_id,
+                existing_card,
+                updated_card,
+                "template-refactor",
+                changed_by,
+            )
+            transaction_items.extend([
+                {
+                    "Put": {
+                        "TableName": CARD_HISTORY_TABLE_NAME,
+                        "Item": serialize_dynamodb_item(history_item),
+                    },
+                },
+                {
+                    "Put": {
+                        "TableName": TABLE_NAME,
+                        "Item": serialize_dynamodb_item(updated_card),
+                    },
+                },
+            ])
+        DYNAMODB_CLIENT.transact_write_items(TransactItems=transaction_items)
+
+    return [
+        {
+            "cardId": updated_card.get("cardId", ""),
+            "name": updated_card.get("name", "Untitled Card"),
+            "setCode": updated_card.get("setCode", DEFAULT_SET["code"]),
+        }
+        for _, updated_card in card_updates
+    ]
+
+
+def save_template(user_id, template_id, body, changed_by=""):
     """Update, rename, or move an existing template while preserving its id."""
     existing_item = get_template_item_by_id(user_id, template_id)
     if not existing_item:
@@ -2284,7 +2837,18 @@ def save_template(user_id, template_id, body):
         and existing_item.get("imageKey") != item.get("imageKey")
     ):
         delete_template_image(existing_item)
-    return {"template": add_template_image_url(item)}
+    refactored_cards = []
+    if item.get("applyToExistingCards"):
+        refactored_cards = refactor_cards_for_template(
+            user_id,
+            existing_item,
+            item,
+            changed_by,
+        )
+    return {
+        "template": add_template_image_url(item),
+        "refactoredCards": refactored_cards,
+    }
 
 
 def clean_set(body):
@@ -3437,6 +4001,9 @@ def get_history_transition(history_item, newer_card):
         newer_card: Card state immediately after this history entry.
     """
     old_snapshot = history_item.get("snapshot") or {}
+    changes = history_item.get("changes")
+    if not isinstance(changes, list):
+        changes = build_card_history_changes(old_snapshot, newer_card)
     changed_fields = history_item.get("changedFields") or []
     if not changed_fields:
         changed_fields, _ = summarize_card_change(
@@ -3459,7 +4026,7 @@ def get_history_transition(history_item, newer_card):
             newer_card,
             history_item.get("changeType", "update"),
         )
-    return changed_fields, old_values, new_values, description
+    return changed_fields, old_values, new_values, description, changes
 
 
 def get_card_history_items(user_id, card_id, limit=None):
@@ -3502,7 +4069,7 @@ def list_card_history(user_id, card_id, limit=None):
     history = []
     for index, item in enumerate(history_items):
         newer_card = current_card if index == 0 else history_items[index - 1].get("snapshot") or {}
-        changed_fields, old_values, new_values, description = get_history_transition(item, newer_card)
+        changed_fields, old_values, new_values, description, changes = get_history_transition(item, newer_card)
         history.append({
             "versionId": item.get("versionId", ""),
             "recordedAt": item.get("recordedAt", 0),
@@ -3510,6 +4077,7 @@ def list_card_history(user_id, card_id, limit=None):
             "description": description,
             "changeType": item.get("changeType", "update"),
             "changedFields": changed_fields,
+            "changes": changes,
             "oldValues": old_values,
             "newValues": new_values,
         })

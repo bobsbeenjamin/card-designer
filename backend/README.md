@@ -146,10 +146,13 @@ templates, preview images, and app-managed template backgrounds.
 
 Cards created from a template retain the template id and name, a snapshot of
 the standard field definitions and values, and the custom-field definitions and
-values. This keeps saved cards and regenerated card PNGs consistent even when
-the source template is edited later. Card records also persist the selected art
-fit. Card names are enforced as case-insensitive unique identifiers within each
-set.
+values. By default, that snapshot keeps a saved card stable when its source
+template changes. Templates can instead enable `applyToExistingCards`; saving
+an enabled template replaces the snapshots on its linked cards while retaining
+card-entered values, records the refactor in card history, and returns the
+affected card ids so the browser can regenerate their S3 preview PNGs. Card
+records also persist the selected art fit. Card names are enforced as
+case-insensitive unique identifiers within each set.
 
 ## Existing user migration
 
@@ -186,10 +189,14 @@ history record because there is no prior state.
 History records use `cardKey` (`<userId>#<cardId>`) as the partition key and a
 chronological `versionId` as the sort key. Each record also contains `userId`,
 `cardId`, `recordedAt`, `changedBy`, `changeType`, `changedFields`,
-`description`, `oldValues`, `newValues`, and `snapshot`. The authenticated
-history route returns the
-newest entries first. History starts after the updated backend stack is
-deployed; existing cards are not backfilled.
+`description`, `changes`, `oldValues`, `newValues`, and `snapshot`. Each item in
+`changes` identifies one exact path and label, whether the old and new values
+exist, and their values. Template snapshots are compared by stable section,
+field, custom-field, and option identities so unchanged nested values are not
+reported and every reported change contains enough information to reverse it.
+The authenticated history route returns the newest entries first. History
+starts after the updated backend stack is deployed; existing cards are not
+backfilled.
 
 Card JSON accepts:
 

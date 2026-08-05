@@ -94,6 +94,10 @@
                 <option value="DEFAULT">DEFAULT - Default</option>
               </select>
             </label>
+            <label class="checkbox-label" title="Changes made to this template affect existing cards that used this template">
+              <input id="applyToExistingCardsInput" type="checkbox" form="templateForm" title="Changes made to this template affect existing cards that used this template" />
+              <span>Apply to existing cards 🛈</span>
+            </label>
           </fieldset>
           <p id="templateStatus" class="status-line template-pane-status" aria-live="polite">Sign in to save templates.</p>
         </div>
@@ -377,8 +381,10 @@
       </form>
     </dialog>
 
+    <iframe id="cardRenderFrame" class="card-render-frame" title="Card render workspace"></iframe>
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
     <script src="../auth-flow.js"></script>
+    <script src="../card-image.js"></script>
     <script src="./card-template.js"></script>
   </body>
 </html>

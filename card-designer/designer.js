@@ -2023,13 +2023,25 @@ function formatCardHistoryDate(recordedAt) {
 /** Formats one history value for display in the old/new value columns. */
 function formatCardHistoryValue(value) {
   if (value === null || value === undefined || value === "") return "blank";
-  if (Array.isArray(value)) return value.join(", ");
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) {
+    if (!value.length) return "none";
+    return value.map((item) => formatCardHistoryValue(item)).join(", ");
+  }
   if (typeof value === "object") {
-    return Object.entries(value)
+    const entries = Object.entries(value);
+    if (!entries.length) return "none";
+    return entries
       .map(([key, nestedValue]) => `${cardHistoryFieldLabels[key] || key}: ${formatCardHistoryValue(nestedValue)}`)
       .join("; ");
   }
   return String(value);
+}
+
+/** Formats one side of an exact history change. */
+function formatDetailedCardHistoryValue(change, side) {
+  if (change?.[`${side}Exists`] === false) return "not present";
+  return formatCardHistoryValue(change?.[`${side}Value`]);
 }
 
 /** Formats changed fields as aligned old/new value cell text. */
@@ -2067,6 +2079,52 @@ function appendCardHistoryRow(tableBody, entry, includeValues) {
   tableBody.append(row);
 }
 
+/** Appends one full-history table row per exact reversible change. */
+function appendDetailedCardHistoryRows(tableBody, entry) {
+  const changes = Array.isArray(entry.changes) ? entry.changes : [];
+  if (!changes.length) {
+    appendCardHistoryRow(tableBody, entry, true);
+    return;
+  }
+
+  const linkedTemplateChanges = entry.changeType === "template-refactor" && changes.length > 1;
+  if (linkedTemplateChanges) {
+    const groupRow = document.createElement("tr");
+    const groupCell = document.createElement("td");
+    const groupTitle = document.createElement("strong");
+    const groupMeta = document.createElement("span");
+    groupRow.className = "card-history-group-row";
+    groupCell.colSpan = 5;
+    groupTitle.textContent = `Template update: ${changes.length} linked changes`;
+    groupMeta.textContent = `Saved together on ${formatCardHistoryDate(entry.recordedAt)} by ${entry.changedBy || "Unknown user"}.`;
+    groupCell.append(groupTitle, groupMeta);
+    groupRow.append(groupCell);
+    tableBody.append(groupRow);
+  }
+
+  changes.forEach((change, index) => {
+    const row = document.createElement("tr");
+    const dateCell = document.createElement("td");
+    const userCell = document.createElement("td");
+    const changeCell = document.createElement("td");
+    const oldValueCell = document.createElement("td");
+    const newValueCell = document.createElement("td");
+    dateCell.textContent = formatCardHistoryDate(entry.recordedAt);
+    userCell.textContent = entry.changedBy || "Unknown user";
+    changeCell.textContent = change.label || change.path || entry.description || "Updated value";
+    oldValueCell.className = "card-history-value";
+    newValueCell.className = "card-history-value";
+    if (linkedTemplateChanges) {
+      row.classList.add("card-history-linked-change");
+      if (index === changes.length - 1) row.classList.add("card-history-linked-change-last");
+    }
+    oldValueCell.textContent = formatDetailedCardHistoryValue(change, "old");
+    newValueCell.textContent = formatDetailedCardHistoryValue(change, "new");
+    row.append(dateCell, userCell, changeCell, oldValueCell, newValueCell);
+    tableBody.append(row);
+  });
+}
+
 /** Renders recent history entries into the compact table. */
 function renderCardHistoryTable(tableBody, history) {
   tableBody.replaceChildren();
@@ -2098,7 +2156,7 @@ function renderFullCardHistoryTable(tableBody, history) {
     return;
   }
 
-  history.forEach((entry) => appendCardHistoryRow(tableBody, entry, true));
+  history.forEach((entry) => appendDetailedCardHistoryRows(tableBody, entry));
 }
 
 /** Refreshes the compact and full card-history tables from current state. */
