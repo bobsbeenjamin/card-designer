@@ -80,7 +80,7 @@ const modelConfigProviders = new Set([
 
 /** Builds a user-scoped key for the last loaded set and card. */
 function getLastLoadedCardStorageKey() {
-  const userKey = String(state.email || getJwtPayload(state.idToken)?.email || "guest")
+  const userKey = String(state.email || accountAuth.getJwtPayload(state.idToken).email || "guest")
     .trim()
     .toLowerCase();
   return `${lastLoadedCardStoragePrefix}:${userKey || "guest"}`;
@@ -140,19 +140,8 @@ function rememberImageProvider(provider) {
   return normalizedProvider;
 }
 
-function getStoredIdToken() {
-  return sessionStorage.getItem("cardDesignerIdToken") || "";
-}
-
-/** Returns the refresh token saved for the current browser session. */
-function getStoredRefreshToken() {
-  return sessionStorage.getItem("cardDesignerRefreshToken") || "";
-}
-
 const state = {
-  idToken: getStoredIdToken(),
-  refreshToken: getStoredRefreshToken(),
-  email: sessionStorage.getItem("cardDesignerEmail") || "",
+  ...AccountAuthController.readStoredSession(),
   currentCardId: "",
   cardHistory: [],
   cardHistoryLoading: false,
@@ -366,20 +355,6 @@ const elements = {
   rejectIncomingShareButton: document.querySelector("#rejectIncomingShareButton"),
 };
 
-const setSharing = createSetSharingController({
-  elements,
-  state,
-  apiFetch,
-  setStatus: setSaveStatus,
-  showToast,
-  onBackgroundError: setSaveStatus,
-  refreshAfterResponse: async () => {
-    await Promise.all([refreshSavedCards(), refreshCardSets()]);
-    renderSavedCards();
-    renderCardSets();
-  },
-});
-
 const accountAuth = new AccountAuthController({
   backendConfig,
   state,
@@ -392,6 +367,31 @@ const accountAuth = new AccountAuthController({
     if (!isNewCardRequest) await restoreLastLoadedCardSelection();
     await setSharing.checkSetShareResponses();
     await setSharing.checkIncomingSetShares();
+  },
+  onSessionCleared: () => {
+    state.currentCardId = "";
+    state.savedCards = [];
+    clearCardHistory();
+    state.savedSets = [];
+    state.imageGenerationSettings = null;
+    state.imageProviderCredentialsExpanded = false;
+    renderSavedCards();
+    renderCardSets();
+  },
+  sessionExpiredMessage: "Your session expired. Sign in again to load saved designs.",
+});
+const apiFetch = accountAuth.apiClient.request.bind(accountAuth.apiClient);
+const setSharing = createSetSharingController({
+  elements,
+  state,
+  apiFetch,
+  setStatus: setSaveStatus,
+  showToast,
+  onBackgroundError: setSaveStatus,
+  refreshAfterResponse: async () => {
+    await Promise.all([refreshSavedCards(), refreshCardSets()]);
+    renderSavedCards();
+    renderCardSets();
   },
 });
 
@@ -552,7 +552,7 @@ function closeAccountMenu() {
 
 /** Toggles account controls based on the current sign-in state. */
 function updateAccountUi() {
-  const signedIn = Boolean(state.idToken);
+  const signedIn = accountAuth.isSignedIn();
   elements.signInPanel.classList.toggle("hidden", signedIn);
   elements.signedInPanel.classList.toggle("hidden", !signedIn);
   elements.aiSettingsPanel.classList.toggle("hidden", !signedIn);
@@ -1504,24 +1504,15 @@ function clearFrame() {
 
 /** Fetches a remote image through the authenticated image proxy. */
 async function getProxiedImageSource(imageUrl) {
-  if (!state.idToken || isJwtExpired(state.idToken)) {
+  if (!accountAuth.isSignedIn()) {
     throw new Error("Sign in to load image URLs through the CORS-safe proxy.");
   }
 
   const isSavedImageUrl = ["/art?", "/frame?"].some((path) => imageUrl.startsWith(`${backendConfig.apiUrl}${path}`));
-  const imageRequestUrl = isSavedImageUrl
-    ? imageUrl
-    : `${backendConfig.apiUrl}/image-proxy?url=${encodeURIComponent(imageUrl)}`;
-  const response = await fetch(imageRequestUrl, {
-    headers: { Authorization: `Bearer ${state.idToken}` },
-  });
-
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `Image proxy failed with ${response.status}.`);
-  }
-
-  const blob = await response.blob();
+  const imageRequestPath = isSavedImageUrl
+    ? imageUrl.slice(backendConfig.apiUrl.length)
+    : `/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+  const blob = await accountAuth.apiClient.requestBlob(imageRequestPath);
   if (!blob.type.startsWith("image/")) {
     throw new Error("Image URL did not return an image.");
   }
@@ -2211,25 +2202,6 @@ async function openCardHistoryDialog() {
   await refreshCardHistory(state.currentCardId, null);
 }
 
-/** Calls the Cognito API used by browser auth flows. */
-async function cognitoRequest(target, payload) {
-  const response = await fetch(`https://cognito-idp.${backendConfig.region}.amazonaws.com/`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-amz-json-1.1",
-      "x-amz-target": `AWSCognitoIdentityProviderService.${target}`,
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(data.message || data.__type || "Cognito request failed.");
-  }
-
-  return data;
-}
-
 /** Returns cached settings status for the selected image provider. */
 function getSelectedProviderStatus() {
   const provider = elements.imageProviderInput.value || "openai";
@@ -2362,99 +2334,6 @@ async function saveImageGenerationSettings() {
   }
 }
 
-function getJwtPayload(token) {
-  if (!token) return null;
-
-  try {
-    const encodedPayload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    const paddedPayload = encodedPayload.padEnd(Math.ceil(encodedPayload.length / 4) * 4, "=");
-    return JSON.parse(atob(paddedPayload));
-  } catch (error) {
-    return null;
-  }
-}
-
-/** Checks whether a JWT is absent, malformed, or expired. */
-function isJwtExpired(token) {
-  const payload = getJwtPayload(token);
-  return !payload?.exp || payload.exp * 1000 <= Date.now();
-}
-
-/** Refreshes the short-lived ID token using the Cognito refresh token. */
-async function refreshAuthSession() {
-  if (!state.refreshToken) return false;
-
-  try {
-    const data = await cognitoRequest("InitiateAuth", {
-      ClientId: backendConfig.userPoolClientId,
-      AuthFlow: "REFRESH_TOKEN_AUTH",
-      AuthParameters: { REFRESH_TOKEN: state.refreshToken },
-    });
-    state.idToken = data.AuthenticationResult.IdToken;
-    state.refreshToken = data.AuthenticationResult.RefreshToken || state.refreshToken;
-    sessionStorage.setItem("cardDesignerIdToken", state.idToken);
-    sessionStorage.setItem("cardDesignerRefreshToken", state.refreshToken);
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
-/** Clears local auth/session state and saved library state. */
-function clearAuthSession() {
-  state.idToken = "";
-  state.refreshToken = "";
-  state.email = "";
-  state.currentCardId = "";
-  state.savedCards = [];
-  clearCardHistory();
-  state.savedSets = [];
-  state.imageGenerationSettings = null;
-  state.imageProviderCredentialsExpanded = false;
-  sessionStorage.removeItem("cardDesignerIdToken");
-  sessionStorage.removeItem("cardDesignerRefreshToken");
-  sessionStorage.removeItem("cardDesignerEmail");
-  updateAccountUi();
-  renderSavedCards();
-  renderCardSets();
-}
-
-/** Handles the signOut workflow. */
-function signOut() {
-  clearAuthSession();
-  setAuthStatus("Signed out");
-  setSaveStatus("Sign in to save designs");
-}
-
-/** Calls the authenticated backend API and normalizes errors. */
-async function apiFetch(path, options = {}) {
-  if (!state.idToken || (isJwtExpired(state.idToken) && !(await refreshAuthSession()))) {
-    clearAuthSession();
-    throw new Error("Your session expired. Sign in again to load saved designs.");
-  }
-
-  const response = await fetch(`${backendConfig.apiUrl}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${state.idToken}`,
-      "content-type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
-  const data = await response.json().catch(() => ({}));
-
-  if (response.status === 401) {
-    clearAuthSession();
-    throw new Error("Your session expired. Sign in again to load saved designs.");
-  }
-
-  if (!response.ok) {
-    throw new Error(data.error || `API request failed with ${response.status}.`);
-  }
-
-  return data;
-}
-
 /**
  * Fills a set dropdown while preserving its selected set when possible.
  * @param {*} select Dropdown element to populate.
@@ -2556,7 +2435,7 @@ function getSetByCode(setCode) {
 }
 
 function getSignedInUserId() {
-  return getJwtPayload(state.idToken)?.sub || "";
+  return accountAuth.getJwtPayload(state.idToken).sub || "";
 }
 
 function getPublicSetUrl(cardSet) {
@@ -3594,24 +3473,18 @@ async function fetchCardImageBlob(src) {
     ? `${backendConfig.apiUrl}${src}`
     : new URL(src, window.location.href).href;
   try {
-    const directResponse = await fetch(imageUrl, {
-      headers: imageUrl.startsWith(`${backendConfig.apiUrl}/`)
-        ? { Authorization: `Bearer ${state.idToken}` }
-        : {},
-    });
-    if (directResponse.ok) {
-      const blob = await directResponse.blob();
-      if (blob.type.startsWith("image/")) return blob;
-    }
+    const isBackendImage = imageUrl.startsWith(`${backendConfig.apiUrl}/`);
+    const blob = isBackendImage
+      ? await accountAuth.apiClient.requestBlob(imageUrl.slice(backendConfig.apiUrl.length))
+      : await fetch(imageUrl).then((response) => {
+        if (!response.ok) throw new Error(`Image request failed with ${response.status}.`);
+        return response.blob();
+      });
+    if (blob.type.startsWith("image/")) return blob;
   } catch (error) {
     // Remote images may need the authenticated image proxy for CORS-safe rendering.
   }
-  const proxyResponse = await fetch(
-    `${backendConfig.apiUrl}/image-proxy?url=${encodeURIComponent(imageUrl)}`,
-    { headers: { Authorization: `Bearer ${state.idToken}` } },
-  );
-  if (!proxyResponse.ok) throw new Error("Image could not be embedded in the PNG.");
-  const blob = await proxyResponse.blob();
+  const blob = await accountAuth.apiClient.requestBlob(`/image-proxy?url=${encodeURIComponent(imageUrl)}`);
   if (!blob.type.startsWith("image/")) throw new Error("Image URL did not return an image.");
   return blob;
 }
@@ -3828,7 +3701,10 @@ function attachEvents() {
   elements.replaceProviderCredentialsButton.addEventListener("click", replaceProviderCredentials);
   elements.saveImageGenerationSettingsButton.addEventListener("click", saveImageGenerationSettings);
   elements.accountMenuButton.addEventListener("click", toggleAccountMenu);
-  elements.signOutButton.addEventListener("click", signOut);
+  elements.signOutButton.addEventListener("click", () => {
+    accountAuth.signOut();
+    setSaveStatus("Sign in to save designs");
+  });
   setSharing.attachEvents();
   document.addEventListener("click", (event) => {
     if (!elements.signedInPanel.contains(event.target)) closeAccountMenu();
@@ -3877,11 +3753,7 @@ async function initialize() {
   renderCardSets();
   renderCardTemplates();
   renderCardHistory();
-  updateAccountUi();
-  if (state.refreshToken && (!state.idToken || isJwtExpired(state.idToken))) {
-    await refreshAuthSession();
-  }
-  if (state.idToken && !isJwtExpired(state.idToken)) {
+  if (await accountAuth.restoreSession()) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
     await Promise.all([refreshImageGenerationSettings(), refreshSavedCards(), refreshCardSets(), refreshCardTemplates()]);
     if (!isRenderWorkspace) {
@@ -3890,9 +3762,6 @@ async function initialize() {
       await setSharing.checkIncomingSetShares();
       await loadRequestedCardFromUrl();
     }
-  } else if (sessionStorage.getItem("cardDesignerIdToken") || sessionStorage.getItem("cardDesignerRefreshToken")) {
-    clearAuthSession();
-    setAuthStatus("Your session expired. Sign in again.");
   }
 }
 

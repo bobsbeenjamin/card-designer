@@ -42,9 +42,7 @@ const modelConfigProviders = new Set([
 ]);
 
 const state = {
-  idToken: sessionStorage.getItem("cardDesignerIdToken") || "",
-  refreshToken: sessionStorage.getItem("cardDesignerRefreshToken") || "",
-  email: sessionStorage.getItem("cardDesignerEmail") || "",
+  ...AccountAuthController.readStoredSession(),
   imageGenerationSettings: null,
   currentUserTooltip: null,
   currentUserTooltipHideTimer: 0,
@@ -135,7 +133,7 @@ function setAuthStatus(message) {
 
 /** Returns the full signed-in account label used in the menu and tooltip. */
 function getCurrentUserMessage() {
-  const email = state.email || getJwtPayload(state.idToken)?.email || "";
+  const email = state.email || accountAuth.getJwtPayload(state.idToken).email || "";
   return email ? `You are logged in as ${email}` : "";
 }
 
@@ -206,58 +204,6 @@ function showToast(message, variant = "error") {
   timeoutId = window.setTimeout(closeToast, 10000);
 }
 
-/** Calls Cognito for browser-based account actions. */
-async function cognitoRequest(target, payload) {
-  const response = await fetch(`https://cognito-idp.${backendConfig.region}.amazonaws.com/`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-amz-json-1.1",
-      "x-amz-target": `AWSCognitoIdentityProviderService.${target}`,
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.message || data.__type || "Cognito request failed.");
-  return data;
-}
-
-/** Decodes a JWT payload without validating its signature. */
-function getJwtPayload(token) {
-  if (!token) return null;
-  try {
-    const encodedPayload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    const paddedPayload = encodedPayload.padEnd(Math.ceil(encodedPayload.length / 4) * 4, "=");
-    return JSON.parse(atob(paddedPayload));
-  } catch (error) {
-    return null;
-  }
-}
-
-/** Checks whether a JWT is absent, malformed, or expired. */
-function isJwtExpired(token) {
-  const payload = getJwtPayload(token);
-  return !payload?.exp || payload.exp * 1000 <= Date.now();
-}
-
-/** Refreshes the short-lived ID token through Cognito. */
-async function refreshAuthSession() {
-  if (!state.refreshToken) return false;
-  try {
-    const data = await cognitoRequest("InitiateAuth", {
-      ClientId: backendConfig.userPoolClientId,
-      AuthFlow: "REFRESH_TOKEN_AUTH",
-      AuthParameters: { REFRESH_TOKEN: state.refreshToken },
-    });
-    state.idToken = data.AuthenticationResult.IdToken;
-    state.refreshToken = data.AuthenticationResult.RefreshToken || state.refreshToken;
-    sessionStorage.setItem("cardDesignerIdToken", state.idToken);
-    sessionStorage.setItem("cardDesignerRefreshToken", state.refreshToken);
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
 /** Closes the account menu and updates its accessibility state. */
 function closeAccountMenu() {
   elements.accountMenu.classList.add("hidden");
@@ -266,7 +212,7 @@ function closeAccountMenu() {
 
 /** Shows the correct home-page account controls for the current session. */
 function renderAccountUi() {
-  const signedIn = Boolean(state.idToken) && !isJwtExpired(state.idToken);
+  const signedIn = accountAuth.isSignedIn();
   elements.signInPanel.classList.toggle("hidden", signedIn);
   elements.signedInPanel.classList.toggle("hidden", !signedIn);
   elements.homeFeatureMessage.classList.toggle("hidden", signedIn);
@@ -278,47 +224,22 @@ function renderAccountUi() {
   if (!signedIn) closeAccountMenu();
 }
 
-/** Clears locally stored authentication and account state. */
-function clearAuthSession() {
-  state.idToken = "";
-  state.refreshToken = "";
-  state.email = "";
-  state.imageGenerationSettings = null;
-  sessionStorage.removeItem("cardDesignerIdToken");
-  sessionStorage.removeItem("cardDesignerRefreshToken");
-  sessionStorage.removeItem("cardDesignerEmail");
-  renderAccountUi();
-}
+const accountAuth = new AccountAuthController({
+  backendConfig,
+  state,
+  elements,
+  renderAuthUi: renderAccountUi,
+  setAuthStatus,
+  onSessionCleared: () => {
+    state.imageGenerationSettings = null;
+  },
+  onSignedIn: async () => {
+    await setSharing.checkSetShareResponses();
+    await setSharing.checkIncomingSetShares();
+  },
+});
 
-/** Signs out and returns the home screen to its account form. */
-function signOut() {
-  clearAuthSession();
-  setAuthStatus("");
-}
-
-/** Calls the authenticated backend API and normalizes errors. */
-async function apiFetch(path, options = {}) {
-  if (!state.idToken || (isJwtExpired(state.idToken) && !(await refreshAuthSession()))) {
-    clearAuthSession();
-    throw new Error("Your session expired. Sign in again.");
-  }
-  const response = await fetch(`${backendConfig.apiUrl}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${state.idToken}`,
-      "content-type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (response.status === 401) {
-    clearAuthSession();
-    throw new Error("Your session expired. Sign in again.");
-  }
-  if (!response.ok) throw new Error(data.error || `API request failed with ${response.status}.`);
-  return data;
-}
-
+const apiFetch = accountAuth.apiClient.request.bind(accountAuth.apiClient);
 const setSharing = createSetSharingController({
   elements,
   state,
@@ -327,18 +248,6 @@ const setSharing = createSetSharingController({
   showToast,
   onBackgroundError: setAuthStatus,
   refreshAfterResponse: async () => {},
-});
-
-const accountAuth = new AccountAuthController({
-  backendConfig,
-  state,
-  elements,
-  renderAuthUi: renderAccountUi,
-  setAuthStatus,
-  onSignedIn: async () => {
-    await setSharing.checkSetShareResponses();
-    await setSharing.checkIncomingSetShares();
-  },
 });
 
 /** Opens or closes the signed-in account menu. */
@@ -443,7 +352,7 @@ function attachEvents() {
   elements.currentUserLabel.addEventListener("pointercancel", cancelCurrentUserTooltipPress);
   elements.currentUserLabel.addEventListener("pointerleave", cancelCurrentUserTooltipPress);
   elements.currentUserLabel.addEventListener("contextmenu", (event) => event.preventDefault());
-  elements.signOutButton.addEventListener("click", signOut);
+  elements.signOutButton.addEventListener("click", () => accountAuth.signOut(""));
   elements.chooseImageProviderButton.addEventListener("click", openImageProviderDialog);
   elements.imageProviderInput.addEventListener("change", () => {
     rememberImageProvider(elements.imageProviderInput.value);
@@ -464,16 +373,7 @@ function attachEvents() {
 /** Restores the browser session and starts the home screen. */
 async function initialize() {
   attachEvents();
-  if (state.refreshToken && (!state.idToken || isJwtExpired(state.idToken))) await refreshAuthSession();
-  if (!state.idToken || isJwtExpired(state.idToken)) {
-    if (sessionStorage.getItem("cardDesignerIdToken") || sessionStorage.getItem("cardDesignerRefreshToken")) {
-      clearAuthSession();
-      setAuthStatus("Your session expired. Sign in again.");
-    }
-    renderAccountUi();
-    return;
-  }
-  renderAccountUi();
+  if (!(await accountAuth.restoreSession())) return;
   setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
   try {
     await setSharing.checkSetShareResponses();

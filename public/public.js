@@ -11,6 +11,7 @@ const zoomContent = document.querySelector("#cardZoomContent");
 const zoomClose = document.querySelector("#cardZoomClose");
 const previousZoomCardButton = document.querySelector("#previousZoomCardButton");
 const nextZoomCardButton = document.querySelector("#nextZoomCardButton");
+const apiClient = new ApiClient({ baseUrl: window.backendConfig.apiUrl });
 
 let zoomCards = [];
 let zoomCardIndex = -1;
@@ -129,9 +130,7 @@ async function loadPublicSet() {
   }
 
   const query = new URLSearchParams({ user, set: setName });
-  const response = await fetch(`${window.backendConfig.apiUrl}/public/sets?${query}`);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || data.message || "Unable to load this public set.");
+  const data = await apiClient.publicRequest(`/public/sets?${query}`);
 
   const cardSet = data.set || {};
   const cards = data.cards || [];

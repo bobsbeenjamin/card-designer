@@ -2,9 +2,7 @@ const backendConfig = window.backendConfig;
 const requestedSetCode = (new URLSearchParams(window.location.search).get("set") || "DEFAULT").trim().toUpperCase();
 
 const state = {
-  idToken: sessionStorage.getItem("cardDesignerIdToken") || "",
-  refreshToken: sessionStorage.getItem("cardDesignerRefreshToken") || "",
-  email: sessionStorage.getItem("cardDesignerEmail") || "",
+  ...AccountAuthController.readStoredSession(),
 };
 
 const elements = {
@@ -34,98 +32,15 @@ const elements = {
   authStatus: document.querySelector("#authStatus"),
 };
 
-/** Decodes the payload from a Cognito JWT. */
-function getJwtPayload(token) {
-  try {
-    const encoded = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "=")));
-  } catch (error) {
-    return {};
-  }
-}
-
-function isJwtExpired(token) {
-  const expiresAt = Number(getJwtPayload(token).exp || 0);
-  return !expiresAt || Date.now() >= expiresAt * 1000 - 15000;
-}
-
-/** Sends a browser authentication request to Cognito. */
-async function cognitoRequest(target, payload) {
-  const response = await fetch(`https://cognito-idp.${backendConfig.region}.amazonaws.com/`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-amz-json-1.1",
-      "x-amz-target": `AWSCognitoIdentityProviderService.${target}`,
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.message || data.__type || "Cognito request failed.");
-  return data;
-}
-
-/** Refreshes the current Cognito session when possible. */
-async function refreshAuthSession() {
-  if (!state.refreshToken) return false;
-  try {
-    const data = await cognitoRequest("InitiateAuth", {
-      ClientId: backendConfig.userPoolClientId,
-      AuthFlow: "REFRESH_TOKEN_AUTH",
-      AuthParameters: { REFRESH_TOKEN: state.refreshToken },
-    });
-    state.idToken = data.AuthenticationResult.IdToken;
-    state.refreshToken = data.AuthenticationResult.RefreshToken || state.refreshToken;
-    sessionStorage.setItem("cardDesignerIdToken", state.idToken);
-    sessionStorage.setItem("cardDesignerRefreshToken", state.refreshToken);
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
 function setAuthStatus(message) {
   elements.authStatus.textContent = message;
 }
 
 /** Renders the signed-in or signed-out account controls. */
 function renderAuthUi() {
-  const signedIn = Boolean(state.idToken) && !isJwtExpired(state.idToken);
+  const signedIn = accountAuth.isSignedIn();
   elements.signInPanel.classList.toggle("hidden", signedIn);
   elements.templatesPageContent.classList.toggle("hidden", !signedIn);
-}
-
-/** Clears locally stored authentication state. */
-function clearAuthSession() {
-  state.idToken = "";
-  state.refreshToken = "";
-  state.email = "";
-  sessionStorage.removeItem("cardDesignerIdToken");
-  sessionStorage.removeItem("cardDesignerRefreshToken");
-  sessionStorage.removeItem("cardDesignerEmail");
-  renderAuthUi();
-}
-
-/** Calls the authenticated backend API and normalizes errors. */
-async function apiFetch(path, options = {}) {
-  if (!state.idToken || (isJwtExpired(state.idToken) && !(await refreshAuthSession()))) {
-    clearAuthSession();
-    throw new Error("Your session expired. Sign in again.");
-  }
-  const response = await fetch(`${backendConfig.apiUrl}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${state.idToken}`,
-      "content-type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (response.status === 401) {
-    clearAuthSession();
-    throw new Error("Your session expired. Sign in again.");
-  }
-  if (!response.ok) throw new Error(data.error || `API request failed with ${response.status}.`);
-  return data;
 }
 
 function getTemplateDesignerUrl(templateId) {
@@ -206,22 +121,18 @@ const accountAuth = new AccountAuthController({
   setAuthStatus,
   onSignedIn: loadTemplates,
 });
+const apiFetch = accountAuth.apiClient.request.bind(accountAuth.apiClient);
 
 /** Initializes authentication and the template gallery. */
 async function initialize() {
   accountAuth.attachEvents();
-  if (state.refreshToken && (!state.idToken || isJwtExpired(state.idToken))) await refreshAuthSession();
-  renderAuthUi();
-  if (state.idToken && !isJwtExpired(state.idToken)) {
+  if (await accountAuth.restoreSession()) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
     try {
       await loadTemplates();
     } catch (error) {
       elements.templatesStatus.textContent = error.message;
     }
-  } else if (sessionStorage.getItem("cardDesignerIdToken") || sessionStorage.getItem("cardDesignerRefreshToken")) {
-    clearAuthSession();
-    setAuthStatus("Your session expired. Sign in again.");
   }
 }
 

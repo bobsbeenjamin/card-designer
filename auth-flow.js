@@ -1,24 +1,49 @@
 /* Shared sign-in and sign-up behavior for every Card Designer entry page. */
 class AccountAuthController {
-  constructor({ backendConfig, state, elements, renderAuthUi, setAuthStatus, onSignedIn }) {
+  static storageKeys = {
+    idToken: "cardDesignerIdToken",
+    refreshToken: "cardDesignerRefreshToken",
+    email: "cardDesignerEmail",
+  };
+
+  static readStoredSession() {
+    return Object.fromEntries(
+      Object.entries(AccountAuthController.storageKeys).map(([property, key]) => [
+        property,
+        sessionStorage.getItem(key) || "",
+      ]),
+    );
+  }
+
+  constructor({
+    backendConfig,
+    state,
+    elements,
+    renderAuthUi,
+    setAuthStatus,
+    onSignedIn,
+    onSessionCleared = () => {},
+    sessionExpiredMessage = "Your session expired. Sign in again.",
+  }) {
     this.backendConfig = backendConfig;
     this.state = state;
     this.elements = elements;
     this.renderAuthUi = renderAuthUi;
     this.setAuthStatus = setAuthStatus;
     this.onSignedIn = onSignedIn;
+    this.onSessionCleared = onSessionCleared;
+    this.sessionExpiredMessage = sessionExpiredMessage;
     this.availabilityTimer = 0;
     this.availabilityRequest = 0;
-  }
-
-  async publicApiFetch(path, options = {}) {
-    const response = await fetch(`${this.backendConfig.apiUrl}${path}`, {
-      ...options,
-      headers: { "content-type": "application/json", ...(options.headers || {}) },
+    this.refreshPromise = null;
+    this.apiClient = new ApiClient({
+      baseUrl: this.backendConfig.apiUrl,
+      getAccessToken: () => this.state.idToken,
+      isAccessTokenExpired: (token) => this.isJwtExpired(token),
+      refreshAccessToken: () => this.refreshSession(),
+      onUnauthorized: () => this.clearSession(),
+      sessionExpiredMessage: this.sessionExpiredMessage,
     });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Request failed with ${response.status}.`);
-    return data;
   }
 
   async cognitoRequest(target, payload) {
@@ -36,12 +61,82 @@ class AccountAuthController {
   }
 
   getJwtPayload(token) {
+    if (!token) return {};
     try {
       const encoded = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
       return JSON.parse(atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "=")));
     } catch (error) {
       return {};
     }
+  }
+
+  isJwtExpired(token) {
+    const expiresAt = Number(this.getJwtPayload(token).exp || 0);
+    return !expiresAt || Date.now() >= expiresAt * 1000 - 15000;
+  }
+
+  isSignedIn() {
+    return Boolean(this.state.idToken) && !this.isJwtExpired(this.state.idToken);
+  }
+
+  storeSession() {
+    for (const [property, key] of Object.entries(AccountAuthController.storageKeys)) {
+      if (this.state[property]) sessionStorage.setItem(key, this.state[property]);
+      else sessionStorage.removeItem(key);
+    }
+  }
+
+  async refreshSession() {
+    if (!this.state.refreshToken) return false;
+    if (this.refreshPromise) return this.refreshPromise;
+    this.refreshPromise = (async () => {
+      try {
+        const data = await this.cognitoRequest("InitiateAuth", {
+          ClientId: this.backendConfig.userPoolClientId,
+          AuthFlow: "REFRESH_TOKEN_AUTH",
+          AuthParameters: { REFRESH_TOKEN: this.state.refreshToken },
+        });
+        this.state.idToken = data.AuthenticationResult.IdToken;
+        this.state.refreshToken = data.AuthenticationResult.RefreshToken || this.state.refreshToken;
+        this.state.email = this.getJwtPayload(this.state.idToken).email || this.state.email;
+        this.storeSession();
+        return true;
+      } catch (error) {
+        return false;
+      } finally {
+        this.refreshPromise = null;
+      }
+    })();
+    return this.refreshPromise;
+  }
+
+  clearSession() {
+    this.state.idToken = "";
+    this.state.refreshToken = "";
+    this.state.email = "";
+    this.storeSession();
+    this.onSessionCleared();
+    this.renderAuthUi();
+  }
+
+  signOut(message = "Signed out") {
+    this.clearSession();
+    this.setAuthStatus(message);
+  }
+
+  async restoreSession() {
+    const hadStoredSession = Boolean(this.state.idToken || this.state.refreshToken || this.state.email);
+    if (this.state.refreshToken && this.isJwtExpired(this.state.idToken)) {
+      await this.refreshSession();
+    }
+    const signedIn = this.isSignedIn();
+    if (!signedIn && hadStoredSession) {
+      this.clearSession();
+      this.setAuthStatus(this.sessionExpiredMessage);
+    } else {
+      this.renderAuthUi();
+    }
+    return signedIn;
   }
 
   setAvailability(reason) {
@@ -66,7 +161,9 @@ class AccountAuthController {
       return false;
     }
     try {
-      const data = await this.publicApiFetch(`/usernames/availability?username=${encodeURIComponent(username)}`);
+      const data = await this.apiClient.publicRequest(
+        `/usernames/availability?username=${encodeURIComponent(username)}`,
+      );
       if (requestId !== this.availabilityRequest) return false;
       this.setAvailability(data.available ? "available" : "unavailable");
       return Boolean(data.available);
@@ -167,9 +264,7 @@ class AccountAuthController {
       this.state.idToken = authentication.IdToken;
       this.state.refreshToken = authentication.RefreshToken || this.state.refreshToken;
       this.state.email = this.getJwtPayload(this.state.idToken).email || username;
-      sessionStorage.setItem("cardDesignerIdToken", this.state.idToken);
-      sessionStorage.setItem("cardDesignerRefreshToken", this.state.refreshToken);
-      sessionStorage.setItem("cardDesignerEmail", this.state.email);
+      this.storeSession();
       this.elements.passwordInput.value = "";
       this.renderAuthUi();
       this.setAuthStatus(`Signed in as ${username}`);

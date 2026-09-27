@@ -25,9 +25,7 @@ const imageProviders = new Set([
 ]);
 
 const state = {
-  idToken: getStoredIdToken(),
-  refreshToken: getStoredRefreshToken(),
-  email: sessionStorage.getItem("cardDesignerEmail") || "",
+  ...AccountAuthController.readStoredSession(),
   savedCards: [],
   savedSets: [],
   libraryDraggedCardId: "",
@@ -140,16 +138,6 @@ const elements = {
   signInPanel: document.querySelector("#signInPanel"),
 };
 
-const setSharing = createSetSharingController({
-  elements,
-  state,
-  apiFetch,
-  setStatus,
-  showToast,
-  refreshAfterResponse: refreshSetsAndCards,
-  skipIfDialogOpen: true,
-});
-
 const accountAuth = new AccountAuthController({
   backendConfig,
   state,
@@ -161,11 +149,22 @@ const accountAuth = new AccountAuthController({
     await setSharing.checkSetShareResponses();
     await setSharing.checkIncomingSetShares();
   },
+  onSessionCleared: () => {
+    state.savedCards = [];
+    state.savedSets = [];
+  },
+  sessionExpiredMessage: "Your session expired. Sign in again to view your sets.",
 });
-
-function getStoredIdToken() {
-  return sessionStorage.getItem("cardDesignerIdToken") || "";
-}
+const apiFetch = accountAuth.apiClient.request.bind(accountAuth.apiClient);
+const setSharing = createSetSharingController({
+  elements,
+  state,
+  apiFetch,
+  setStatus,
+  showToast,
+  refreshAfterResponse: refreshSetsAndCards,
+  skipIfDialogOpen: true,
+});
 
 /** Closes the set-detail actions menu and updates its accessibility state. */
 function closeSetDetailMenu() {
@@ -178,49 +177,6 @@ function toggleSetDetailMenu() {
   const isOpen = !elements.setDetailMenuPopover.classList.contains("hidden");
   elements.setDetailMenuPopover.classList.toggle("hidden", isOpen);
   elements.setDetailMenuButton.setAttribute("aria-expanded", String(!isOpen));
-}
-
-/** Returns the refresh token saved for the current browser session. */
-function getStoredRefreshToken() {
-  return sessionStorage.getItem("cardDesignerRefreshToken") || "";
-}
-
-/** Decodes a JWT payload for lightweight browser session checks. */
-function getJwtPayload(token) {
-  if (!token) return null;
-
-  try {
-    const encodedPayload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    const paddedPayload = encodedPayload.padEnd(Math.ceil(encodedPayload.length / 4) * 4, "=");
-    return JSON.parse(atob(paddedPayload));
-  } catch (error) {
-    return null;
-  }
-}
-
-function isJwtExpired(token) {
-  const payload = getJwtPayload(token);
-  return !payload?.exp || payload.exp * 1000 <= Date.now();
-}
-
-/** Refreshes the short-lived ID token using the Cognito refresh token. */
-async function refreshAuthSession() {
-  if (!state.refreshToken) return false;
-
-  try {
-    const data = await cognitoRequest("InitiateAuth", {
-      ClientId: backendConfig.userPoolClientId,
-      AuthFlow: "REFRESH_TOKEN_AUTH",
-      AuthParameters: { REFRESH_TOKEN: state.refreshToken },
-    });
-    state.idToken = data.AuthenticationResult.IdToken;
-    state.refreshToken = data.AuthenticationResult.RefreshToken || state.refreshToken;
-    sessionStorage.setItem("cardDesignerIdToken", state.idToken);
-    sessionStorage.setItem("cardDesignerRefreshToken", state.refreshToken);
-    return true;
-  } catch (error) {
-    return false;
-  }
 }
 
 function setStatus(message) {
@@ -258,74 +214,13 @@ function setAuthStatus(message) {
 
 /** Shows either the sign-in form or the signed-in sets page. */
 function renderAuthUi() {
-  const signedIn = Boolean(state.idToken);
+  const signedIn = accountAuth.isSignedIn();
   elements.signInPanel.classList.toggle("hidden", signedIn);
   elements.setsPageContent.classList.toggle("hidden", !signedIn);
   if (!signedIn) {
     elements.setsTitle.textContent = "My Sets";
     document.title = "My Sets - Card Designer";
   }
-}
-
-/** Clears local auth/session state and page data. */
-function clearAuthSession() {
-  state.idToken = "";
-  state.refreshToken = "";
-  state.email = "";
-  state.savedCards = [];
-  state.savedSets = [];
-  sessionStorage.removeItem("cardDesignerIdToken");
-  sessionStorage.removeItem("cardDesignerRefreshToken");
-  sessionStorage.removeItem("cardDesignerEmail");
-  renderAuthUi();
-}
-
-/** Calls the Cognito API used by browser auth flows. */
-async function cognitoRequest(target, payload) {
-  const response = await fetch(`https://cognito-idp.${backendConfig.region}.amazonaws.com/`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-amz-json-1.1",
-      "x-amz-target": `AWSCognitoIdentityProviderService.${target}`,
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(data.message || data.__type || "Cognito request failed.");
-  }
-
-  return data;
-}
-
-/** Calls the authenticated backend API and normalizes errors. */
-async function apiFetch(path, options = {}) {
-  if (!state.idToken || (isJwtExpired(state.idToken) && !(await refreshAuthSession()))) {
-    clearAuthSession();
-    throw new Error("Your session expired. Sign in again to view your sets.");
-  }
-
-  const response = await fetch(`${backendConfig.apiUrl}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${state.idToken}`,
-      "content-type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
-  const data = await response.json().catch(() => ({}));
-
-  if (response.status === 401) {
-    clearAuthSession();
-    throw new Error("Your session expired. Sign in again to view your sets.");
-  }
-
-  if (!response.ok) {
-    throw new Error(data.error || `API request failed with ${response.status}.`);
-  }
-
-  return data;
 }
 
 function normalizeCollectorNumber(value) {
@@ -1574,17 +1469,7 @@ function attachEvents() {
 /** Starts the standalone sets page. */
 async function initialize() {
   attachEvents();
-  renderAuthUi();
-  if (state.refreshToken && (!state.idToken || isJwtExpired(state.idToken))) {
-    await refreshAuthSession();
-  }
-  if (!state.idToken || isJwtExpired(state.idToken)) {
-    if (sessionStorage.getItem("cardDesignerIdToken") || sessionStorage.getItem("cardDesignerRefreshToken")) {
-      clearAuthSession();
-      setAuthStatus("Your session expired. Sign in again.");
-    }
-    return;
-  }
+  if (!(await accountAuth.restoreSession())) return;
 
   setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
   try {

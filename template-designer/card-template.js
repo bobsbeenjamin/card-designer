@@ -3,9 +3,7 @@ const pageParams = new URLSearchParams(window.location.search);
 const requestedSetCode = (pageParams.get("set") || "DEFAULT").trim().toUpperCase();
 
 const state = {
-  idToken: sessionStorage.getItem("cardDesignerIdToken") || "",
-  refreshToken: sessionStorage.getItem("cardDesignerRefreshToken") || "",
-  email: sessionStorage.getItem("cardDesignerEmail") || "",
+  ...AccountAuthController.readStoredSession(),
   defaults: {},
   cardTypes: [],
   rarityInfo: { colors: {}, labels: {} },
@@ -287,56 +285,6 @@ const customFieldTypeLabels = {
 const textCustomFieldTypes = new Set(["text", "number", "dropdown"]);
 const imageCustomFieldTypes = new Set(["symbol", "art"]);
 
-/** Decodes the payload from a Cognito JWT. */
-function getJwtPayload(token) {
-  try {
-    const encoded = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "=")));
-  } catch (error) {
-    return {};
-  }
-}
-
-/** Returns whether a JWT is missing or expired. */
-function isJwtExpired(token) {
-  const expiresAt = Number(getJwtPayload(token).exp || 0);
-  return !expiresAt || Date.now() >= expiresAt * 1000 - 15000;
-}
-
-/** Sends a browser authentication request to Cognito. */
-async function cognitoRequest(target, payload) {
-  const response = await fetch(`https://cognito-idp.${backendConfig.region}.amazonaws.com/`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-amz-json-1.1",
-      "x-amz-target": `AWSCognitoIdentityProviderService.${target}`,
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.message || data.__type || "Cognito request failed.");
-  return data;
-}
-
-/** Refreshes the current Cognito session when possible. */
-async function refreshAuthSession() {
-  if (!state.refreshToken) return false;
-  try {
-    const data = await cognitoRequest("InitiateAuth", {
-      ClientId: backendConfig.userPoolClientId,
-      AuthFlow: "REFRESH_TOKEN_AUTH",
-      AuthParameters: { REFRESH_TOKEN: state.refreshToken },
-    });
-    state.idToken = data.AuthenticationResult.IdToken;
-    state.refreshToken = data.AuthenticationResult.RefreshToken || state.refreshToken;
-    sessionStorage.setItem("cardDesignerIdToken", state.idToken);
-    sessionStorage.setItem("cardDesignerRefreshToken", state.refreshToken);
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
 function setAuthStatus(message) {
   elements.authStatus.textContent = message;
 }
@@ -353,7 +301,7 @@ function closeAccountMenu() {
 
 /** Renders the signed-in or signed-out account controls. */
 function renderAuthUi() {
-  const signedIn = Boolean(state.idToken) && !isJwtExpired(state.idToken);
+  const signedIn = accountAuth.isSignedIn();
   elements.signInPanel.classList.toggle("hidden", signedIn);
   elements.signedInPanel.classList.toggle("hidden", !signedIn);
   elements.mySetsPanel.classList.toggle("hidden", !signedIn);
@@ -363,54 +311,28 @@ function renderAuthUi() {
     "[data-template-action='generate-background']",
   );
   if (generateBackgroundButton) generateBackgroundButton.disabled = !signedIn || state.backgroundGenerating;
-  elements.currentUserLabel.textContent = state.email || getJwtPayload(state.idToken).email || "Account";
+  elements.currentUserLabel.textContent = state.email || accountAuth.getJwtPayload(state.idToken).email || "Account";
   if (!signedIn) closeAccountMenu();
 }
 
-/** Clears locally stored authentication and template state. */
-function clearAuthSession() {
-  state.idToken = "";
-  state.refreshToken = "";
-  state.email = "";
-  state.sets = [];
-  state.templates = [];
-  sessionStorage.removeItem("cardDesignerIdToken");
-  sessionStorage.removeItem("cardDesignerRefreshToken");
-  sessionStorage.removeItem("cardDesignerEmail");
-  renderSetOptions();
-  renderTemplateOptions();
-  renderAuthUi();
-}
-
-function signOut() {
-  clearAuthSession();
-  setAuthStatus("Signed out");
-  setTemplateStatus("Sign in to save templates.");
-}
-
-/** Calls the authenticated backend API and normalizes errors. */
-async function apiFetch(path, options = {}) {
-  if (!state.idToken || (isJwtExpired(state.idToken) && !(await refreshAuthSession()))) {
-    clearAuthSession();
-    throw new Error("Your session expired. Sign in again.");
-  }
-
-  const response = await fetch(`${backendConfig.apiUrl}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${state.idToken}`,
-      "content-type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (response.status === 401) {
-    clearAuthSession();
-    throw new Error("Your session expired. Sign in again.");
-  }
-  if (!response.ok) throw new Error(data.error || `API request failed with ${response.status}.`);
-  return data;
-}
+const accountAuth = new AccountAuthController({
+  backendConfig,
+  state,
+  elements,
+  renderAuthUi,
+  setAuthStatus,
+  onSignedIn: async () => {
+    await refreshSets();
+    await loadRequestedTemplate();
+  },
+  onSessionCleared: () => {
+    state.sets = [];
+    state.templates = [];
+    renderSetOptions();
+    renderTemplateOptions();
+  },
+});
+const apiFetch = accountAuth.apiClient.request.bind(accountAuth.apiClient);
 
 /** Returns the legacy appearance defaults for a built-in field. */
 function getDefaultBuiltInAppearance(fieldId) {
@@ -680,9 +602,7 @@ function createGenerateBackgroundRow() {
   generateButton.title = "Generate Background Image or Pattern";
   generateButton.setAttribute("aria-label", "Generate Background Image or Pattern");
   generateButton.textContent = "Generate Background";
-  generateButton.disabled = state.backgroundGenerating
-    || !state.idToken
-    || isJwtExpired(state.idToken);
+  generateButton.disabled = state.backgroundGenerating || !accountAuth.isSignedIn();
   const spinner = document.createElement("span");
   spinner.className = "inline-spinner hidden";
   spinner.dataset.templateBackgroundSpinner = "";
@@ -1420,7 +1340,7 @@ function getGenerateBackgroundControls() {
 function setGenerateBackgroundBusy(busy) {
   state.backgroundGenerating = busy;
   const { button, spinner } = getGenerateBackgroundControls();
-  const signedIn = Boolean(state.idToken) && !isJwtExpired(state.idToken);
+  const signedIn = accountAuth.isSignedIn();
   if (button) button.disabled = busy || !signedIn;
   if (spinner) spinner.classList.toggle("hidden", !busy);
   elements.confirmGenerateTemplateBackgroundButton.disabled = busy;
@@ -2178,7 +2098,7 @@ async function handleTemplateSelectionChange() {
 async function handleTemplateSetChange() {
   markDirty();
   updateCardPreview();
-  if (!state.idToken || isJwtExpired(state.idToken)) {
+  if (!accountAuth.isSignedIn()) {
     state.templates = [];
     renderTemplateOptions();
     return;
@@ -2303,21 +2223,15 @@ function readBlobAsDataUrl(blob) {
 /** Fetches an image directly or through the authenticated proxy. */
 async function fetchImageBlob(src) {
   try {
-    const directResponse = await fetch(src, {
-      headers: src.startsWith(`${backendConfig.apiUrl}/`)
-        ? { Authorization: `Bearer ${state.idToken}` }
-        : {},
-    });
+    if (src.startsWith(`${backendConfig.apiUrl}/`)) {
+      return await accountAuth.apiClient.requestBlob(src.slice(backendConfig.apiUrl.length));
+    }
+    const directResponse = await fetch(src);
     if (directResponse.ok) return directResponse.blob();
   } catch (error) {
     // Remote frame images may require the authenticated image proxy.
   }
-  const proxyResponse = await fetch(
-    `${backendConfig.apiUrl}/image-proxy?url=${encodeURIComponent(src)}`,
-    { headers: { Authorization: `Bearer ${state.idToken}` } },
-  );
-  if (!proxyResponse.ok) throw new Error("Template image could not be embedded.");
-  return proxyResponse.blob();
+  return accountAuth.apiClient.requestBlob(`/image-proxy?url=${encodeURIComponent(src)}`);
 }
 
 /** Converts a template image source to a safe data URL. */
@@ -2641,7 +2555,7 @@ async function saveTemplate() {
   } finally {
     state.cardRefactorInProgress = false;
     renderTemplateOptions(state.currentTemplateId);
-    elements.saveTemplateButton.disabled = !state.idToken || isJwtExpired(state.idToken);
+    elements.saveTemplateButton.disabled = !accountAuth.isSignedIn();
   }
 }
 
@@ -2684,18 +2598,6 @@ function closeTemplatePage() {
     else window.location.href = "../";
   });
 }
-
-const accountAuth = new AccountAuthController({
-  backendConfig,
-  state,
-  elements,
-  renderAuthUi,
-  setAuthStatus,
-  onSignedIn: async () => {
-    await refreshSets();
-    await loadRequestedTemplate();
-  },
-});
 
 /** Registers the template-designer event handlers. */
 function attachEvents() {
@@ -2763,7 +2665,10 @@ function attachEvents() {
     elements.accountMenu.classList.toggle("hidden", !open);
     elements.accountMenuButton.setAttribute("aria-expanded", String(open));
   });
-  elements.signOutButton.addEventListener("click", signOut);
+  elements.signOutButton.addEventListener("click", () => {
+    accountAuth.signOut();
+    setTemplateStatus("Sign in to save templates.");
+  });
   document.addEventListener("click", (event) => {
     if (!elements.signedInPanel.contains(event.target)) closeAccountMenu();
   });
@@ -2804,9 +2709,7 @@ async function initialize() {
     return;
   }
 
-  if (state.refreshToken && (!state.idToken || isJwtExpired(state.idToken))) await refreshAuthSession();
-  renderAuthUi();
-  if (state.idToken && !isJwtExpired(state.idToken)) {
+  if (await accountAuth.restoreSession()) {
     setAuthStatus(state.email ? `Signed in as ${state.email}` : "Signed in from this tab session");
     try {
       await refreshSets();
@@ -2814,9 +2717,6 @@ async function initialize() {
     } catch (error) {
       setTemplateStatus(error.message);
     }
-  } else if (sessionStorage.getItem("cardDesignerIdToken") || sessionStorage.getItem("cardDesignerRefreshToken")) {
-    clearAuthSession();
-    setAuthStatus("Your session expired. Sign in again.");
   }
 }
 
