@@ -73,30 +73,35 @@ Prod templates: card-designer-prod-card-templates
 Prod friends: card-designer-prod-friends
 ```
 
-## Pre-migration stack values
+## Current stack values
 
-These existing pool values become the legacy migration source after deployment.
-Use the new `UserPoolId` and `UserPoolClientId` stack outputs for frontend
-configuration. These identifiers are not secrets, but AWS access keys should
-never be committed.
+The frontend uses the active `UserPoolId` and `UserPoolClientId` outputs shown
+below. The legacy pools are retained only as migration sources for existing
+accounts and must not be used for frontend authentication. These identifiers
+are not secrets, but AWS access keys should never be committed.
 
 ```text
-DevStackName:     card-designer-backend-dev
-DevOrigin:        http://localhost:3000
-DevApiUrl:        https://ij9i8u1wvg.execute-api.us-west-2.amazonaws.com
-DevUserPoolId:    us-west-2_lTDVLzK6E
-DevClientId:      7tlba3kd4kv5p4e1h5363s7a29
-DevTableName:     card-designer-dev-card-designs
+DevStackName:          card-designer-backend-dev
+DevOrigin:             http://localhost:3000
+DevApiUrl:             https://ij9i8u1wvg.execute-api.us-west-2.amazonaws.com
+DevUserPoolId:         us-west-2_WBmJJT1YQ
+DevUserPoolClientId:   7pjs6emoi0akjaa9f1o9vmc3lr
+DevLegacyUserPoolId:   us-west-2_lTDVLzK6E
+DevLegacyClientId:     7tlba3kd4kv5p4e1h5363s7a29
+DevTableName:          card-designer-dev-card-designs
 
-ProdStackName:    card-designer-backend-prod
-ProdOrigin:       https://bobsbeenjamin.github.io
-ProdApiUrl:       https://55g413zjq2.execute-api.us-west-2.amazonaws.com
-ProdUserPoolId:   us-west-2_6BjuamntD
-ProdClientId:     3jucb7dgsgteq2v98ae3uoacmq
-ProdTableName:    card-designer-prod-card-designs
+ProdStackName:         card-designer-backend-prod
+ProdOrigin:            https://bobsbeenjamin.github.io
+ProdApiUrl:            https://55g413zjq2.execute-api.us-west-2.amazonaws.com
+ProdUserPoolId:        us-west-2_JJcEs8uhA
+ProdUserPoolClientId:  ofvkvrb4qmqi47nburkqsmud7
+ProdLegacyUserPoolId:  us-west-2_6BjuamntD
+ProdLegacyClientId:    3jucb7dgsgteq2v98ae3uoacmq
+ProdTableName:         card-designer-prod-card-designs
 
-Region:           us-west-2
+Region:                us-west-2
 ```
+
 ## API
 
 The username availability route is public. Sign-in goes directly from the
