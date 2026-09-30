@@ -723,6 +723,12 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /cards/{cardId}/history
             Method: GET
+        RestoreCardHistory:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /cards/{cardId}/history/{versionId}/restore
+            Method: POST
         UpdateCard:
           Type: HttpApi
           Properties:

@@ -145,6 +145,7 @@ const state = {
   currentCardId: "",
   cardHistory: [],
   cardHistoryLoading: false,
+  cardHistoryRestoring: false,
   cardHistoryStatus: "Load a saved card to view history.",
   savedCards: [],
   savedSets: [],
@@ -247,6 +248,7 @@ const elements = {
   viewAllCardHistoryButton: document.querySelector("#viewAllCardHistoryButton"),
   cardHistoryDialog: document.querySelector("#cardHistoryDialog"),
   cardHistorySubtitle: document.querySelector("#cardHistorySubtitle"),
+  restoreCardHistoryDialog: document.querySelector("#restoreCardHistoryDialog"),
   usernameInput: document.querySelector("#usernameInput"),
   passwordInput: document.querySelector("#passwordInput"),
   cancelSignInButton: document.querySelector("#cancelSignInButton"),
@@ -2011,6 +2013,14 @@ function formatCardHistoryDate(recordedAt) {
   }).format(new Date(timestamp));
 }
 
+/** Returns the history description, including the source time for restores. */
+function getCardHistoryDescription(entry) {
+  if (entry.changeType === "restore" && entry.restoredFromRecordedAt) {
+    return `Restored from version recorded ${formatCardHistoryDate(entry.restoredFromRecordedAt)}.`;
+  }
+  return entry.description || "Updated card.";
+}
+
 /** Formats one history value for display in the old/new value columns. */
 function formatCardHistoryValue(value) {
   if (value === null || value === undefined || value === "") return "blank";
@@ -2044,6 +2054,26 @@ function formatCardHistoryValues(values) {
     .join("\n");
 }
 
+/** Creates the action cell for one saved card version. */
+function createCardHistoryActionCell(entry, rowSpan = 1) {
+  const cell = document.createElement("td");
+  cell.className = "card-history-action";
+  cell.rowSpan = rowSpan;
+  if (entry.isCurrent || !entry.restoreVersionId) {
+    cell.textContent = entry.isCurrent ? "Current" : "";
+    return cell;
+  }
+
+  const button = document.createElement("button");
+  button.className = "button subtle card-history-restore-button";
+  button.type = "button";
+  button.textContent = "Restore";
+  button.disabled = state.cardHistoryRestoring;
+  button.addEventListener("click", () => openRestoreCardHistoryWarning(entry.restoreVersionId));
+  cell.append(button);
+  return cell;
+}
+
 /** Appends one history row with optional old and new value columns.
  * @param {*} tableBody Table body receiving the row.
  * @param {*} entry History entry to render.
@@ -2056,7 +2086,7 @@ function appendCardHistoryRow(tableBody, entry, includeValues) {
   const descriptionCell = document.createElement("td");
   dateCell.textContent = formatCardHistoryDate(entry.recordedAt);
   userCell.textContent = entry.changedBy || "Unknown user";
-  descriptionCell.textContent = entry.description || "Updated card.";
+  descriptionCell.textContent = getCardHistoryDescription(entry);
   row.append(dateCell, userCell, descriptionCell);
   if (includeValues) {
     const oldValueCell = document.createElement("td");
@@ -2065,7 +2095,7 @@ function appendCardHistoryRow(tableBody, entry, includeValues) {
     newValueCell.className = "card-history-value";
     oldValueCell.textContent = formatCardHistoryValues(entry.oldValues);
     newValueCell.textContent = formatCardHistoryValues(entry.newValues);
-    row.append(oldValueCell, newValueCell);
+    row.append(oldValueCell, newValueCell, createCardHistoryActionCell(entry));
   }
   tableBody.append(row);
 }
@@ -2079,15 +2109,18 @@ function appendDetailedCardHistoryRows(tableBody, entry) {
   }
 
   const linkedTemplateChanges = entry.changeType === "template-refactor" && changes.length > 1;
-  if (linkedTemplateChanges) {
+  const restoredVersion = entry.changeType === "restore";
+  if (linkedTemplateChanges || restoredVersion) {
     const groupRow = document.createElement("tr");
     const groupCell = document.createElement("td");
     const groupTitle = document.createElement("strong");
     const groupMeta = document.createElement("span");
     groupRow.className = "card-history-group-row";
-    groupCell.colSpan = 5;
-    groupTitle.textContent = `Template update: ${changes.length} linked changes`;
-    groupMeta.textContent = `Saved together on ${formatCardHistoryDate(entry.recordedAt)} by ${entry.changedBy || "Unknown user"}.`;
+    groupCell.colSpan = 6;
+    groupTitle.textContent = restoredVersion
+      ? getCardHistoryDescription(entry)
+      : `Template update: ${changes.length} linked changes`;
+    groupMeta.textContent = `Saved on ${formatCardHistoryDate(entry.recordedAt)} by ${entry.changedBy || "Unknown user"}.`;
     groupCell.append(groupTitle, groupMeta);
     groupRow.append(groupCell);
     tableBody.append(groupRow);
@@ -2112,6 +2145,7 @@ function appendDetailedCardHistoryRows(tableBody, entry) {
     oldValueCell.textContent = formatDetailedCardHistoryValue(change, "old");
     newValueCell.textContent = formatDetailedCardHistoryValue(change, "new");
     row.append(dateCell, userCell, changeCell, oldValueCell, newValueCell);
+    if (index === 0) row.append(createCardHistoryActionCell(entry, changes.length));
     tableBody.append(row);
   });
 }
@@ -2140,7 +2174,7 @@ function renderFullCardHistoryTable(tableBody, history) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.className = "card-history-empty";
-    cell.colSpan = 5;
+    cell.colSpan = 6;
     cell.textContent = state.cardHistoryStatus || "No changes recorded for this card.";
     row.append(cell);
     tableBody.append(row);
@@ -2200,6 +2234,74 @@ async function openCardHistoryDialog() {
   elements.cardHistorySubtitle.textContent = elements.nameInput.value.trim() || "Untitled Card";
   elements.cardHistoryDialog.showModal();
   await refreshCardHistory(state.currentCardId, null);
+}
+
+/** Opens the restore confirmation for one previous card version. */
+function openRestoreCardHistoryWarning(versionId) {
+  if (!versionId || state.cardHistoryRestoring) return;
+  elements.restoreCardHistoryDialog.dataset.versionId = versionId;
+  elements.restoreCardHistoryDialog.returnValue = "";
+  elements.restoreCardHistoryDialog.showModal();
+}
+
+/** Replaces the current card with a historical snapshot and refreshes its preview. */
+async function restoreCardHistoryVersion(versionId) {
+  const cardId = state.currentCardId;
+  if (!cardId || !versionId || state.cardHistoryRestoring) return;
+
+  state.cardHistoryRestoring = true;
+  renderCardHistory();
+  setSaveStatus("Restoring previous card version...");
+
+  try {
+    const data = await apiFetch(
+      `/cards/${encodeURIComponent(cardId)}/history/${encodeURIComponent(versionId)}/restore`,
+      { method: "POST" },
+    );
+    const restoredCard = data.card;
+    const restoredCardIsActive = () => state.currentCardId === cardId;
+    if (restoredCardIsActive()) {
+      applyCardData(restoredCard);
+      elements.cardHistorySubtitle.textContent = restoredCard.name || "Untitled Card";
+    }
+
+    await Promise.all([refreshSavedCards(), refreshCardSets()]);
+    if (restoredCardIsActive()) {
+      await refreshCardTemplates(restoredCard.setCode || "DEFAULT");
+    }
+
+    let previewError = null;
+    try {
+      const cardImagePng = await renderUpdatedCardPng(
+        restoredCard,
+        getSetTotal(restoredCard.setCode || "DEFAULT"),
+      );
+      await apiFetch(`/cards/${encodeURIComponent(cardId)}/image`, {
+        method: "PUT",
+        body: JSON.stringify({ cardImagePng }),
+      });
+      await refreshSavedCards();
+    } catch (error) {
+      previewError = error;
+    }
+
+    if (restoredCardIsActive()) {
+      elements.savedCardsInput.value = cardId;
+      rememberLastLoadedCardSelection(restoredCard.setCode || "DEFAULT", cardId);
+      await refreshCardHistory(cardId, null);
+    }
+    setSaveStatus(
+      previewError
+        ? `Card restored, but its preview image could not be regenerated: ${previewError.message}`
+        : "Card restored to the selected version.",
+    );
+  } catch (error) {
+    setSaveStatus(error.message);
+    if (state.currentCardId === cardId) await refreshCardHistory(cardId, null);
+  } finally {
+    state.cardHistoryRestoring = false;
+    renderCardHistory();
+  }
 }
 
 /** Returns cached settings status for the selected image provider. */
@@ -3658,6 +3760,12 @@ function attachEvents() {
   elements.frameUrlInput.addEventListener("change", loadFrameUrl);
   elements.deleteFrameButton.addEventListener("click", deleteCurrentCardFrame);
   elements.viewAllCardHistoryButton.addEventListener("click", openCardHistoryDialog);
+  elements.restoreCardHistoryDialog.addEventListener("close", () => {
+    const versionId = elements.restoreCardHistoryDialog.dataset.versionId || "";
+    const shouldRestore = elements.restoreCardHistoryDialog.returnValue === "restore";
+    delete elements.restoreCardHistoryDialog.dataset.versionId;
+    if (shouldRestore && versionId) restoreCardHistoryVersion(versionId);
+  });
   elements.cardSetsInput.addEventListener("change", async () => {
     const setCode = elements.cardSetsInput.value || "DEFAULT";
     renderSavedCards();

@@ -113,6 +113,7 @@ browser to Cognito. All other non-public routes require
 - `POST /cards`
 - `GET /cards/{cardId}`
 - `GET /cards/{cardId}/history`
+- `POST /cards/{cardId}/history/{versionId}/restore`
 - `PUT /cards/{cardId}`
 - `PUT /cards/{cardId}/image`
 - `DELETE /cards/{cardId}`
@@ -202,6 +203,11 @@ reported and every reported change contains enough information to reverse it.
 The authenticated history route returns the newest entries first. History
 starts after the updated backend stack is deployed; existing cards are not
 backfilled.
+
+The full history view includes the original saved version and marks the current
+version separately. Restoring a previous version atomically replaces the card
+and deletes the selected branch point and every newer history record. The
+browser then regenerates the restored card's preview PNG.
 
 Card JSON accepts:
 

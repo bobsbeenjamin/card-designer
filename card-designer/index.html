@@ -582,6 +582,7 @@
                 <th scope="col">Change</th>
                 <th scope="col">Old Value</th>
                 <th scope="col">New Value</th>
+                <th scope="col">Action</th>
               </tr>
             </thead>
             <tbody id="allCardHistoryRows"></tbody>
@@ -589,6 +590,17 @@
         </div>
         <div class="card-history-modal-actions">
           <button class="button subtle" value="close" type="submit">Close</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="restoreCardHistoryDialog" class="modal-dialog" aria-labelledby="restoreCardHistoryTitle">
+      <form method="dialog" class="modal-card">
+        <h2 id="restoreCardHistoryTitle">Restore previous version?</h2>
+        <p>You are about to restore this card to a previous version. The current saved card and all previous versions will remain in Card History. Any unsaved editor changes will be lost.</p>
+        <div class="modal-actions two-up">
+          <button class="button subtle" value="cancel" type="submit">Cancel</button>
+          <button class="button danger" value="restore" type="submit">Restore</button>
         </div>
       </form>
     </dialog>

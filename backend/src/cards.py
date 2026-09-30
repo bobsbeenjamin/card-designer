@@ -323,6 +323,17 @@ def handler(event, _context):
             limit = int(query["limit"]) if query.get("limit") else None
             return ok(list_card_history(user_id, event["pathParameters"]["cardId"], limit))
 
+        if (
+            method == "POST"
+            and route_key == "POST /cards/{cardId}/history/{versionId}/restore"
+        ):
+            return ok(restore_card_history_version(
+                user_id,
+                event["pathParameters"]["cardId"],
+                event["pathParameters"]["versionId"],
+                user_email,
+            ))
+
         if method == "GET" and route_key == "GET /cards/{cardId}":
             return ok(get_card(user_id, event["pathParameters"]["cardId"]))
 
@@ -4072,16 +4083,144 @@ def list_card_history(user_id, card_id, limit=None):
         changed_fields, old_values, new_values, description, changes = get_history_transition(item, newer_card)
         history.append({
             "versionId": item.get("versionId", ""),
+            "restoreVersionId": (
+                "" if index == 0 else history_items[index - 1].get("versionId", "")
+            ),
+            "isCurrent": index == 0,
             "recordedAt": item.get("recordedAt", 0),
             "changedBy": item.get("changedBy") or item.get("userId") or "Unknown user",
             "description": description,
             "changeType": item.get("changeType", "update"),
+            "restoredFromVersionId": item.get("restoredFromVersionId", ""),
+            "restoredFromRecordedAt": item.get("restoredFromRecordedAt", 0),
             "changedFields": changed_fields,
             "changes": changes,
             "oldValues": old_values,
             "newValues": new_values,
         })
+    if history_items and limit is None:
+        original_item = history_items[-1]
+        original_snapshot = original_item.get("snapshot") or {}
+        history.append({
+            "versionId": "",
+            "restoreVersionId": original_item.get("versionId", ""),
+            "isCurrent": False,
+            "recordedAt": int(
+                original_snapshot.get("createdAt")
+                or original_item.get("recordedAt")
+                or 0
+            ),
+            "changedBy": (
+                original_item.get("changedBy")
+                or original_item.get("userId")
+                or "Unknown user"
+            ),
+            "description": "Original saved version.",
+            "changeType": "original",
+            "changedFields": [],
+            "changes": [],
+            "oldValues": {},
+            "newValues": {},
+        })
     return {"history": history}
+
+
+def restore_card_history_version(user_id, card_id, version_id, changed_by=None):
+    """Restore a card snapshot as a new revision while preserving existing history."""
+    card_key = f"{user_id}#{card_id}"
+    target_response = CARD_HISTORY_TABLE.get_item(Key={
+        "cardKey": card_key,
+        "versionId": version_id,
+    })
+    target_history = target_response.get("Item")
+    if not target_history:
+        raise ValueError("Card history version not found.")
+
+    current_card = TABLE.get_item(Key={"userId": user_id, "cardId": card_id}).get("Item")
+    if not current_card:
+        raise ValueError("Card not found.")
+
+    snapshot = target_history.get("snapshot")
+    if not isinstance(snapshot, dict):
+        raise ValueError("This card history version cannot be restored.")
+
+    restored_fields = clean_card(snapshot)
+    validate_card_set(user_id, restored_fields["setCode"])
+    normalized_card_name = " ".join(restored_fields["name"].strip().split()).casefold()
+    duplicate_card = next(
+        (
+            existing_card
+            for existing_card in get_cards_for_set(user_id, restored_fields["setCode"])
+            if existing_card.get("cardId") != card_id
+            and " ".join(str(existing_card.get("name") or "").strip().split()).casefold()
+            == normalized_card_name
+        ),
+        None,
+    )
+    if duplicate_card:
+        raise ValueError("A card with this name already exists in the restored set.")
+
+    restored_card = {
+        **restored_fields,
+        "userId": user_id,
+        "cardId": card_id,
+        "createdAt": current_card.get("createdAt", int(time.time())),
+        "updatedAt": int(time.time()),
+    }
+
+    restore_history_item = build_card_history_item(
+        user_id,
+        current_card,
+        restored_card,
+        "restore",
+        changed_by,
+    )
+    source_recorded_at = int(
+        (snapshot.get("updatedAt") or snapshot.get("createdAt") or 0) * 1000
+    )
+    if not source_recorded_at:
+        source_recorded_at = int(target_history.get("recordedAt") or 0)
+    restore_history_item.update({
+        "restoredFromVersionId": version_id,
+        "restoredFromRecordedAt": source_recorded_at,
+        "description": "Restored card from a previous version.",
+    })
+
+    transaction_items = [
+        {
+            "Put": {
+                "TableName": CARD_HISTORY_TABLE_NAME,
+                "Item": serialize_dynamodb_item(restore_history_item),
+            },
+        },
+        {
+            "Put": {
+                "TableName": TABLE_NAME,
+                "Item": serialize_dynamodb_item(restored_card),
+                "ConditionExpression": "updatedAt = :expectedUpdatedAt",
+                "ExpressionAttributeValues": serialize_dynamodb_item({
+                    ":expectedUpdatedAt": current_card.get("updatedAt"),
+                }),
+            },
+        },
+    ]
+    try:
+        DYNAMODB_CLIENT.transact_write_items(TransactItems=transaction_items)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "TransactionCanceledException":
+            raise ValueError(
+                "The card changed before it could be restored. "
+                "Reload its history and try again."
+            )
+        raise
+
+    try:
+        delete_card_image(current_card)
+    except ClientError:
+        # The card and history transaction has already succeeded. An orphaned
+        # preview is preferable to reporting the completed restore as a failure.
+        pass
+    return {"card": restored_card, "historyPreserved": True}
 
 
 def reorder_set_cards(user_id, set_code, body, changed_by):
