@@ -60,16 +60,18 @@ the CORS origin is only `https://bobsbeenjamin.github.io`.
 
 Dev and prod should be deployed as separate CloudFormation stacks. Each stack
 creates separate DynamoDB tables for current cards, card history, templates,
-and friend relationships:
+template history, and friend relationships:
 
 ```text
 Dev cards:    card-designer-dev-card-designs
 Dev history:  card-designer-dev-card-history
 Dev templates: card-designer-dev-card-templates
+Dev template history: card-designer-dev-template-history
 Dev friends:  card-designer-dev-friends
 Prod cards:   card-designer-prod-card-designs
 Prod history: card-designer-prod-card-history
 Prod templates: card-designer-prod-card-templates
+Prod template history: card-designer-prod-template-history
 Prod friends: card-designer-prod-friends
 ```
 
@@ -122,6 +124,9 @@ browser to Cognito. All other non-public routes require
 - `POST /templates/background/generate`
 - `GET /templates/{templateId}`
 - `PUT /templates/{templateId}`
+- `GET /templates/{templateId}/history`
+- `POST /templates/{templateId}/history/{versionId}/restore`
+- `PUT /templates/{templateId}/image`
 - `GET /art`
 - `POST /art`
 - `POST /art/generate`
@@ -149,6 +154,14 @@ Generated template backgrounds use
 card-art bucket. Regeneration overwrites the stable object and returns a
 versioned URL to break browser caches. Deleting a set also deletes all of its
 templates, preview images, and app-managed template backgrounds.
+
+Every update to an existing template stores its complete prior DynamoDB item in
+the template history table. The history snapshot and current template are
+written atomically. Restoring a template appends another history record rather
+than deleting later revisions, records the source version and timestamp, and
+regenerates the template preview in the browser. When the restored template has
+`applyToExistingCards` enabled, linked cards are refactored through the same
+path used by a normal template update.
 
 Cards created from a template retain the template id and name, a snapshot of
 the standard field definitions and values, and the custom-field definitions and

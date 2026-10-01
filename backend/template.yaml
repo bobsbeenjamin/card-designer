@@ -28,6 +28,7 @@ Globals:
       Variables:
         TABLE_NAME: !Ref CardDesignsTable
         CARD_HISTORY_TABLE_NAME: !Ref CardHistoryTable
+        TEMPLATE_HISTORY_TABLE_NAME: !Ref TemplateHistoryTable
         SETS_TABLE_NAME: !Ref CardSetsTable
         TEMPLATES_TABLE_NAME: !Ref CardTemplatesTable
         USER_SETTINGS_TABLE_NAME: !Ref UserSettingsTable
@@ -73,6 +74,24 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: cardKey
+          KeyType: HASH
+        - AttributeName: versionId
+          KeyType: RANGE
+
+  TemplateHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "card-designer-${AppEnvironment}-template-history"
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: templateKey
+          AttributeType: S
+        - AttributeName: versionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: templateKey
           KeyType: HASH
         - AttributeName: versionId
           KeyType: RANGE
@@ -451,6 +470,8 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref CardHistoryTable
         - DynamoDBCrudPolicy:
+            TableName: !Ref TemplateHistoryTable
+        - DynamoDBCrudPolicy:
             TableName: !Ref CardSetsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref CardTemplatesTable
@@ -467,6 +488,7 @@ Resources:
               Resource:
                 - !GetAtt CardDesignsTable.Arn
                 - !GetAtt CardHistoryTable.Arn
+                - !GetAtt TemplateHistoryTable.Arn
                 - !GetAtt CardTemplatesTable.Arn
             - Effect: Allow
               Action:
@@ -705,6 +727,24 @@ Resources:
             ApiId: !Ref CardDesignerApi
             Path: /templates/{templateId}
             Method: PUT
+        GetTemplateHistory:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /templates/{templateId}/history
+            Method: GET
+        RestoreTemplateHistory:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /templates/{templateId}/history/{versionId}/restore
+            Method: POST
+        UpdateTemplateImage:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CardDesignerApi
+            Path: /templates/{templateId}/image
+            Method: PUT
         CreateCard:
           Type: HttpApi
           Properties:
@@ -773,6 +813,9 @@ Outputs:
   CardHistoryTableName:
     Description: DynamoDB card history table name.
     Value: !Ref CardHistoryTable
+  TemplateHistoryTableName:
+    Description: DynamoDB template history table name.
+    Value: !Ref TemplateHistoryTable
   CardTemplatesTableName:
     Description: DynamoDB card templates table name.
     Value: !Ref CardTemplatesTable

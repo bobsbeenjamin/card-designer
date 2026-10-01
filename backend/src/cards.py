@@ -21,6 +21,7 @@ from botocore.exceptions import ClientError
 
 TABLE_NAME = os.environ["TABLE_NAME"]
 CARD_HISTORY_TABLE_NAME = os.environ["CARD_HISTORY_TABLE_NAME"]
+TEMPLATE_HISTORY_TABLE_NAME = os.environ["TEMPLATE_HISTORY_TABLE_NAME"]
 SETS_TABLE_NAME = os.environ["SETS_TABLE_NAME"]
 TEMPLATES_TABLE_NAME = os.environ["TEMPLATES_TABLE_NAME"]
 USER_SETTINGS_TABLE_NAME = os.environ["USER_SETTINGS_TABLE_NAME"]
@@ -36,6 +37,7 @@ DYNAMODB_CLIENT = boto3.client("dynamodb")
 DYNAMODB_SERIALIZER = TypeSerializer()
 TABLE = DYNAMODB.Table(TABLE_NAME)
 CARD_HISTORY_TABLE = DYNAMODB.Table(CARD_HISTORY_TABLE_NAME)
+TEMPLATE_HISTORY_TABLE = DYNAMODB.Table(TEMPLATE_HISTORY_TABLE_NAME)
 SETS_TABLE = DYNAMODB.Table(SETS_TABLE_NAME)
 TEMPLATES_TABLE = DYNAMODB.Table(TEMPLATES_TABLE_NAME)
 USER_SETTINGS_TABLE = DYNAMODB.Table(USER_SETTINGS_TABLE_NAME)
@@ -160,6 +162,13 @@ CARD_HISTORY_PROPERTY_LABELS = {
     "x": "X",
     "y": "Y",
 }
+TEMPLATE_HISTORY_FIELD_LABELS = {
+    "name": "template name",
+    "setCode": "set",
+    "applyToExistingCards": "apply to existing cards",
+    "sections": "design fields",
+    "customFields": "custom fields",
+}
 CARD_HISTORY_MISSING = object()
 
 CARD_IMAGE_FIELD = "cardImagePng"
@@ -263,6 +272,35 @@ def handler(event, _context):
         if method == "PUT" and route_key == "PUT /templates/{templateId}":
             template_id = event["pathParameters"]["templateId"]
             return ok(save_template(user_id, template_id, read_body(event), user_email))
+
+        if method == "GET" and route_key == "GET /templates/{templateId}/history":
+            query = event.get("queryStringParameters") or {}
+            limit = int(query["limit"]) if query.get("limit") else None
+            return ok(list_template_history(
+                user_id,
+                event["pathParameters"]["templateId"],
+                limit,
+                query.get("setCode"),
+                query.get("name"),
+            ))
+
+        if (
+            method == "POST"
+            and route_key == "POST /templates/{templateId}/history/{versionId}/restore"
+        ):
+            return ok(restore_template_history_version(
+                user_id,
+                event["pathParameters"]["templateId"],
+                event["pathParameters"]["versionId"],
+                user_email,
+            ))
+
+        if method == "PUT" and route_key == "PUT /templates/{templateId}/image":
+            return ok(update_template_image(
+                user_id,
+                event["pathParameters"]["templateId"],
+                read_body(event),
+            ))
 
         if method == "GET" and route_key == "GET /friends":
             return ok(list_friends(user_id))
@@ -2787,6 +2825,278 @@ def refactor_cards_for_template(user_id, old_template, new_template, changed_by)
     ]
 
 
+def template_history_snapshot(template):
+    """Return the durable template fields stored in a history snapshot."""
+    return {
+        key: copy.deepcopy(value)
+        for key, value in template.items()
+        if key != "imageUrl"
+    }
+
+
+def build_template_history_changes(existing_template, updated_template):
+    """Return exact old/new changes between two template revisions."""
+    changes = []
+    for field in ("name", "setCode", "applyToExistingCards"):
+        append_card_history_change(
+            changes,
+            field,
+            f"/{field}",
+            TEMPLATE_HISTORY_FIELD_LABELS[field].title(),
+            existing_template.get(field, CARD_HISTORY_MISSING),
+            updated_template.get(field, CARD_HISTORY_MISSING),
+        )
+    append_template_section_history_changes(
+        changes,
+        existing_template.get("sections") or [],
+        updated_template.get("sections") or [],
+    )
+    append_template_custom_field_history_changes(
+        changes,
+        existing_template.get("customFields") or [],
+        updated_template.get("customFields") or [],
+    )
+    return changes
+
+
+def summarize_template_change(existing_template, updated_template, change_type="update"):
+    """Return changed template fields and a concise description."""
+    changed_fields = [
+        field
+        for field in TEMPLATE_HISTORY_FIELD_LABELS
+        if not card_history_values_equal(
+            existing_template.get(field, CARD_HISTORY_MISSING),
+            updated_template.get(field, CARD_HISTORY_MISSING),
+        )
+    ]
+    if change_type == "restore":
+        return changed_fields, "Restored template from a previous version."
+    if not changed_fields:
+        return changed_fields, "Saved template without field changes."
+    labels = [TEMPLATE_HISTORY_FIELD_LABELS[field] for field in changed_fields]
+    return changed_fields, f"Changed {format_change_labels(labels)}."
+
+
+def build_template_history_item(
+    user_id,
+    existing_template,
+    updated_template,
+    change_type,
+    changed_by,
+):
+    """Build an append-only template history record."""
+    recorded_at_ns = time.time_ns()
+    changed_fields, description = summarize_template_change(
+        existing_template,
+        updated_template,
+        change_type,
+    )
+    changes = build_template_history_changes(existing_template, updated_template)
+    scalar_fields = [
+        field for field in changed_fields if field not in {"sections", "customFields"}
+    ]
+    return {
+        "templateKey": f"{user_id}#{existing_template['templateId']}",
+        "versionId": f"{recorded_at_ns:020d}#{uuid.uuid4()}",
+        "userId": user_id,
+        "templateId": existing_template["templateId"],
+        "recordedAt": recorded_at_ns // 1_000_000,
+        "changedBy": str(changed_by or user_id),
+        "changeType": change_type,
+        "changedFields": changed_fields,
+        "description": description,
+        "changes": changes,
+        "oldValues": {field: existing_template.get(field) for field in scalar_fields},
+        "newValues": {field: updated_template.get(field) for field in scalar_fields},
+        "snapshot": template_history_snapshot(existing_template),
+    }
+
+
+def put_template_update_with_history(existing_template, updated_template, history_item):
+    """Atomically append template history and replace its current record."""
+    old_key = {
+        "ownerSet": existing_template["ownerSet"],
+        "normalizedName": existing_template["normalizedName"],
+    }
+    new_key = {
+        "ownerSet": updated_template["ownerSet"],
+        "normalizedName": updated_template["normalizedName"],
+    }
+    transaction_items = [{
+        "Put": {
+            "TableName": TEMPLATE_HISTORY_TABLE_NAME,
+            "Item": serialize_dynamodb_item(history_item),
+        },
+    }]
+    if old_key == new_key:
+        transaction_items.append({
+            "Put": {
+                "TableName": TEMPLATES_TABLE_NAME,
+                "Item": serialize_dynamodb_item(updated_template),
+                "ConditionExpression": "updatedAt = :expectedUpdatedAt",
+                "ExpressionAttributeValues": serialize_dynamodb_item({
+                    ":expectedUpdatedAt": existing_template.get("updatedAt"),
+                }),
+            },
+        })
+    else:
+        transaction_items.extend([
+            {
+                "Delete": {
+                    "TableName": TEMPLATES_TABLE_NAME,
+                    "Key": serialize_dynamodb_item(old_key),
+                    "ConditionExpression": "updatedAt = :expectedUpdatedAt",
+                    "ExpressionAttributeValues": serialize_dynamodb_item({
+                        ":expectedUpdatedAt": existing_template.get("updatedAt"),
+                    }),
+                },
+            },
+            {
+                "Put": {
+                    "TableName": TEMPLATES_TABLE_NAME,
+                    "Item": serialize_dynamodb_item(updated_template),
+                    "ConditionExpression": (
+                        "attribute_not_exists(ownerSet) AND attribute_not_exists(normalizedName)"
+                    ),
+                },
+            },
+        ])
+    try:
+        DYNAMODB_CLIENT.transact_write_items(TransactItems=transaction_items)
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "TransactionCanceledException":
+            raise ValueError(
+                "The template changed before it could be saved. Reload it and try again."
+            )
+        raise
+
+
+def get_template_history_items(user_id, template_id, limit=None):
+    """Return stored template revisions, newest first."""
+    query_options = {
+        "KeyConditionExpression": Key("templateKey").eq(f"{user_id}#{template_id}"),
+        "ScanIndexForward": False,
+    }
+    if limit is not None:
+        if limit <= 0:
+            raise ValueError("History limit must be positive.")
+        query_options["Limit"] = limit
+    history_items = []
+    while True:
+        response = TEMPLATE_HISTORY_TABLE.query(**query_options)
+        history_items.extend(response.get("Items", []))
+        if limit is not None or not response.get("LastEvaluatedKey"):
+            break
+        query_options["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+    return history_items
+
+
+def get_template_history_transition(history_item, newer_template):
+    """Return display-ready changes for one template revision."""
+    old_snapshot = history_item.get("snapshot") or {}
+    changes = history_item.get("changes")
+    if not isinstance(changes, list):
+        changes = build_template_history_changes(old_snapshot, newer_template)
+    changed_fields = history_item.get("changedFields")
+    if not isinstance(changed_fields, list):
+        changed_fields, _ = summarize_template_change(
+            old_snapshot,
+            newer_template,
+            history_item.get("changeType", "update"),
+        )
+    scalar_fields = [
+        field for field in changed_fields if field not in {"sections", "customFields"}
+    ]
+    return (
+        changed_fields,
+        history_item.get("oldValues") or {
+            field: old_snapshot.get(field) for field in scalar_fields
+        },
+        history_item.get("newValues") or {
+            field: newer_template.get(field) for field in scalar_fields
+        },
+        history_item.get("description") or summarize_template_change(
+            old_snapshot,
+            newer_template,
+            history_item.get("changeType", "update"),
+        )[1],
+        changes,
+    )
+
+
+def list_template_history(
+    user_id,
+    template_id,
+    limit=None,
+    current_set_code=None,
+    current_name=None,
+):
+    """Return template revisions from current to original."""
+    current_template = None
+    if current_set_code and current_name:
+        current_template = TEMPLATES_TABLE.get_item(
+            Key=get_template_key(user_id, current_set_code, current_name),
+            ConsistentRead=True,
+        ).get("Item")
+        if current_template and current_template.get("templateId") != template_id:
+            current_template = None
+    if not current_template:
+        current_template = get_template_item_by_id(user_id, template_id)
+    if not current_template:
+        raise ValueError("Template not found.")
+    history_items = get_template_history_items(user_id, template_id, limit)
+    history = []
+    for index, item in enumerate(history_items):
+        newer_template = (
+            current_template if index == 0 else history_items[index - 1].get("snapshot") or {}
+        )
+        changed_fields, old_values, new_values, description, changes = (
+            get_template_history_transition(item, newer_template)
+        )
+        history.append({
+            "versionId": item.get("versionId", ""),
+            "restoreVersionId": (
+                "" if index == 0 else history_items[index - 1].get("versionId", "")
+            ),
+            "isCurrent": index == 0,
+            "recordedAt": item.get("recordedAt", 0),
+            "changedBy": item.get("changedBy") or item.get("userId") or "Unknown user",
+            "description": description,
+            "changeType": item.get("changeType", "update"),
+            "restoredFromVersionId": item.get("restoredFromVersionId", ""),
+            "restoredFromRecordedAt": item.get("restoredFromRecordedAt", 0),
+            "changedFields": changed_fields,
+            "changes": changes,
+            "oldValues": old_values,
+            "newValues": new_values,
+        })
+    if history_items and limit is None:
+        original_item = history_items[-1]
+        original_snapshot = original_item.get("snapshot") or {}
+        history.append({
+            "versionId": "",
+            "restoreVersionId": original_item.get("versionId", ""),
+            "isCurrent": False,
+            "recordedAt": int(
+                original_snapshot.get("createdAt")
+                or original_item.get("recordedAt")
+                or 0
+            ),
+            "changedBy": (
+                original_item.get("changedBy")
+                or original_item.get("userId")
+                or "Unknown user"
+            ),
+            "description": "Original saved version.",
+            "changeType": "original",
+            "changedFields": [],
+            "changes": [],
+            "oldValues": {},
+            "newValues": {},
+        })
+    return {"history": history}
+
+
 def save_template(user_id, template_id, body, changed_by=""):
     """Update, rename, or move an existing template while preserving its id."""
     existing_item = get_template_item_by_id(user_id, template_id)
@@ -2800,10 +3110,6 @@ def save_template(user_id, template_id, body, changed_by=""):
         template_id=existing_item["templateId"],
         created_at=existing_item.get("createdAt"),
     )
-    old_key = {
-        "ownerSet": existing_item["ownerSet"],
-        "normalizedName": existing_item["normalizedName"],
-    }
     new_key = {
         "ownerSet": item["ownerSet"],
         "normalizedName": item["normalizedName"],
@@ -2813,34 +3119,19 @@ def save_template(user_id, template_id, body, changed_by=""):
         raise ValueError("A template with this name already exists in the selected set.")
 
     put_template_image(user_id, item, image_bytes)
-    if old_key == new_key:
-        TEMPLATES_TABLE.put_item(Item=item)
-    else:
-        try:
-            DYNAMODB_CLIENT.transact_write_items(
-                TransactItems=[
-                    {
-                        "Delete": {
-                            "TableName": TEMPLATES_TABLE_NAME,
-                            "Key": serialize_dynamodb_item(old_key),
-                            "ConditionExpression": "attribute_exists(ownerSet) AND attribute_exists(normalizedName)",
-                        }
-                    },
-                    {
-                        "Put": {
-                            "TableName": TEMPLATES_TABLE_NAME,
-                            "Item": serialize_dynamodb_item(item),
-                            "ConditionExpression": "attribute_not_exists(ownerSet) AND attribute_not_exists(normalizedName)",
-                        }
-                    },
-                ]
-            )
-        except ClientError as exc:
-            if item.get("imageKey") != existing_item.get("imageKey"):
-                delete_template_image(item)
-            if exc.response.get("Error", {}).get("Code") == "TransactionCanceledException":
-                raise ValueError("A template with this name already exists in the selected set.")
-            raise
+    history_item = build_template_history_item(
+        user_id,
+        existing_item,
+        item,
+        "update",
+        changed_by,
+    )
+    try:
+        put_template_update_with_history(existing_item, item, history_item)
+    except (ClientError, ValueError):
+        if item.get("imageKey") != existing_item.get("imageKey"):
+            delete_template_image(item)
+        raise
 
     if (
         existing_item.get("imageBucket")
@@ -2860,6 +3151,109 @@ def save_template(user_id, template_id, body, changed_by=""):
         "template": add_template_image_url(item),
         "refactoredCards": refactored_cards,
     }
+
+
+def restore_template_history_version(
+    user_id,
+    template_id,
+    version_id,
+    changed_by="",
+):
+    """Restore a template snapshot as a new revision without deleting history."""
+    target_history = TEMPLATE_HISTORY_TABLE.get_item(Key={
+        "templateKey": f"{user_id}#{template_id}",
+        "versionId": version_id,
+    }).get("Item")
+    if not target_history:
+        raise ValueError("Template history version not found.")
+    snapshot = target_history.get("snapshot")
+    if not isinstance(snapshot, dict):
+        raise ValueError("This template history version cannot be restored.")
+
+    current_template = get_template_item_by_id(user_id, template_id)
+    if not current_template:
+        raise ValueError("Template not found.")
+    restored_template = clean_template_record(
+        user_id,
+        snapshot,
+        template_id=template_id,
+        created_at=current_template.get("createdAt"),
+    )
+    for field in ("imageBucket", "imageKey"):
+        if current_template.get(field):
+            restored_template[field] = current_template[field]
+
+    new_key = get_template_key(
+        user_id,
+        restored_template["setCode"],
+        restored_template["name"],
+    )
+    duplicate = TEMPLATES_TABLE.get_item(Key=new_key).get("Item")
+    if duplicate and duplicate.get("templateId") != template_id:
+        raise ValueError("A template with this name already exists in the restored set.")
+
+    history_item = build_template_history_item(
+        user_id,
+        current_template,
+        restored_template,
+        "restore",
+        changed_by,
+    )
+    source_recorded_at = int(
+        (snapshot.get("updatedAt") or snapshot.get("createdAt") or 0) * 1000
+    )
+    if not source_recorded_at:
+        source_recorded_at = int(target_history.get("recordedAt") or 0)
+    history_item.update({
+        "restoredFromVersionId": version_id,
+        "restoredFromRecordedAt": source_recorded_at,
+    })
+    put_template_update_with_history(current_template, restored_template, history_item)
+
+    refactored_cards = []
+    if restored_template.get("applyToExistingCards"):
+        refactored_cards = refactor_cards_for_template(
+            user_id,
+            current_template,
+            restored_template,
+            changed_by,
+        )
+    return {
+        "template": add_template_image_url(restored_template),
+        "refactoredCards": refactored_cards,
+        "historyPreserved": True,
+    }
+
+
+def update_template_image(user_id, template_id, body):
+    """Replace only a template preview image without creating another revision."""
+    template = None
+    if body.get("setCode") and body.get("name"):
+        template = TEMPLATES_TABLE.get_item(
+            Key=get_template_key(user_id, body.get("setCode"), body.get("name")),
+            ConsistentRead=True,
+        ).get("Item")
+        if template and template.get("templateId") != template_id:
+            template = None
+    if not template:
+        template = get_template_item_by_id(user_id, template_id)
+    if not template:
+        raise ValueError("Template not found.")
+    image_bytes = decode_template_image(body)
+    updated_template = {**template}
+    put_template_image(user_id, updated_template, image_bytes)
+    TEMPLATES_TABLE.update_item(
+        Key={
+            "ownerSet": template["ownerSet"],
+            "normalizedName": template["normalizedName"],
+        },
+        UpdateExpression="SET imageBucket = :bucket, imageKey = :key",
+        ExpressionAttributeValues={
+            ":bucket": updated_template["imageBucket"],
+            ":key": updated_template["imageKey"],
+        },
+    )
+    return {"template": add_template_image_url(updated_template)}
 
 
 def clean_set(body):

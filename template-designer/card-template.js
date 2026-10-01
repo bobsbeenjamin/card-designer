@@ -18,6 +18,10 @@ const state = {
   editingBuiltInFieldId: "",
   editingCustomFieldName: "",
   templateNavigationPending: false,
+  templateHistory: [],
+  templateHistoryLoading: false,
+  templateHistoryRestoring: false,
+  templateHistoryStatus: "Load a saved template to view history.",
   cardRefactorInProgress: false,
   allowPageExit: false,
   framePreviewObjectUrl: "",
@@ -46,6 +50,12 @@ const elements = {
   myTemplatesInput: document.querySelector("#myTemplatesInput"),
   templateUnsavedChangesDialog: document.querySelector("#templateUnsavedChangesDialog"),
   templateUnsavedChangesMessage: document.querySelector("#templateUnsavedChangesMessage"),
+  recentTemplateHistoryRows: document.querySelector("#recentTemplateHistoryRows"),
+  allTemplateHistoryRows: document.querySelector("#allTemplateHistoryRows"),
+  viewAllTemplateHistoryButton: document.querySelector("#viewAllTemplateHistoryButton"),
+  templateHistoryDialog: document.querySelector("#templateHistoryDialog"),
+  templateHistorySubtitle: document.querySelector("#templateHistorySubtitle"),
+  restoreTemplateHistoryDialog: document.querySelector("#restoreTemplateHistoryDialog"),
   customFieldsList: document.querySelector("#customFieldsList"),
   addCustomFieldButton: document.querySelector("#addCustomFieldButton"),
   customFieldPreview: document.querySelector("#customFieldPreview"),
@@ -307,6 +317,9 @@ function renderAuthUi() {
   elements.mySetsPanel.classList.toggle("hidden", !signedIn);
   elements.myTemplatesPanel.classList.toggle("hidden", !signedIn);
   elements.saveTemplateButton.disabled = !signedIn;
+  elements.viewAllTemplateHistoryButton.disabled = (
+    !signedIn || !state.currentTemplateId || state.templateHistoryLoading
+  );
   const generateBackgroundButton = elements.templateFields.querySelector(
     "[data-template-action='generate-background']",
   );
@@ -330,6 +343,7 @@ const accountAuth = new AccountAuthController({
     state.templates = [];
     renderSetOptions();
     renderTemplateOptions();
+    clearTemplateHistory();
   },
 });
 const apiFetch = accountAuth.apiClient.request.bind(accountAuth.apiClient);
@@ -1943,7 +1957,12 @@ function renderTemplateOptions(selectedTemplateId = state.currentTemplateId) {
   elements.myTemplatesInput.value = state.templates.some(
     (template) => template.templateId === selectedTemplateId,
   ) ? selectedTemplateId : "";
-  elements.myTemplatesInput.disabled = state.templateNavigationPending || state.cardRefactorInProgress || !state.templates.length;
+  elements.myTemplatesInput.disabled = (
+    state.templateNavigationPending
+    || state.cardRefactorInProgress
+    || state.templateHistoryRestoring
+    || !state.templates.length
+  );
 }
 
 /** Loads templates for a set and refreshes the selector. */
@@ -1962,6 +1981,272 @@ async function refreshSets() {
   const data = await apiFetch("/sets");
   state.sets = data.sets || [];
   renderSetOptions();
+}
+
+/** Formats a template-history timestamp in the user's local time. */
+function formatTemplateHistoryDate(recordedAt) {
+  const numericTimestamp = Number(recordedAt);
+  if (!Number.isFinite(numericTimestamp) || numericTimestamp <= 0) return "Unknown date";
+  const timestamp = numericTimestamp < 1_000_000_000_000
+    ? numericTimestamp * 1000
+    : numericTimestamp;
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(timestamp));
+}
+
+/** Returns a concise description for Stat mode and Rarity option changes. */
+function getTemplateSelectOptionHistoryDescription(entry) {
+  const optionChanges = new Map();
+  for (const change of Array.isArray(entry.changes) ? entry.changes : []) {
+    const match = String(change.path || "").match(
+      /\/fields\/(statMode|rarity)\/options\/[^/]+\/label$/,
+    );
+    if (!match) continue;
+    const fieldLabel = match[1] === "statMode" ? "Stat mode" : "Rarity";
+    if (!optionChanges.has(fieldLabel)) optionChanges.set(fieldLabel, []);
+    if (change.oldExists === false && change.newExists !== false) {
+      optionChanges.get(fieldLabel).push(`added “${formatTemplateHistoryValue(change.newValue)}”`);
+    } else if (change.newExists === false && change.oldExists !== false) {
+      optionChanges.get(fieldLabel).push(`removed “${formatTemplateHistoryValue(change.oldValue)}”`);
+    } else {
+      optionChanges.get(fieldLabel).push(
+        `renamed “${formatTemplateHistoryValue(change.oldValue)}” to “${formatTemplateHistoryValue(change.newValue)}”`,
+      );
+    }
+  }
+  if (!optionChanges.size) return "";
+  return [...optionChanges]
+    .map(([fieldLabel, descriptions]) => `${fieldLabel}: ${descriptions.join(", ")}`)
+    .join("; ") + ".";
+}
+
+/** Returns a template-history description, including restore provenance. */
+function getTemplateHistoryDescription(entry) {
+  if (entry.changeType === "restore" && entry.restoredFromRecordedAt) {
+    return `Restored from version recorded ${formatTemplateHistoryDate(entry.restoredFromRecordedAt)}.`;
+  }
+  const optionDescription = getTemplateSelectOptionHistoryDescription(entry);
+  if (optionDescription) return optionDescription;
+  return entry.description || "Updated template.";
+}
+
+/** Formats one value for a template-history cell. */
+function formatTemplateHistoryValue(value) {
+  if (value === null || value === undefined || value === "") return "blank";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) {
+    if (!value.length) return "none";
+    return value.map((item) => formatTemplateHistoryValue(item)).join(", ");
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+    if (!entries.length) return "none";
+    return entries
+      .map(([key, nestedValue]) => `${key}: ${formatTemplateHistoryValue(nestedValue)}`)
+      .join("; ");
+  }
+  return String(value);
+}
+
+/** Formats one exact old or new template-history value. */
+function formatDetailedTemplateHistoryValue(change, side) {
+  if (change?.[`${side}Exists`] === false) return "not present";
+  return formatTemplateHistoryValue(change?.[`${side}Value`]);
+}
+
+/** Formats legacy scalar history values. */
+function formatTemplateHistoryValues(values) {
+  const entries = Object.entries(values || {});
+  if (!entries.length) return "Unavailable";
+  return entries
+    .map(([field, value]) => `${field}: ${formatTemplateHistoryValue(value)}`)
+    .join("\n");
+}
+
+/** Creates an action cell for one saved template version. */
+function createTemplateHistoryActionCell(entry, rowSpan = 1) {
+  const cell = document.createElement("td");
+  cell.className = "card-history-action";
+  cell.rowSpan = rowSpan;
+  if (entry.isCurrent || !entry.restoreVersionId) {
+    cell.textContent = entry.isCurrent ? "Current" : "";
+    return cell;
+  }
+  const button = document.createElement("button");
+  button.className = "button subtle card-history-restore-button";
+  button.type = "button";
+  button.textContent = "Restore";
+  button.disabled = state.templateHistoryRestoring;
+  button.addEventListener("click", () => openRestoreTemplateHistoryWarning(entry.restoreVersionId));
+  cell.append(button);
+  return cell;
+}
+
+/** Appends a summary template-history row. */
+function appendTemplateHistoryRow(tableBody, entry, includeValues) {
+  const row = document.createElement("tr");
+  const dateCell = document.createElement("td");
+  const userCell = document.createElement("td");
+  const descriptionCell = document.createElement("td");
+  dateCell.textContent = formatTemplateHistoryDate(entry.recordedAt);
+  userCell.textContent = entry.changedBy || "Unknown user";
+  descriptionCell.textContent = getTemplateHistoryDescription(entry);
+  row.append(dateCell, userCell, descriptionCell);
+  if (includeValues) {
+    const oldValueCell = document.createElement("td");
+    const newValueCell = document.createElement("td");
+    oldValueCell.className = "card-history-value";
+    newValueCell.className = "card-history-value";
+    oldValueCell.textContent = formatTemplateHistoryValues(entry.oldValues);
+    newValueCell.textContent = formatTemplateHistoryValues(entry.newValues);
+    row.append(oldValueCell, newValueCell, createTemplateHistoryActionCell(entry));
+  }
+  tableBody.append(row);
+}
+
+/** Appends exact field changes for one template revision. */
+function appendDetailedTemplateHistoryRows(tableBody, entry) {
+  const changes = Array.isArray(entry.changes) ? entry.changes : [];
+  if (!changes.length) {
+    appendTemplateHistoryRow(tableBody, entry, true);
+    return;
+  }
+  if (entry.changeType === "restore") {
+    const groupRow = document.createElement("tr");
+    const groupCell = document.createElement("td");
+    const groupTitle = document.createElement("strong");
+    const groupMeta = document.createElement("span");
+    groupRow.className = "card-history-group-row";
+    groupCell.colSpan = 6;
+    groupTitle.textContent = getTemplateHistoryDescription(entry);
+    groupMeta.textContent = `Saved on ${formatTemplateHistoryDate(entry.recordedAt)} by ${entry.changedBy || "Unknown user"}.`;
+    groupCell.append(groupTitle, groupMeta);
+    groupRow.append(groupCell);
+    tableBody.append(groupRow);
+  }
+  changes.forEach((change, index) => {
+    const row = document.createElement("tr");
+    const dateCell = document.createElement("td");
+    const userCell = document.createElement("td");
+    const changeCell = document.createElement("td");
+    const oldValueCell = document.createElement("td");
+    const newValueCell = document.createElement("td");
+    dateCell.textContent = formatTemplateHistoryDate(entry.recordedAt);
+    userCell.textContent = entry.changedBy || "Unknown user";
+    changeCell.textContent = change.label || change.path || getTemplateHistoryDescription(entry);
+    oldValueCell.className = "card-history-value";
+    newValueCell.className = "card-history-value";
+    oldValueCell.textContent = formatDetailedTemplateHistoryValue(change, "old");
+    newValueCell.textContent = formatDetailedTemplateHistoryValue(change, "new");
+    row.append(dateCell, userCell, changeCell, oldValueCell, newValueCell);
+    if (index === 0) row.append(createTemplateHistoryActionCell(entry, changes.length));
+    tableBody.append(row);
+  });
+}
+
+/** Renders recent template history. */
+function renderRecentTemplateHistory() {
+  elements.recentTemplateHistoryRows.replaceChildren();
+  if (!state.templateHistory.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.className = "card-history-empty";
+    cell.colSpan = 3;
+    cell.textContent = state.templateHistoryStatus || "No changes recorded for this template.";
+    row.append(cell);
+    elements.recentTemplateHistoryRows.append(row);
+  } else {
+    state.templateHistory.slice(0, 3).forEach((entry) => {
+      appendTemplateHistoryRow(elements.recentTemplateHistoryRows, entry, false);
+    });
+  }
+  elements.viewAllTemplateHistoryButton.disabled = (
+    !accountAuth.isSignedIn() || !state.currentTemplateId || state.templateHistoryLoading
+  );
+}
+
+/** Renders the complete template history modal. */
+function renderFullTemplateHistory() {
+  elements.allTemplateHistoryRows.replaceChildren();
+  if (!state.templateHistory.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.className = "card-history-empty";
+    cell.colSpan = 6;
+    cell.textContent = state.templateHistoryStatus || "No changes recorded for this template.";
+    row.append(cell);
+    elements.allTemplateHistoryRows.append(row);
+    return;
+  }
+  state.templateHistory.forEach((entry) => {
+    appendDetailedTemplateHistoryRows(elements.allTemplateHistoryRows, entry);
+  });
+}
+
+function renderTemplateHistory() {
+  renderRecentTemplateHistory();
+  renderFullTemplateHistory();
+}
+
+function clearTemplateHistory(message = "Load a saved template to view history.") {
+  state.templateHistory = [];
+  state.templateHistoryLoading = false;
+  state.templateHistoryStatus = message;
+  renderTemplateHistory();
+}
+
+/** Loads template history for the active saved template. */
+async function refreshTemplateHistory(templateId = state.currentTemplateId, limit = 3) {
+  if (!templateId || !accountAuth.isSignedIn()) {
+    clearTemplateHistory();
+    return;
+  }
+  state.templateHistoryLoading = true;
+  state.templateHistory = [];
+  state.templateHistoryStatus = "Loading template history...";
+  renderTemplateHistory();
+  try {
+    const query = new URLSearchParams({
+      setCode: elements.templateSetInput.value || "DEFAULT",
+      name: elements.templateNameInput.value.trim(),
+    });
+    if (limit) query.set("limit", String(limit));
+    const data = await apiFetch(
+      `/templates/${encodeURIComponent(templateId)}/history?${query.toString()}`,
+    );
+    if (state.currentTemplateId !== templateId) return;
+    state.templateHistory = data.history || [];
+    state.templateHistoryStatus = state.templateHistory.length
+      ? ""
+      : "No changes recorded for this template.";
+  } catch (error) {
+    if (state.currentTemplateId !== templateId) return;
+    state.templateHistory = [];
+    state.templateHistoryStatus = "Template history could not be loaded.";
+  } finally {
+    if (state.currentTemplateId === templateId) {
+      state.templateHistoryLoading = false;
+      renderTemplateHistory();
+    }
+  }
+}
+
+async function openTemplateHistoryDialog() {
+  if (!state.currentTemplateId || state.templateHistoryLoading) return;
+  elements.templateHistorySubtitle.textContent = (
+    elements.templateNameInput.value.trim() || "Untitled Template"
+  );
+  elements.templateHistoryDialog.showModal();
+  await refreshTemplateHistory(state.currentTemplateId, null);
+}
+
+function openRestoreTemplateHistoryWarning(versionId) {
+  if (!versionId || state.templateHistoryRestoring) return;
+  elements.restoreTemplateHistoryDialog.dataset.versionId = versionId;
+  elements.restoreTemplateHistoryDialog.returnValue = "";
+  elements.restoreTemplateHistoryDialog.showModal();
 }
 
 /** Replaces editor state with a loaded template. */
@@ -1995,6 +2280,7 @@ function resetNewTemplate(setCode = requestedSetCode) {
   renderTemplateFields();
   renderCustomFields();
   updateCardPreview();
+  clearTemplateHistory();
 }
 
 /** Loads the template requested by the URL or starts a new one. */
@@ -2067,6 +2353,7 @@ async function loadTemplateById(templateId) {
       setTemplateStatus(`${data.template.name} loaded, but the template list could not be refreshed.`);
       return true;
     }
+    await refreshTemplateHistory(data.template.templateId, 3);
     setTemplateStatus(backgroundLoadError
       ? `${data.template.name} loaded. ${backgroundLoadError}`
       : `${data.template.name} loaded.`);
@@ -2080,7 +2367,7 @@ async function loadTemplateById(templateId) {
 /** Saves or discards edits before switching templates. */
 async function handleTemplateSelectionChange() {
   const selectedTemplateId = elements.myTemplatesInput.value;
-  if (!selectedTemplateId || selectedTemplateId === state.currentTemplateId || state.templateNavigationPending || state.cardRefactorInProgress) return;
+  if (!selectedTemplateId || selectedTemplateId === state.currentTemplateId || state.templateNavigationPending || state.cardRefactorInProgress || state.templateHistoryRestoring) return;
 
   state.templateNavigationPending = true;
   renderTemplateOptions(selectedTemplateId);
@@ -2458,6 +2745,84 @@ async function regenerateRefactoredCardImages(cards) {
   });
 }
 
+/** Restores a historical template as a new current revision. */
+async function restoreTemplateHistoryVersion(versionId) {
+  const templateId = state.currentTemplateId;
+  if (!templateId || !versionId || state.templateHistoryRestoring) return;
+
+  state.templateHistoryRestoring = true;
+  state.cardRefactorInProgress = true;
+  elements.saveTemplateButton.disabled = true;
+  renderTemplateOptions(templateId);
+  renderTemplateHistory();
+  setTemplateStatus("Restoring previous template version...");
+  try {
+    const data = await apiFetch(
+      `/templates/${encodeURIComponent(templateId)}/history/${encodeURIComponent(versionId)}/restore`,
+      { method: "POST" },
+    );
+    if (state.currentTemplateId !== templateId) {
+      await refreshTemplatesForSet(elements.templateSetInput.value || "DEFAULT", state.currentTemplateId);
+      setTemplateStatus("Template restored in history.");
+      return;
+    }
+
+    const restoredTemplate = data.template;
+    setLoadedTemplate(restoredTemplate);
+    elements.templateHistorySubtitle.textContent = restoredTemplate.name || "Untitled Template";
+    let previewError = null;
+    try {
+      await setTemplateFramePreview(getFieldValue("frameUrl"));
+      const templateImagePng = await getTemplatePngDataUrl();
+      await apiFetch(`/templates/${encodeURIComponent(templateId)}/image`, {
+        method: "PUT",
+        body: JSON.stringify({
+          templateImagePng,
+          setCode: restoredTemplate.setCode,
+          name: restoredTemplate.name,
+        }),
+      });
+    } catch (error) {
+      previewError = error;
+    }
+
+    const refactoredCards = data.refactoredCards || [];
+    let cardPreviewError = null;
+    if (refactoredCards.length) {
+      try {
+        await regenerateRefactoredCardImages(refactoredCards);
+      } catch (error) {
+        cardPreviewError = error;
+      }
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("template", templateId);
+    url.searchParams.delete("set");
+    window.history.replaceState({}, "", url);
+    await refreshTemplatesForSet(restoredTemplate.setCode, templateId);
+    await refreshTemplateHistory(templateId, null);
+
+    if (previewError) {
+      setTemplateStatus(`Template restored, but its preview could not be regenerated: ${previewError.message}`);
+    } else if (cardPreviewError) {
+      setTemplateStatus(`Template restored and linked cards updated, but some card previews could not be regenerated: ${cardPreviewError.message}`);
+    } else if (refactoredCards.length) {
+      setTemplateStatus(`Template restored. Updated ${refactoredCards.length} linked ${refactoredCards.length === 1 ? "card" : "cards"}.`);
+    } else {
+      setTemplateStatus("Template restored to the selected version.");
+    }
+  } catch (error) {
+    setTemplateStatus(error.message);
+    if (state.currentTemplateId === templateId) await refreshTemplateHistory(templateId, null);
+  } finally {
+    state.templateHistoryRestoring = false;
+    state.cardRefactorInProgress = false;
+    renderTemplateOptions(state.currentTemplateId);
+    renderTemplateHistory();
+    elements.saveTemplateButton.disabled = !accountAuth.isSignedIn();
+  }
+}
+
 /** Validates, renders, and persists the current template. */
 async function saveTemplate() {
   const name = elements.templateNameInput.value.trim();
@@ -2536,6 +2901,7 @@ async function saveTemplate() {
       state.templates = [];
       renderTemplateOptions();
     }
+    await refreshTemplateHistory(data.template.templateId, 3);
     if (refactoredCards.length) {
       setTemplateStatus(`${data.template.name} saved. Regenerating ${refactoredCards.length} card previews...`);
       try {
@@ -2605,6 +2971,13 @@ function attachEvents() {
   elements.saveTemplateButton.addEventListener("click", saveTemplate);
   elements.closeTemplateButton.addEventListener("click", closeTemplatePage);
   elements.myTemplatesInput.addEventListener("change", handleTemplateSelectionChange);
+  elements.viewAllTemplateHistoryButton.addEventListener("click", openTemplateHistoryDialog);
+  elements.restoreTemplateHistoryDialog.addEventListener("close", () => {
+    const versionId = elements.restoreTemplateHistoryDialog.dataset.versionId || "";
+    const shouldRestore = elements.restoreTemplateHistoryDialog.returnValue === "restore";
+    delete elements.restoreTemplateHistoryDialog.dataset.versionId;
+    if (shouldRestore && versionId) restoreTemplateHistoryVersion(versionId);
+  });
   elements.addCustomFieldButton.addEventListener("click", () => openCustomFieldDialog());
   elements.customFieldsList.addEventListener("click", handleCustomFieldAction);
   elements.customFieldTypeInput.addEventListener("change", syncCustomFieldTypeUi);
@@ -2703,6 +3076,7 @@ async function initialize() {
     renderTemplateFields();
     renderCustomFields();
     renderTemplateOptions();
+    renderTemplateHistory();
     updateCardPreview();
   } catch (error) {
     setTemplateStatus(error.message);

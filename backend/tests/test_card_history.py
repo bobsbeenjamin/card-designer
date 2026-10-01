@@ -10,6 +10,7 @@ import boto3
 ENVIRONMENT = {
     "TABLE_NAME": "cards",
     "CARD_HISTORY_TABLE_NAME": "history",
+    "TEMPLATE_HISTORY_TABLE_NAME": "template-history",
     "SETS_TABLE_NAME": "sets",
     "TEMPLATES_TABLE_NAME": "templates",
     "USER_SETTINGS_TABLE_NAME": "settings",
